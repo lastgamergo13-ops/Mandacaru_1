@@ -9,11 +9,11 @@
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/HW/Espresso/Debugger/GDBBreakpoints.h"
 
-#if BOOST_OS_LINUX
+#if BOOST_OS_LINUX && !defined(__ANDROID__)
 #include "ELFSymbolTable.h"
 #endif
 
-#if BOOST_OS_LINUX
+#if BOOST_OS_LINUX && !defined(__ANDROID__)
 void DemangleAndPrintBacktrace(char** backtrace, size_t size)
 {
 	ELFSymbolTable symTable;
@@ -92,7 +92,11 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
 	size_t size;
 
 	// get void*'s for all entries on the stack
+#if !defined(__ANDROID__)
 	size = backtrace(backtraceArray, 128);
+#else
+	size = 0;
+#endif
     // replace the deepest entry with the actual crash address
 #if defined(ARCH_X86_64) && BOOST_OS_LINUX > 0
     ucontext_t *uc = (ucontext_t *)context;
@@ -101,7 +105,7 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
 
     CrashLog_WriteLine(fmt::format("Error: signal {}:", sig));
 
-#if BOOST_OS_LINUX
+#if BOOST_OS_LINUX && !defined(__ANDROID__)
 	char** symbol_trace = backtrace_symbols(backtraceArray, size);
 
 	if (symbol_trace)
@@ -113,8 +117,10 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
 	{
         CrashLog_WriteLine("Failed to read backtrace");
 	}
-#else
+#elif !defined(__ANDROID__)
 	backtrace_symbols_fd(backtraceArray, size, STDERR_FILENO);
+#else
+    CrashLog_WriteLine("Backtrace not available on Android");
 #endif
 
     std::cerr << fmt::format("\nStacktrace and additional info written to:") << std::endl;
