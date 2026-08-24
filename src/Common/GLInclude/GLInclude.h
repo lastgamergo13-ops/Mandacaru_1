@@ -6,7 +6,7 @@
 #include "wglext.h"
 #endif
 
-#if ( BOOST_OS_LINUX || BOOST_OS_BSD ) > 0
+#if ( BOOST_OS_LINUX || BOOST_OS_BSD ) > 0 && !defined(__ANDROID__)
 
 // from Xlib
 #define Bool int
