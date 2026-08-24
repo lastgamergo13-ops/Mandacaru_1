@@ -274,7 +274,7 @@ int main(int argc, char *argv[])
 		return BreathOfTheWildChildProcessMain();
 #endif
 
-#if BOOST_OS_LINUX || BOOST_OS_BSD
+#if (BOOST_OS_LINUX || BOOST_OS_BSD) && !defined(__ANDROID__)
     XInitThreads();
 #endif
 	auto parse_rc = LaunchSettings::HandleCommandline(argc, argv);
