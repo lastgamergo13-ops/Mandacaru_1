@@ -24,7 +24,7 @@ elseif(UNIX)
 			add_compile_definitions(_XOPEN_SOURCE)
 		endif()
 	else()
-		if (ENABLE_VULKAN)
+		if (ENABLE_VULKAN AND NOT ANDROID)
 			add_compile_definitions(
 				VK_USE_PLATFORM_XLIB_KHR # legacy. Do we need to support XLIB surfaces?
 				VK_USE_PLATFORM_XCB_KHR

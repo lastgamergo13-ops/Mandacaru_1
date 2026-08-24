@@ -12,9 +12,10 @@ namespace WindowSystem
 			Wayland,
 			Cocoa,
 			Windows,
+			Android,
 		} backend;
 		void* display = nullptr;
-		void* surface = nullptr;
+		std::atomic<void*> surface = nullptr;
 	};
 
 	enum struct PlatformKeyCodes : uint32
