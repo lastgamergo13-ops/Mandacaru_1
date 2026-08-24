@@ -157,7 +157,10 @@ find_package(RapidJSON REQUIRED)
 find_package(Boost COMPONENTS program_options filesystem nowide REQUIRED)
 find_package(libzip REQUIRED)
 find_package(glslang REQUIRED)
-find_package(ZLIB REQUIRED)
+find_package(ZLIB CONFIG QUIET) # vcpkg ships a ZLIB config package; prefer it over CMake's bundled Module-mode FindZLIB, which can silently fail to produce the ZLIB::ZLIB target / legacy vars on some Android+vcpkg toolchain combos
+if(NOT ZLIB_FOUND AND NOT TARGET ZLIB::ZLIB)
+	find_package(ZLIB REQUIRED) # fall back to normal (Module-mode) lookup
+endif()
 # Workaround: on some platforms (notably Android via vcpkg+NDK), find_package(ZLIB)
 # only sets the legacy ZLIB_LIBRARY/ZLIB_INCLUDE_DIR variables and does NOT create
 # the modern imported target ZLIB::ZLIB. CURL's vcpkg CURLTargets.cmake references
@@ -168,13 +171,19 @@ find_package(ZLIB REQUIRED)
 # Manually create the imported target from the legacy variables as a fallback.
 if(NOT TARGET ZLIB::ZLIB)
 	if(NOT ZLIB_LIBRARY OR NOT ZLIB_INCLUDE_DIR)
-		message(FATAL_ERROR "ZLIB was found by find_package(ZLIB) but neither the ZLIB::ZLIB target nor the legacy ZLIB_LIBRARY/ZLIB_INCLUDE_DIR variables are available; cannot build a fallback ZLIB::ZLIB target.")
+		# Last resort: search directly for the library/headers that vcpkg just installed
+		# for the active triplet (e.g. .../vcpkg_installed/arm64-android-release).
+		find_library(ZLIB_LIBRARY NAMES z zlib libz PATHS ${CMAKE_PREFIX_PATH} ${CMAKE_FIND_ROOT_PATH} PATH_SUFFIXES lib)
+		find_path(ZLIB_INCLUDE_DIR NAMES zlib.h PATHS ${CMAKE_PREFIX_PATH} ${CMAKE_FIND_ROOT_PATH} PATH_SUFFIXES include)
+	endif()
+	if(NOT ZLIB_LIBRARY OR NOT ZLIB_INCLUDE_DIR)
+		message(FATAL_ERROR "ZLIB was found by find_package(ZLIB) but neither the ZLIB::ZLIB target nor the legacy ZLIB_LIBRARY/ZLIB_INCLUDE_DIR variables are available, and the manual fallback search also failed; cannot build a fallback ZLIB::ZLIB target. (ZLIB_LIBRARY='${ZLIB_LIBRARY}', ZLIB_INCLUDE_DIR='${ZLIB_INCLUDE_DIR}')")
 	endif()
 	add_library(ZLIB::ZLIB UNKNOWN IMPORTED)
 	set_target_properties(ZLIB::ZLIB PROPERTIES
 		IMPORTED_LOCATION "${ZLIB_LIBRARY}"
 		INTERFACE_INCLUDE_DIRECTORIES "${ZLIB_INCLUDE_DIR}")
-	message(STATUS "ZLIB::ZLIB imported target was missing after find_package(ZLIB); created it manually from ZLIB_LIBRARY/ZLIB_INCLUDE_DIR")
+	message(STATUS "ZLIB::ZLIB imported target was missing after find_package(ZLIB); created it manually (ZLIB_LIBRARY=${ZLIB_LIBRARY}, ZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIR})")
 endif()
 find_package(zstd MODULE REQUIRED) # MODULE so that zstd::zstd is available
 find_package(OpenSSL COMPONENTS Crypto SSL REQUIRED)
