@@ -32,6 +32,20 @@ fun getGitHash(): String? = "git log --format=%h -1".runCommand()?.trim()
 val versionMajor: Int? = System.getenv("EMULATOR_VERSION_MAJOR")?.toIntOrNull()
 val versionMinor: Int? = System.getenv("EMULATOR_VERSION_MINOR")?.toIntOrNull()
 
+// Precisa bater com o valor de ndkVersion definido no bloco android{} abaixo.
+val ndkVersionForBuild = "29.0.14206865"
+
+// Caminho do SDK Android (setado pelo runner do GitHub Actions / Android Studio).
+val androidSdkPath: String = System.getenv("ANDROID_SDK_ROOT")
+    ?: System.getenv("ANDROID_HOME")
+    ?: throw GradleException("ANDROID_SDK_ROOT/ANDROID_HOME não definido")
+
+// Toolchain da NDK, que será encadeado (chainload) por dentro do toolchain do vcpkg.
+val ndkToolchainFile = "$androidSdkPath/ndk/$ndkVersionForBuild/build/cmake/android.toolchain.cmake"
+
+// Toolchain do vcpkg (raiz do repo -> dependencies/vcpkg).
+val vcpkgToolchainFile = file("../../../dependencies/vcpkg/scripts/buildsystems/vcpkg.cmake").absolutePath
+
 fun getVersionName(): String {
     if (versionMajor != null && versionMinor != null)
         return "$versionMajor.$versionMinor"
@@ -43,7 +57,7 @@ val cemuDataFilesFolder = "../../../bin"
 android {
     namespace = "info.cemu.cemu"
     compileSdk = 36
-    ndkVersion = "29.0.14206865"
+    ndkVersion = ndkVersionForBuild
     defaultConfig {
         applicationId = "info.cemu.cemu"
         minSdk = 30
@@ -113,6 +127,9 @@ android {
                     "-DANDROID_STL=c++_shared",
                     "-DENABLE_VCPKG=ON",
                     "-DVCPKG_TARGET_ANDROID=ON",
+                    "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchainFile",
+                    "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$ndkToolchainFile",
+                    "-DVCPKG_TARGET_TRIPLET=arm64-android",
                     "-DENABLE_SDL=OFF",
                     "-DENABLE_WXWIDGETS=OFF",
                     "-DENABLE_OPENGL=OFF",
