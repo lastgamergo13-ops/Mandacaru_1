@@ -47,8 +47,9 @@ bin/shaderCache/*
 
 bin/controllerProfiles/*
 
-!bin/gameProfiles/default/*
 bin/gameProfiles/*
+!bin/gameProfiles/default/
+!bin/gameProfiles/default/*
 
 bin/graphicPacks/*
 

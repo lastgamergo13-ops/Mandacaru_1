@@ -129,7 +129,7 @@ android {
                     "-DVCPKG_TARGET_ANDROID=ON",
                     "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchainFile",
                     "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$ndkToolchainFile",
-                    "-DVCPKG_TARGET_TRIPLET=arm64-android",
+                    "-DVCPKG_TARGET_TRIPLET=arm64-android-release",
                     "-DENABLE_SDL=OFF",
                     "-DENABLE_WXWIDGETS=OFF",
                     "-DENABLE_OPENGL=OFF",
