@@ -40,7 +40,8 @@
       "default-features": false,
       "features": [
         "debug-support"
-      ]
+      ],
+      "platform": "!android"
     },
     "openssl",
     {
