@@ -27,10 +27,7 @@
     "boost-property-tree",
     "boost-static-string",
     "boost-random",
-    {
-      "name": "fmt",
-      "version>=": "12.1.0"
-    },
+    "fmt",
     "libpng",
     "glm",
     {
