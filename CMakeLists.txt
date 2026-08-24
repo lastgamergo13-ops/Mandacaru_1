@@ -38,7 +38,7 @@ if (ENABLE_VCPKG)
 		)
 	endif()
 
-	if(ANDROID)
+	if(CMAKE_SYSTEM_NAME STREQUAL "Android")
 		set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_LIST_DIR}/dependencies/vcpkg_overlay_ports")
 	elseif(UNIX AND NOT APPLE)
 		set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_LIST_DIR}/dependencies/vcpkg_overlay_ports_linux;${CMAKE_CURRENT_LIST_DIR}/dependencies/vcpkg_overlay_ports")
