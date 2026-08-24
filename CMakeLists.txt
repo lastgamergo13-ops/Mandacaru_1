@@ -158,6 +158,24 @@ find_package(Boost COMPONENTS program_options filesystem nowide REQUIRED)
 find_package(libzip REQUIRED)
 find_package(glslang REQUIRED)
 find_package(ZLIB REQUIRED)
+# Workaround: on some platforms (notably Android via vcpkg+NDK), find_package(ZLIB)
+# only sets the legacy ZLIB_LIBRARY/ZLIB_INCLUDE_DIR variables and does NOT create
+# the modern imported target ZLIB::ZLIB. CURL's vcpkg CURLTargets.cmake references
+# ZLIB::ZLIB directly (without calling find_dependency(ZLIB) itself), so if the
+# target is missing at this point the configure step fails with:
+#   "The link interface of target \"CURL::libcurl_static\" contains: ZLIB::ZLIB
+#    but the target was not found."
+# Manually create the imported target from the legacy variables as a fallback.
+if(NOT TARGET ZLIB::ZLIB)
+	if(NOT ZLIB_LIBRARY OR NOT ZLIB_INCLUDE_DIR)
+		message(FATAL_ERROR "ZLIB was found by find_package(ZLIB) but neither the ZLIB::ZLIB target nor the legacy ZLIB_LIBRARY/ZLIB_INCLUDE_DIR variables are available; cannot build a fallback ZLIB::ZLIB target.")
+	endif()
+	add_library(ZLIB::ZLIB UNKNOWN IMPORTED)
+	set_target_properties(ZLIB::ZLIB PROPERTIES
+		IMPORTED_LOCATION "${ZLIB_LIBRARY}"
+		INTERFACE_INCLUDE_DIRECTORIES "${ZLIB_INCLUDE_DIR}")
+	message(STATUS "ZLIB::ZLIB imported target was missing after find_package(ZLIB); created it manually from ZLIB_LIBRARY/ZLIB_INCLUDE_DIR")
+endif()
 find_package(zstd MODULE REQUIRED) # MODULE so that zstd::zstd is available
 find_package(OpenSSL COMPONENTS Crypto SSL REQUIRED)
 find_package(CURL REQUIRED) # must come after ZLIB: CURLTargets.cmake references ZLIB::ZLIB without calling find_dependency(ZLIB)
