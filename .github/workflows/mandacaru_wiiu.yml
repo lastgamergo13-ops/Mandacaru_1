@@ -49,7 +49,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt update -qq
-          sudo apt install -y gettext mono-complete
+          sudo apt install -y gettext mono-complete autoconf autoconf-archive automake libtool
 
       - name: Uncompile message catalogs
         run: |
