@@ -1,5 +1,10 @@
 name: mandacaru_wiiu
 on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "*.md"
   workflow_dispatch:
     inputs:
       version_major:
@@ -49,17 +54,28 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Set version dependent vars
+        run: |
+          MAJOR="${{ inputs.version_major }}"
+          MINOR="${{ inputs.version_minor }}"
+          if [ -z "$MAJOR" ]; then MAJOR="0"; fi
+          if [ -z "$MINOR" ]; then MINOR="${{ github.run_number }}"; fi
+          echo "CEMU_VERSION_MAJOR=$MAJOR" >> $GITHUB_ENV
+          echo "CEMU_VERSION_MINOR=$MINOR" >> $GITHUB_ENV
+          echo "CEMU_VERSION=$MAJOR.$MINOR" >> $GITHUB_ENV
+
       - name: Build Cemu
         env:
           ANDROID_STORE_FILE_BASE64: ${{ secrets.ANDROID_STORE_FILE_BASE64 }}
           ANDROID_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          EMULATOR_VERSION_MAJOR: ${{ inputs.version_major }}
-          EMULATOR_VERSION_MINOR: ${{ inputs.version_minor }}
+          EMULATOR_VERSION_MAJOR: ${{ env.CEMU_VERSION_MAJOR }}
+          EMULATOR_VERSION_MINOR: ${{ env.CEMU_VERSION_MINOR }}
         run: |
           export JAVA_HOME=$JAVA_HOME_21_X64
 
           cd ./src/android
+          chmod +x ./gradlew
 
           if [[ -n "$ANDROID_STORE_FILE_BASE64" ]]; then
             base64 --decode <<< "${ANDROID_STORE_FILE_BASE64}" > store.jks
@@ -70,13 +86,6 @@ jobs:
           fi
 
           ./gradlew assembleRelease
-
-      - name: Set version dependent vars
-        env:
-          EMULATOR_VERSION_MAJOR: ${{ inputs.version_major }}
-          EMULATOR_VERSION_MINOR: ${{ inputs.version_minor }}
-        run: |
-          echo "CEMU_VERSION=$EMULATOR_VERSION_MAJOR.$EMULATOR_VERSION_MINOR" >> $GITHUB_ENV
 
       - name: Create release
         run: |
