@@ -36,6 +36,16 @@ jobs:
           submodules: "recursive"
           fetch-depth: 0
 
+      - name: Restore execute permissions on scripts
+        run: |
+          # O download do código como zip (em vez de git clone) derruba a
+          # permissão de execução de scripts. Restaura em todo arquivo que
+          # comece com "#!" (shebang), em qualquer lugar do repositório
+          # (inclui dependencies/vcpkg/ports/*, gradlew, etc.).
+          find . -type f ! -path "./.git/*" -exec sh -c '
+            head -c 2 "$1" 2>/dev/null | grep -q "^#!" && chmod +x "$1"
+          ' _ {} \;
+
       - name: Install system dependencies
         run: |
           sudo apt update -qq
