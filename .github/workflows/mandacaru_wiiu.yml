@@ -25,6 +25,9 @@ jobs:
   deploy:
     name: Deploy experimental release
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repo
