@@ -155,7 +155,7 @@ FileStreamAndroid* FileStreamAndroid::openFile2(const fs::path& path, bool allow
 		return new FileStreamAndroid(new FileStreamAdapter(fileStream));
 	}
 
-	auto fileStream = FileStreamUnix::openFile2(path, allowWrite);
+	auto fileStream = FileStream::openFile2(path, allowWrite);
 	if (fileStream == nullptr)
 	{
 		return nullptr;
@@ -181,13 +181,13 @@ FileStreamAndroid* FileStreamAndroid::createFile2(const fs::path& path)
 		throw std::runtime_error("write operation not supported");
 	}
 
-	auto fileStream = FileStreamUnix::createFile2(path);
+	auto fileStream = FileStream::createFile2(path);
 	if (fileStream == nullptr)
 	{
 		return nullptr;
 	}
 
-	IFileStream* adapter = new FileStreamAdapter(FileStreamUnix::createFile2(path));
+	IFileStream* adapter = new FileStreamAdapter(fileStream);
 
 	return new FileStreamAndroid(adapter);
 }
