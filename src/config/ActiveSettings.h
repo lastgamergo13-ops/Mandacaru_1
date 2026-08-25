@@ -64,6 +64,14 @@ public:
 	// get mlc path to default cemu root dir/mlc01
 	[[nodiscard]] static fs::path GetDefaultMLCPath();
 
+	// android: path to the app's native library directory (where libCemu.so etc. live)
+	static void SetNativeLibPath(const fs::path& path) { s_native_lib_path = path; }
+	[[nodiscard]] static fs::path GetNativeLibPath() { return s_native_lib_path; }
+
+	// android: path to the app's internal (private) storage directory
+	static void SetInternalDir(const fs::path& path) { s_internal_dir = path; }
+	[[nodiscard]] static fs::path GetInternalDir() { return s_internal_dir; }
+
 private:
 	inline static bool s_isPortableMode{false};
 	inline static fs::path s_executable_path;
@@ -73,6 +81,8 @@ private:
 	inline static fs::path s_data_path;
 	inline static fs::path s_executable_filename; // cemu.exe
 	inline static fs::path s_mlc_path;
+	inline static fs::path s_native_lib_path;
+	inline static fs::path s_internal_dir;
 
 public:
 	// can be called before Init
