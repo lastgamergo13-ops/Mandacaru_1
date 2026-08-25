@@ -22,6 +22,9 @@ add_library(CemuAndroid SHARED
 
 cemu_use_precompiled_header(CemuAndroid)
 
+find_package(Stb REQUIRED)
+target_include_directories(CemuAndroid PRIVATE ${Stb_INCLUDE_DIR})
+
 target_link_libraries(CemuAndroid PRIVATE
         -landroid
         CemuCommon
@@ -31,5 +34,4 @@ target_link_libraries(CemuAndroid PRIVATE
         CemuBin
         CemuGui
         ZArchive::zarchive
-        stb
 )
