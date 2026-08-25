@@ -140,6 +140,7 @@ android {
                     "-DENABLE_WAYLAND=OFF",
                     "-DENABLE_HIDAPI=OFF"
                 )
+                targets("CemuAndroid")
                 if (versionMajor != null && versionMinor != null) {
                     arguments.addAll(
                         arrayOf(
