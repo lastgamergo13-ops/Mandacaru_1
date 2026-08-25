@@ -14,6 +14,10 @@ namespace InputAPI
 		GameCube,
 		Wiimote,
 
+		Android,
+
+		Device,
+
 		WGIGamepad,
 		WGIRawController,
 
@@ -42,11 +46,15 @@ namespace InputAPI
 			return "WGIRawController";
 		case SDLController:
 			return "SDLController";
+		case Android:
+			return "Android";
+		case Device:
+			return "Device";
 		default:
 			break;
 		}
 
-		throw std::runtime_error(fmt::format("unknown input api: {}", stdx::to_underlying(type)));
+		throw std::runtime_error(fmt::format("unknown input api: {}", to_underlying(type)));
 	}
 
 	constexpr Type from_string(std::string_view str)
@@ -65,6 +73,10 @@ namespace InputAPI
 			return DSUClient;
 		else if (str == to_string(SDLController))
 			return SDLController;
+		else if (str == to_string(Android))
+			return Android;
+		else if (str == to_string(Device))
+			return Device;
 		else if (str == "DSU") // legacy
 			return DSUClient;
 		

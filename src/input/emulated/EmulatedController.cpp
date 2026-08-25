@@ -263,6 +263,13 @@ void EmulatedController::clear_controllers()
 
 float EmulatedController::get_axis_value(uint64 mapping) const
 {
+	{
+		std::shared_lock directLock(m_directInputMutex);
+		const auto directIt = m_directAxisValues.find(mapping);
+		if (directIt != m_directAxisValues.cend())
+			return directIt->second;
+	}
+
 	std::shared_lock lock(m_mutex);
 	const auto it = m_mappings.find(mapping);
 	if (it != m_mappings.cend())
@@ -277,6 +284,13 @@ float EmulatedController::get_axis_value(uint64 mapping) const
 
 bool EmulatedController::is_mapping_down(uint64 mapping) const
 {
+	{
+		std::shared_lock directLock(m_directInputMutex);
+		const auto directIt = m_directButtonValues.find(mapping);
+		if (directIt != m_directButtonValues.cend())
+			return directIt->second;
+	}
+
 	std::shared_lock lock(m_mutex);
 	const auto it = m_mappings.find(mapping);
 	if (it != m_mappings.cend())
@@ -285,6 +299,18 @@ bool EmulatedController::is_mapping_down(uint64 mapping) const
 			return controller->get_state().buttons.GetButtonState(it->second.button);
 	}
 	return false;
+}
+
+void EmulatedController::setButtonValue(uint64 mappingId, bool value)
+{
+	std::unique_lock directLock(m_directInputMutex);
+	m_directButtonValues[mappingId] = value;
+}
+
+void EmulatedController::setAxisValue(uint64 mappingId, float value)
+{
+	std::unique_lock directLock(m_directInputMutex);
+	m_directAxisValues[mappingId] = value;
 }
 
 

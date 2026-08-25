@@ -81,6 +81,12 @@ public:
 	void clear_mappings();
 	void set_mapping(uint64 mapping, const std::shared_ptr<ControllerBase>& controller_base, uint64 button);
 
+	// Define diretamente o valor de um botao/eixo por id de mapping (button id do
+	// Wii U), sem passar por um ControllerBase real. Usado pelo controle virtual em
+	// tela do Android (toques na UI), que nao tem um dispositivo fisico por tras.
+	void setButtonValue(uint64 mappingId, bool value);
+	void setAxisValue(uint64 mappingId, float value);
+
 	virtual uint32 get_emulated_button_flag(uint32 mapping) const = 0;
 
 	bool operator==(const EmulatedController& o) const;
@@ -118,6 +124,10 @@ protected:
 		uint64 button;
 	};
 	std::unordered_map<uint64, Mapping> m_mappings;
+
+	mutable std::shared_mutex m_directInputMutex;
+	std::unordered_map<uint64, bool> m_directButtonValues;
+	std::unordered_map<uint64, float> m_directAxisValues;
 
 	bool m_homebutton_down = false;
 };
