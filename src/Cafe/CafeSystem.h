@@ -59,6 +59,7 @@ namespace CafeSystem
 	CosCapabilityBits GetForegroundTitleCosCapabilities(CosCapabilityGroup group);
 
 	void ShutdownTitle();
+	void NotifyPPCProcessExit(sint32 status);
 
 	std::string GetMlcStoragePath(TitleId titleId);
 	void MlcStorageMountAllTitles();

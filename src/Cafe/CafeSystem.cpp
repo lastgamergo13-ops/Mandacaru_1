@@ -1079,6 +1079,12 @@ namespace CafeSystem
 		sSystemRunning = false;
 	}
 
+	void NotifyPPCProcessExit(sint32 status)
+	{
+		cemuLog_log(LogType::Force, "PPC process exited with status {}", status);
+		WindowSystem::NotifyGameExited();
+	}
+
 	/* Virtual mlc storage */
 
 	void InitVirtualMlcStorage()
