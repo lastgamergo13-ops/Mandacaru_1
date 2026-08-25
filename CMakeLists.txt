@@ -297,4 +297,8 @@ if (NOT ZArchive_FOUND)
 	add_subdirectory("dependencies/ZArchive" EXCLUDE_FROM_ALL)
 endif()
 
+if(ANDROID AND CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64)|(AARCH64)")
+	add_subdirectory("dependencies/libadrenotools" EXCLUDE_FROM_ALL)
+endif()
+
 add_subdirectory(src)
