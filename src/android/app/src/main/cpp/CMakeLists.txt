@@ -1,4 +1,5 @@
 add_library(CemuAndroid SHARED
+        ${CMAKE_SOURCE_DIR}/src/CemuCommonInit.cpp
         AndroidFilesystemCallbacks.cpp
         AndroidInputHelpers.cpp
         CompressTitleCallbacks.cpp

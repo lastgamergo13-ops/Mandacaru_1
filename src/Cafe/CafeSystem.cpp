@@ -43,6 +43,8 @@
 #include "Cafe/IOSU/fsa/iosu_fsa.h"
 #include "Cafe/IOSU/ODM/iosu_odm.h"
 
+std::atomic_bool g_isGPUInitFinished = false;
+
 // Cafe OS initializer and shutdown functions
 #include "Cafe/OS/libs/avm/avm.h"
 #include "Cafe/OS/libs/drmapp/drmapp.h"

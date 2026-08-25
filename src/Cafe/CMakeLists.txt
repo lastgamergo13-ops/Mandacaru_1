@@ -180,6 +180,8 @@ add_library(CemuCafe
   HW/Latte/Renderer/OpenGL/TextureReadbackGL.cpp
   HW/Latte/Renderer/Renderer.cpp
   HW/Latte/Renderer/Renderer.h
+  HW/Latte/Renderer/RendererCore.cpp
+  HW/Latte/Renderer/RendererCore.h
   HW/Latte/Renderer/RendererOuputShader.cpp
   HW/Latte/Renderer/RendererOuputShader.h
   HW/Latte/Renderer/RendererShader.cpp
