@@ -417,6 +417,7 @@ struct CemuConfig
 
 	ConfigValue<std::string> mlc_path{};
 	ConfigValue<std::string> proxy_server{};
+	ConfigValue<std::string> custom_driver_path{};
 
 	// temporary workaround because feature crashes on macOS
 #if BOOST_OS_MACOS

@@ -28,6 +28,7 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	permanent_storage = parser.get("permanent_storage", permanent_storage);
 
 	proxy_server = parser.get("proxy_server", "");
+	custom_driver_path = parser.get("custom_driver_path", "");
 	disable_screensaver = parser.get("disable_screensaver", disable_screensaver);
 	play_boot_sound = parser.get("play_boot_sound", play_boot_sound);
 	console_language = parser.get("console_language", console_language.GetInitValue());
@@ -302,6 +303,7 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	config.set("mlc_path", mlc_path.GetValue().c_str());
 	config.set<bool>("permanent_storage", permanent_storage);
 	config.set("proxy_server", proxy_server.GetValue().c_str());
+	config.set("custom_driver_path", custom_driver_path.GetValue().c_str());
 	config.set<bool>("play_boot_sound", play_boot_sound);
 
 	// config.set("cpu_mode", cpu_mode.GetValue());

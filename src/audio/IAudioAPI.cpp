@@ -206,6 +206,11 @@ void IAudioAPI::SetAudioDelayOverride(uint32 delay)
 	m_audioDelayOverride = delay;
 }
 
+void IAudioAPI::SetAudioDelay(uint32 delay)
+{
+	s_audioDelay = delay;
+}
+
 uint32 IAudioAPI::GetAudioDelay() const
 {
 	return m_audioDelayOverride > 0 ? m_audioDelayOverride : s_audioDelay;
