@@ -243,7 +243,7 @@ void LoadOpenGLImports()
 #include "Common/GLInclude/glFunctions.h"
 #undef GLFUNC
 }
-#elif BOOST_OS_LINUX || BOOST_OS_BSD
+#elif (BOOST_OS_LINUX || BOOST_OS_BSD) && !defined(__ANDROID__)
 GL_IMPORT _GetOpenGLFunction(void* hLib, PFNGLXGETPROCADDRESSPROC func, const char* name)
 {
 	GL_IMPORT r = (GL_IMPORT)func((const GLubyte*)name);
@@ -278,7 +278,6 @@ void LoadOpenGLImports()
 #undef EGLFUNC
 }
 
-#if BOOST_OS_LINUX || BOOST_OS_BSD
 // dummy function for all code that is statically linked with cemu and attempts to use eglSwapInterval
 // used to suppress wxWidgets calls to eglSwapInterval
 extern "C"
@@ -286,7 +285,13 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 {
 	return EGL_TRUE;
 }
-#endif
+
+#elif defined(__ANDROID__)
+// the OpenGL backend is not implemented/used on Android (ENABLE_OPENGL is off; Vulkan is the only backend), so this is just a stub to satisfy the linker
+void LoadOpenGLImports()
+{
+	cemu_assert_unimplemented();
+}
 
 #elif BOOST_OS_MACOS
 void LoadOpenGLImports()
