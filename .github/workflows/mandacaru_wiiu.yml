@@ -26,7 +26,7 @@ jobs:
     name: Deploy experimental release
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
