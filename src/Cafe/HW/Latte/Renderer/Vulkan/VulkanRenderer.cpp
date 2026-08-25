@@ -123,6 +123,8 @@ std::vector<VulkanRenderer::DeviceInfo> VulkanRenderer::GetDevices()
 	#endif
 	#elif BOOST_OS_MACOS
 	requiredExtensions.emplace_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
+	#elif defined(__ANDROID__)
+	requiredExtensions.emplace_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
 	#endif
 
 	VkApplicationInfo app_info{};
@@ -1495,6 +1497,8 @@ std::vector<const char*> VulkanRenderer::CheckInstanceExtensionSupport(FeatureCo
 	#endif
 	#elif BOOST_OS_MACOS
 	requiredInstanceExtensions.emplace_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
+	#elif defined(__ANDROID__)
+	requiredInstanceExtensions.emplace_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
 	#endif
 	if (cemuLog_isLoggingEnabled(LogType::VulkanValidation))
 		requiredInstanceExtensions.emplace_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
@@ -1632,14 +1636,35 @@ VkSurfaceKHR VulkanRenderer::CreateWaylandSurface(VkInstance instance, wl_displa
 #endif // HAS_WAYLAND
 #endif // BOOST_OS_LINUX
 
+#ifdef __ANDROID__
+VkSurfaceKHR VulkanRenderer::CreateAndroidSurface(VkInstance instance, ANativeWindow* window)
+{
+	VkAndroidSurfaceCreateInfoKHR sci{};
+	sci.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+	sci.flags = 0;
+	sci.window = window;
+
+	VkSurfaceKHR result;
+	VkResult err;
+	if ((err = vkCreateAndroidSurfaceKHR(instance, &sci, nullptr, &result)) != VK_SUCCESS)
+	{
+		cemuLog_log(LogType::Force, "Cannot create an Android Vulkan surface: {}", (sint32)err);
+		throw std::runtime_error(fmt::format("Cannot create an Android Vulkan surface: {}", err));
+	}
+
+	return result;
+}
+#endif // __ANDROID__
+
 VkSurfaceKHR VulkanRenderer::CreateFramebufferSurface(VkInstance instance, WindowSystem::WindowHandleInfo& windowInfo)
 {
 #if BOOST_OS_WINDOWS
 	return CreateWinSurface(instance, static_cast<HWND>(windowInfo.surface));
 #elif defined(__ANDROID__)
-	// TODO: criacao real de VkSurfaceKHR via vkCreateAndroidSurfaceKHR + ANativeWindow.
-	// Ainda nao implementado nesse fork - falha explicita em vez de comportamento indefinido.
-	throw std::runtime_error("CreateFramebufferSurface: superficie Vulkan para Android ainda nao implementada");
+	auto nativeWindow = windowInfo.surface.load();
+	if (nativeWindow == nullptr)
+		throw std::runtime_error("CreateFramebufferSurface: ANativeWindow nulo (surface Android ainda nao esta pronta)");
+	return CreateAndroidSurface(instance, static_cast<ANativeWindow*>(nativeWindow));
 #elif BOOST_OS_LINUX || BOOST_OS_BSD
 	if(windowInfo.backend == WindowSystem::WindowHandleInfo::Backend::X11)
 		return CreateXlibSurface(instance, static_cast<Display*>(windowInfo.display), reinterpret_cast<Window>(static_cast<void*>(windowInfo.surface)));

@@ -5,6 +5,10 @@
 #define VK_USE_PLATFORM_WIN32_KHR // todo - define in CMakeLists.txt
 #endif
 
+#ifdef __ANDROID__
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
+
 #include <vulkan/vulkan.h>
 
 bool InitializeGlobalVulkan();
@@ -136,6 +140,10 @@ VKFUNC_INSTANCE(vkCreateXcbSurfaceKHR);
 #ifdef HAS_WAYLAND
 VKFUNC_INSTANCE(vkCreateWaylandSurfaceKHR);
 #endif
+#endif
+
+#ifdef __ANDROID__
+VKFUNC_INSTANCE(vkCreateAndroidSurfaceKHR);
 #endif
 
 #if BOOST_OS_WINDOWS
