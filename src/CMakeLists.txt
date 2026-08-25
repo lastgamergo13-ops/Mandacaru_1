@@ -64,9 +64,15 @@ add_subdirectory(util)
 add_subdirectory(imgui)
 add_subdirectory(resource)
 
+if(ANDROID)
+add_subdirectory(android/app/src/main/cpp)
+endif()
+
+if(NOT ANDROID)
 add_executable(CemuBin
 	main.cpp
 	mainLLE.cpp
+	CemuCommonInit.cpp
 )
 
 cemu_use_precompiled_header(CemuBin)
@@ -239,3 +245,5 @@ endif()
 if (BSD)
 	target_link_libraries(CemuBin PRIVATE execinfo SPIRV-Tools SPIRV-Tools-opt)
 endif()
+
+endif() # NOT ANDROID
