@@ -2,6 +2,7 @@
 #include "Cafe/OS/libs/coreinit/coreinit_FS.h"
 #include "Cafe/OS/libs/gx2/GX2.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
+#include "Cafe/OS/libs/swkbd/swkbd.h"
 
 #include <imgui.h>
 #include "imgui/imgui_extension.h"
