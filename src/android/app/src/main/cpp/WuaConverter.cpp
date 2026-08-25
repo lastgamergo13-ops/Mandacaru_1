@@ -228,10 +228,11 @@ void WuaConverter::StartConversion(int fd, std::unique_ptr<CompressTitleCallback
 			return;
 		}
 
-		boost::iostreams::stream_buffer<boost::iostreams::file_descriptor_source> streamBuffer(fd, boost::iostreams::never_close_handle);
-
 		// verify the created WUA file
-		ZArchiveReader* zreader = ZArchiveReader::OpenFromStream(std::make_unique<std::istream>(&streamBuffer));
+		// ZArchiveReader only supports opening a real filesystem path (no OpenFromStream API),
+		// so we reopen the same fd through /proc/self/fd, which Linux/Android expose as a
+		// real path pointing back to the already-open file descriptor.
+		ZArchiveReader* zreader = ZArchiveReader::OpenFromFile(fmt::format("/proc/self/fd/{}", fd));
 		if (!zreader)
 		{
 			callbacks->OnError();
