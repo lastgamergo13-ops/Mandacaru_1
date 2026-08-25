@@ -89,6 +89,39 @@ swkbdInternalState_t* swkbdInternalState = nullptr;
 sint32 isNeedCalcSubThreadFont = 0;
 sint32 isNeedCalcSubThreadPredict = 0;
 
+namespace swkbd
+{
+	std::shared_ptr<swkbdCallbacks> s_swkbdCallbacks;
+
+	void setSwkbdCallbacks(std::shared_ptr<swkbdCallbacks> callbacks)
+	{
+		s_swkbdCallbacks = std::move(callbacks);
+	}
+
+	void keyInput(uint32 keyCode)
+	{
+		swkbd_keyInput(keyCode);
+	}
+} // namespace swkbd
+
+// Notifica a plataforma (via callbacks, se houver alguma registrada) que o
+// teclado deveria aparecer/desaparecer. Chamado pelas 4 funcoes Swkbd*Appear*
+// e Swkbd*Disappear* logo abaixo.
+static void swkbd_notifyShow()
+{
+	if (!swkbd::s_swkbdCallbacks)
+		return;
+	auto text = boost::nowide::narrow(fmt::format(L"{}", swkbdInternalState->formStringBuffer));
+	swkbd::s_swkbdCallbacks->showSoftwareKeyboard(text, swkbdInternalState->maxTextLength);
+}
+
+static void swkbd_notifyHide()
+{
+	if (!swkbd::s_swkbdCallbacks)
+		return;
+	swkbd::s_swkbdCallbacks->hideSoftwareKeyboard();
+}
+
 void SwkbdCreate(uint8* workMemory, uint32 regionType, uint32 unk, coreinit::FSClient_t* fsClient)
 {
 	if( swkbdInternalState == nullptr )
@@ -222,6 +255,7 @@ uint32 SwkbdAppearInputForm(const swkbdAppearArg_t* appearArg)
 		swkbdInternalState->formStringBuffer[0] = '\0';
 		swkbdInternalState->formStringLength = 0;
 	}
+	swkbd_notifyShow();
 	return 1;
 }
 
@@ -241,6 +275,7 @@ uint32 SwkbdAppearKeyboard(const SwkbdKeyboardArg_t* keyboardArg)
 	swkbdInternalState->formStringBuffer[0] = '\0';
 	swkbdInternalState->formStringLength = 0;
 	swkbdInternalState->keyboardArg = *keyboardArg;
+	swkbd_notifyShow();
 	return 1;
 }
 
@@ -248,6 +283,7 @@ uint32 SwkbdDisappearInputForm()
 {
 	debug_printf("SwkbdDisappearInputForm__3RplFv\n");
 	swkbdInternalState->isActive = false;
+	swkbd_notifyHide();
 	return 1;
 }
 
@@ -255,6 +291,7 @@ uint32 SwkbdDisappearKeyboard()
 {
 	debug_printf("SwkbdDisappearKeyboard__3RplFv\n");
 	swkbdInternalState->isActive = false;
+	swkbd_notifyHide();
 	return 1;
 }
 
