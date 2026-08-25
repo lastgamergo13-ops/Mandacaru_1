@@ -1234,6 +1234,34 @@ namespace coreinit
         __OSUnlockScheduler();
     }
 
+	// suspends every currently active PPC thread without affecting their suspend counter semantics for callers
+	// (used to pause emulation, e.g. on Android when the app is backgrounded)
+	void SuspendActiveThreads()
+	{
+		__OSLockScheduler();
+		for (sint32 i = 0; i < activeThreadCount; i++)
+		{
+			MEMPTR<OSThread_t> t{activeThread[i]};
+			if (t->state == OSThread_t::THREAD_STATE::STATE_NONE || t->state == OSThread_t::THREAD_STATE::STATE_MORIBUND)
+				continue;
+			__OSSuspendThreadInternal(t.GetPtr());
+		}
+		__OSUnlockScheduler();
+	}
+
+	void ResumeActiveThreads()
+	{
+		__OSLockScheduler();
+		for (sint32 i = 0; i < activeThreadCount; i++)
+		{
+			MEMPTR<OSThread_t> t{activeThread[i]};
+			if (t->state == OSThread_t::THREAD_STATE::STATE_NONE || t->state == OSThread_t::THREAD_STATE::STATE_MORIBUND)
+				continue;
+			__OSResumeThreadInternal(t.GetPtr(), 1);
+		}
+		__OSUnlockScheduler();
+	}
+
 	void __OSCheckSystemEvents()
 	{
 		// AX update

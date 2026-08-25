@@ -612,6 +612,10 @@ namespace coreinit
 	void OSSchedulerEnd();
 	bool OSIsSchedulerActive();
 
+	// suspends/resumes every currently active PPC thread (used to pause/resume emulation, e.g. on Android when the app is backgrounded)
+	void SuspendActiveThreads();
+	void ResumeActiveThreads();
+
 	// internal
 	void __OSAddReadyThreadToRunQueue(OSThread_t* thread);
 	bool __OSCoreShouldSwitchToThread(OSThread_t* currentThread, OSThread_t* newThread, bool sharedPriorityAndAffinityWorkaround);
