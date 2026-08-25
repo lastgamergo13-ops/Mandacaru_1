@@ -102,3 +102,7 @@ target_include_directories(CemuUtil PUBLIC "../")
 target_link_libraries(CemuUtil PRIVATE
   CemuCommon
 )
+
+if(ANDROID)
+  target_link_libraries(CemuUtil PRIVATE Boost::context)
+endif()

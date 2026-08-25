@@ -154,7 +154,7 @@ option(ENABLE_WXWIDGETS "Build with wxWidgets UI (Currently required)" ON)
 find_package(Threads REQUIRED)
 find_package(pugixml REQUIRED)
 find_package(RapidJSON REQUIRED)
-find_package(Boost COMPONENTS program_options filesystem nowide REQUIRED)
+find_package(Boost COMPONENTS program_options filesystem nowide context REQUIRED)
 find_package(libzip REQUIRED)
 find_package(glslang REQUIRED)
 find_package(ZLIB CONFIG QUIET) # vcpkg ships a ZLIB config package; prefer it over CMake's bundled Module-mode FindZLIB, which can silently fail to produce the ZLIB::ZLIB target / legacy vars on some Android+vcpkg toolchain combos

@@ -1,6 +1,103 @@
 #include "Fiber.h"
-#include <ucontext.h>
 #include <atomic>
+#include <cstdlib>
+
+#ifdef __ANDROID__
+// Bionic (a libc do Android) nunca implementou ucontext.h (getcontext/makecontext/
+// swapcontext) - e uma limitacao conhecida e antiga do NDK. Por isso usamos
+// Boost.Context (biblioteca ja usada em outras partes do projeto) como
+// implementacao alternativa de troca de stack no Android.
+#include <boost/context/detail/fcontext.hpp>
+
+using namespace boost::context::detail;
+
+thread_local Fiber* sCurrentFiber{};
+
+namespace
+{
+	void FiberTrampoline(transfer_t t)
+	{
+		// So executado na primeira vez que se troca para esse fiber. 'data' e o
+		// ponteiro para o proprio objeto Fiber, passado no primeiro jump_fcontext.
+		Fiber* self = static_cast<Fiber*>(t.data);
+		self->AndroidRunEntryPoint();
+		// FiberEntryPoint nao deveria retornar (mesma premissa do resto do projeto
+		// pras outras plataformas). Se retornar, nao ha um destino valido pra saltar.
+		std::abort();
+	}
+} // namespace
+
+Fiber::Fiber(void(*FiberEntryPoint)(void* userParam), void* userParam, void* privateData) : m_privateData(privateData)
+{
+	const size_t stackSize = 2 * 1024 * 1024;
+	m_stackPtr = malloc(stackSize);
+
+	// Boost.Context espera o ponteiro para o topo (endereco mais alto) da stack.
+	void* stackTop = static_cast<char*>(m_stackPtr) + stackSize;
+	fcontext_t ctx = make_fcontext(stackTop, stackSize, &FiberTrampoline);
+
+	m_implData = new fcontext_t(ctx);
+	m_androidEntryPoint = FiberEntryPoint;
+	m_androidUserParam = userParam;
+}
+
+Fiber::Fiber(void* privateData) : m_privateData(privateData)
+{
+	// Fiber representando a thread atual (ex: a thread principal). O contexto
+	// so passa a ser valido depois que essa fiber ceder o controle pela primeira
+	// vez via Switch() - antes disso nunca sera usado como alvo de um jump_fcontext.
+	m_implData = new fcontext_t();
+	m_stackPtr = nullptr;
+	m_androidEntryPoint = nullptr;
+	m_androidUserParam = nullptr;
+}
+
+Fiber::~Fiber()
+{
+	if (m_stackPtr)
+		free(m_stackPtr);
+	delete static_cast<fcontext_t*>(m_implData);
+}
+
+Fiber* Fiber::PrepareCurrentThread(void* privateData)
+{
+	cemu_assert_debug(sCurrentFiber == nullptr);
+	sCurrentFiber = new Fiber(privateData);
+	return sCurrentFiber;
+}
+
+void Fiber::Switch(Fiber& targetFiber)
+{
+	Fiber* leavingFiber = sCurrentFiber;
+	sCurrentFiber = &targetFiber;
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+
+	fcontext_t* leavingCtx = static_cast<fcontext_t*>(leavingFiber->m_implData);
+	fcontext_t* targetCtx = static_cast<fcontext_t*>(targetFiber.m_implData);
+
+	transfer_t result = jump_fcontext(*targetCtx, &targetFiber);
+
+	// Chegamos aqui quando outro fiber troca de volta para 'leavingFiber' (nos
+	// mesmos). Atualiza nosso proprio ponto de retomada com o que acabamos de
+	// receber, para que outros possam trocar para nos corretamente no futuro.
+	*leavingCtx = result.fctx;
+
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+}
+
+void* Fiber::GetFiberPrivateData()
+{
+	return sCurrentFiber->m_privateData;
+}
+
+void Fiber::AndroidRunEntryPoint()
+{
+	m_androidEntryPoint(m_androidUserParam);
+}
+
+#else // !__ANDROID__
+
+#include <ucontext.h>
 
 thread_local Fiber* sCurrentFiber{};
 
@@ -59,3 +156,5 @@ void* Fiber::GetFiberPrivateData()
 {
 	return sCurrentFiber->m_privateData;
 }
+
+#endif // __ANDROID__
