@@ -25,6 +25,18 @@ void CemuCommonInit();
 namespace NativeEmulation
 {
 
+	// adrenotools only supports hooking Qualcomm's Adreno Vulkan driver, so custom driver
+	// loading is only offered on devices that report an Adreno GPU
+	bool SupportsLoadingCustomDriver()
+	{
+		for (const auto& device : VulkanRenderer::GetDevices())
+		{
+			if (device.name.find("Adreno") != std::string::npos)
+				return true;
+		}
+		return false;
+	}
+
 	void CreateAudioDevice(IAudioAPI::AudioAPI audioApi, AudioChannels channels, sint32 volume, bool isTV)
 	{
 		constexpr int AX_FRAMES_PER_GROUP = 4;
@@ -268,7 +280,7 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_clearPadSurface([[maybe_unus
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeEmulation_supportsLoadingCustomDriver([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
-	return SupportsLoadingCustomDriver();
+	return NativeEmulation::SupportsLoadingCustomDriver();
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL

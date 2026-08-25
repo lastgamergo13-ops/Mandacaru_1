@@ -226,7 +226,7 @@ bool GameProfile::Load(uint64_t title_id)
 				m_graphics_api = (GraphicAPI)graphicsApi.value;
 
 			gameProfile_loadEnumOption(iniParser, "accurateShaderMul", m_accurateShaderMul);
-#ifdef ENABLE_METAL
+#if ENABLE_METAL
 			gameProfile_loadBooleanOption2(iniParser, "shaderFastMath", m_shaderFastMath);
 			gameProfile_loadEnumOption(iniParser, "metalBufferCacheMode2", m_metalBufferCacheMode);
 			gameProfile_loadEnumOption(iniParser, "positionInvariance2", m_positionInvariance);
@@ -275,6 +275,17 @@ bool GameProfile::Load(uint64_t title_id)
 			}
 
 		}
+#if BOOST_PLAT_ANDROID
+		else if (boost::iequals(iniParser.GetCurrentSectionName(), "AndroidDriver"))
+		{
+			gameProfile_loadEnumOption(iniParser, "mode", m_driverSetting.mode);
+
+			if (m_driverSetting.mode == DriverSettingMode::Custom)
+			{
+				m_driverSetting.customPath = iniParser.FindOption("customPath");
+			}
+		}
+#endif
 	}
 	return true;
 }
@@ -311,7 +322,7 @@ void GameProfile::Save(uint64_t title_id)
 
 	fs->writeLine("[Graphics]");
 	WRITE_ENTRY(accurateShaderMul);
-#ifdef ENABLE_METAL
+#if ENABLE_METAL
 	WRITE_ENTRY(shaderFastMath);
 	WRITE_ENTRY_NUMBERED(metalBufferCacheMode, 2);
 	WRITE_ENTRY_NUMBERED(positionInvariance, 2);
@@ -328,6 +339,14 @@ void GameProfile::Save(uint64_t title_id)
 	}
 
 	fs->writeLine("");
+
+#if BOOST_PLAT_ANDROID
+	fs->writeLine("[AndroidDriver]");
+	fs->writeLine(fmt::format("{} = {}", "mode", m_driverSetting.mode).c_str());
+	if (m_driverSetting.mode == DriverSettingMode::Custom && m_driverSetting.customPath.has_value())
+		fs->writeLine(fmt::format("{} = {}", "customPath", m_driverSetting.customPath.value()).c_str());
+	fs->writeLine("");
+#endif
 
 #undef WRITE_OPTIONAL_ENTRY
 #undef WRITE_ENTRY
@@ -346,7 +365,7 @@ void GameProfile::ResetOptional()
 
 	// graphic settings
 	m_accurateShaderMul = AccurateShaderMulOption::True;
-#ifdef ENABLE_METAL
+#if ENABLE_METAL
 	m_shaderFastMath = true;
 	m_metalBufferCacheMode = MetalBufferCacheMode::Auto;
 	m_positionInvariance = PositionInvariance::Auto;
@@ -371,7 +390,7 @@ void GameProfile::Reset()
 
 	// graphic settings
 	m_accurateShaderMul = AccurateShaderMulOption::True;
-#ifdef ENABLE_METAL
+#if ENABLE_METAL
 	m_shaderFastMath = true;
 	m_metalBufferCacheMode = MetalBufferCacheMode::Auto;
 	m_positionInvariance = PositionInvariance::Auto;

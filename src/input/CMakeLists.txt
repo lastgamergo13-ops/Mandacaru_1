@@ -98,6 +98,21 @@ if(ENABLE_SDL)
 	target_link_libraries(CemuInput PRIVATE	SDL3::SDL3)
 endif()
 
+if(ANDROID)
+	target_sources(CemuInput PRIVATE
+		api/Device/DeviceController.cpp
+		api/Device/DeviceController.h
+		api/Device/DeviceControllerProvider.cpp
+		api/Device/DeviceControllerProvider.h
+		api/Android/AndroidController.cpp
+		api/Android/AndroidController.h
+		api/Android/AndroidControllerProvider.cpp
+		api/Android/AndroidControllerProvider.h
+		api/Android/ControllerManager.cpp
+		api/Android/ControllerManager.h
+	)
+endif()
+
 target_include_directories(CemuInput PUBLIC "../")
 
 target_link_libraries(CemuInput PRIVATE

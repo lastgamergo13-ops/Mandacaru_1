@@ -166,6 +166,15 @@ enum class CPUModeLegacy
 };
 ENABLE_ENUM_ITERATORS(CPUModeLegacy, CPUModeLegacy::SinglecoreInterpreter, CPUModeLegacy::Auto);
 
+// values match info.cemu.cemu.nativeinterface.NativeGameTitles.DriverSettingMode on the Android/Kotlin side
+enum class DriverSettingMode
+{
+	Global = 0,
+	System = 1,
+	Custom = 2,
+};
+ENABLE_ENUM_ITERATORS(DriverSettingMode, DriverSettingMode::Global, DriverSettingMode::Custom);
+
 enum class CafeConsoleRegion
 {
 	JPN = 0x1,
