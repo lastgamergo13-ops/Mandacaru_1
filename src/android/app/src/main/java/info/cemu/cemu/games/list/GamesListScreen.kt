@@ -8,10 +8,13 @@ import android.content.Context
 import android.content.Intent
 import android.provider.DocumentsContract
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,6 +23,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -49,8 +53,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,7 +71,7 @@ import info.cemu.cemu.R
 import info.cemu.cemu.common.ui.components.FilledSearchToolbar
 import info.cemu.cemu.common.ui.extensions.showMessage
 import info.cemu.cemu.common.ui.localization.tr
-import info.cemu.cemu.games.GameIcon
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 import info.cemu.cemu.nativeinterface.NativeActiveSettings
 import info.cemu.cemu.nativeinterface.NativeGameTitles
 import info.cemu.cemu.nativeinterface.NativeGameTitles.Game
@@ -108,6 +116,7 @@ fun GamesListScreen(
     }
 
     Scaffold(
+        containerColor = SteamDeckColors.Background,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             FilledSearchToolbar(
@@ -211,7 +220,9 @@ private fun GameList(
         modifier = Modifier
             .padding(8.dp)
             .fillMaxSize(),
-        columns = GridCells.Adaptive(620.dp),
+        columns = GridCells.Adaptive(150.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(items = games, key = { it.path }) { game ->
             var showDeleteShaderConfirmationDialog by remember { mutableStateOf(false) }
@@ -275,44 +286,70 @@ private fun GameListItem(
     modifier: Modifier = Modifier,
 ) {
     var contextMenuExpanded by rememberSaveable { mutableStateOf(false) }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Box(
         modifier = modifier
+            .aspectRatio(0.8f)
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFF2A475E))
             .combinedClickable(
                 onClick = { onStartGame(game) },
-                onLongClick = {
-                    contextMenuExpanded = true
-                },
-            )
-            .padding(8.dp)
-            .fillMaxWidth(),
+                onLongClick = { contextMenuExpanded = true },
+            ),
     ) {
-        Box {
-            GameIcon(
-                game = game,
-                modifier = Modifier.size(60.dp),
+        // capa/ícone real do jogo preenchendo o card inteiro
+        if (game.icon != null) {
+            Image(
+                modifier = Modifier.fillMaxSize(),
+                bitmap = game.icon!!,
+                contentScale = ContentScale.Crop,
+                contentDescription = null,
             )
-            if (game.isFavorite) {
-                Icon(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(2.dp)
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    painter = painterResource(R.drawable.ic_favorite),
-                    tint = MaterialTheme.colorScheme.primary,
-                    contentDescription = null
-                )
-            }
+        } else {
+            Icon(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                painter = painterResource(R.drawable.ic_question_mark),
+                contentDescription = null,
+            )
         }
-        Text(
-            modifier = Modifier.padding(horizontal = 8.dp),
-            text = game.name ?: "",
-            fontSize = 24.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+
+        // faixa escura com o nome do jogo, no rodapé do card
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
+                    )
+                )
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+        ) {
+            Text(
+                text = game.name ?: "",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        if (game.isFavorite) {
+            Icon(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                painter = painterResource(R.drawable.ic_favorite),
+                tint = MaterialTheme.colorScheme.primary,
+                contentDescription = null
+            )
+        }
+
         GameContextMenu(
             expanded = contextMenuExpanded,
             onDismissRequest = { contextMenuExpanded = false },
