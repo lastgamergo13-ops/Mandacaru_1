@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.dropUnlessResumed
 import info.cemu.cemu.R
 import info.cemu.cemu.common.ui.theme.SteamDeckColors
+import info.cemu.cemu.nativeinterface.NativeGameTitles
 
 @Composable
 fun ScreenContent(
@@ -168,6 +169,45 @@ fun ScreenContentLazyWithSidebar(
             LazyColumn(
                 verticalArrangement = contentVerticalArrangement,
                 modifier = contentModifier.fillMaxSize(),
+            ) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+fun ScreenContentWithGamePanel(
+    appBarText: String,
+    navigateBack: () -> Unit,
+    game: NativeGameTitles.Game,
+    onPlay: () -> Unit,
+    onEditProfile: () -> Unit,
+    onFavoriteChanged: (Boolean) -> Unit,
+    onRemoveShaderCaches: () -> Unit,
+    snackbarHost: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+    contentModifier: Modifier = Modifier.padding(8.dp),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ScreenContentGeneric(
+        navigateBack = navigateBack,
+        appBarTitle = { DefaultAppBarTitle(appBarText) },
+        snackbarHost = snackbarHost,
+        actions = actions,
+    ) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            GameSidePanel(
+                game = game,
+                onPlay = onPlay,
+                onEditProfile = onEditProfile,
+                onFavoriteChanged = onFavoriteChanged,
+                onRemoveShaderCaches = onRemoveShaderCaches,
+            )
+            Column(
+                modifier = contentModifier
+                    .verticalScroll(rememberScrollState())
+                    .fillMaxSize(),
             ) {
                 content()
             }

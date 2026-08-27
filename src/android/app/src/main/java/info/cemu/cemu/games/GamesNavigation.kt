@@ -3,6 +3,7 @@ package info.cemu.cemu.games
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavGraphBuilder
@@ -34,8 +35,8 @@ private inline fun <reified T : Any> NavGraphBuilder.composableGameScreen(
     noinline content: @Composable (AnimatedContentScope.(NativeGameTitles.Game) -> Unit),
 ) {
     composable<T> {
-        val previousBackStackEntry = navController.previousBackStackEntry ?: return@composable
-        val game = viewModel<GameViewModel>(previousBackStackEntry).game
+        val parentEntry = remember(it) { navController.getBackStackEntry(GameListRoute) }
+        val game = viewModel<GameViewModel>(parentEntry).game
 
         LaunchedEffect(game) {
             if (game == null) navController.popBackStack()
@@ -61,7 +62,10 @@ fun NavGraphBuilder.gamesNavigation(
 ) {
     navigation<GameListRoute>(startDestination = GameListRoutes.GamesRoute) {
         composable<GameListRoutes.GamesRoute> { backStackEntry ->
-            val gameViewModel: GameViewModel = viewModel(backStackEntry)
+            val parentEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(GameListRoute)
+            }
+            val gameViewModel: GameViewModel = viewModel(parentEntry)
             GamesListScreen(
                 startGame = startGame,
                 tryCreateShortcut = tryCreateShortcut,
@@ -85,12 +89,15 @@ fun NavGraphBuilder.gamesNavigation(
             GameDetailsScreen(
                 game = game,
                 navigateBack = { navController.popBackStack() },
+                startGame = startGame,
+                goToGameEditProfile = { navController.navigate(GameListRoutes.GameProfileEditRoute) },
             )
         }
         composableGameScreen<GameListRoutes.GameProfileEditRoute>(navController) { game ->
             GameProfileEditScreen(
                 game = game,
                 navigateBack = { navController.popBackStack() },
+                startGame = startGame,
             )
         }
     }

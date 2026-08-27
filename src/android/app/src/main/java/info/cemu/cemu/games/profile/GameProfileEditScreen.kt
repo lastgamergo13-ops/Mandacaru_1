@@ -2,27 +2,32 @@ package info.cemu.cemu.games.profile
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.common.ui.components.Header
-import info.cemu.cemu.common.ui.components.ScreenContent
+import info.cemu.cemu.common.ui.components.ScreenContentWithGamePanel
 import info.cemu.cemu.common.ui.components.SingleSelection
 import info.cemu.cemu.common.ui.components.Toggle
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.nativeinterface.NativeEmulation
 import info.cemu.cemu.nativeinterface.NativeGameTitles
 import info.cemu.cemu.nativeinterface.NativeGameTitles.DriverSettingMode
+import kotlinx.coroutines.launch
 
 @Composable
 fun GameProfileEditScreen(
     game: NativeGameTitles.Game,
     navigateBack: () -> Unit,
+    startGame: (NativeGameTitles.Game) -> Unit,
     viewModel: GameProfileEditViewModel = viewModel(
         factory = GameProfileEditViewModel.Factory,
         extras = MutableCreationExtras().apply {
@@ -31,17 +36,28 @@ fun GameProfileEditScreen(
     ),
 ) {
     val supportsLoadingCustomDrivers = remember { NativeEmulation.supportsLoadingCustomDriver() }
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val driverSettingChoices by viewModel.driverSettingChoices.collectAsState()
     val selectedDriverSetting by viewModel.selectedDriverSetting.collectAsState()
 
     val titleId = game.titleId
 
-    ScreenContent(
+    ScreenContentWithGamePanel(
         appBarText = tr("Edit game profile"),
         navigateBack = navigateBack,
         contentModifier = Modifier.padding(16.dp),
         contentVerticalArrangement = Arrangement.spacedBy(16.dp),
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        game = game,
+        onPlay = { startGame(game) },
+        onEditProfile = {},
+        onFavoriteChanged = { NativeGameTitles.setGameTitleFavorite(titleId, it) },
+        onRemoveShaderCaches = {
+            NativeGameTitles.removeShaderCacheFilesForTitle(titleId)
+            scope.launch { snackbarHostState.showSnackbar(tr("Shader caches removed")) }
+        },
     ) {
         Header(text = game.name)
         Toggle(

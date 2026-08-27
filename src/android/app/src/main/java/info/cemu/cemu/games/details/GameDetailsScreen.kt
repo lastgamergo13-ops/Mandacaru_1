@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -18,10 +17,10 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import info.cemu.cemu.common.ui.components.ScreenContent
+import info.cemu.cemu.common.ui.components.ScreenContentWithGamePanel
 import info.cemu.cemu.common.ui.localization.regionToString
 import info.cemu.cemu.common.ui.localization.tr
-import info.cemu.cemu.games.GameIcon
+import info.cemu.cemu.nativeinterface.NativeGameTitles
 import info.cemu.cemu.nativeinterface.NativeGameTitles.Game
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -29,7 +28,12 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 @Composable
-fun GameDetailsScreen(game: Game?, navigateBack: () -> Unit) {
+fun GameDetailsScreen(
+    game: Game?,
+    navigateBack: () -> Unit,
+    startGame: (Game) -> Unit,
+    goToGameEditProfile: (Game) -> Unit,
+) {
     if (game == null)
         return
 
@@ -65,15 +69,19 @@ fun GameDetailsScreen(game: Game?, navigateBack: () -> Unit) {
         }
     }
 
-    ScreenContent(
+    ScreenContentWithGamePanel(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         appBarText = tr("About title"),
         navigateBack = navigateBack,
+        game = game,
+        onPlay = { startGame(game) },
+        onEditProfile = { goToGameEditProfile(game) },
+        onFavoriteChanged = { NativeGameTitles.setGameTitleFavorite(game.titleId, it) },
+        onRemoveShaderCaches = {
+            NativeGameTitles.removeShaderCacheFilesForTitle(game.titleId)
+            scope.launch { snackbarHostState.showSnackbar(tr("Shader caches removed")) }
+        },
     ) {
-        GameIcon(
-            game = game,
-            modifier = Modifier.size(128.dp),
-        )
         TitleDetailsEntry(entryName = tr("Title name"), entryData = game.name)
         TitleDetailsEntry(entryName = tr("Title ID"), entryData = game.titleId)
         TitleDetailsEntry(entryName = tr("Version"), entryData = game.version)
