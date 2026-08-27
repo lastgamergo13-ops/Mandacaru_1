@@ -37,7 +37,6 @@
             android:launchMode="singleTop"
             android:parentActivityName=".MainActivity"
             android:screenOrientation="userLandscape"
-            android:windowLayoutInDisplayCutoutMode="always"
             tools:ignore="DiscouragedApi">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

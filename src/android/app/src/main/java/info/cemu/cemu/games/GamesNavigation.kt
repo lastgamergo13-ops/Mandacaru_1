@@ -56,6 +56,8 @@ fun NavGraphBuilder.gamesNavigation(
     goToTitleManager: () -> Unit,
     goToGraphicPacks: () -> Unit,
     goToAboutCemu: () -> Unit,
+    goToMedia: () -> Unit,
+    goToDownload: () -> Unit,
 ) {
     navigation<GameListRoute>(startDestination = GameListRoutes.GamesRoute) {
         composable<GameListRoutes.GamesRoute> { backStackEntry ->
@@ -75,6 +77,8 @@ fun NavGraphBuilder.gamesNavigation(
                 goToTitleManager = goToTitleManager,
                 goToGraphicPacks = goToGraphicPacks,
                 goToAboutCemu = goToAboutCemu,
+                goToMedia = goToMedia,
+                goToDownload = goToDownload,
             )
         }
         composableGameScreen<GameListRoutes.GameDetailsRoute>(navController) { game ->

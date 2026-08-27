@@ -49,6 +49,7 @@ fun FilledSearchToolbar(
     query: String,
     hint: String,
     onValueChange: (String) -> Unit,
+    navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     var searchBarActive by remember { mutableStateOf(false) }
@@ -59,6 +60,7 @@ fun FilledSearchToolbar(
     }
 
     TopAppBar(
+        navigationIcon = navigationIcon,
         actions = actions,
         title = {
             Card(

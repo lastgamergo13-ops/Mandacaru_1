@@ -23,11 +23,15 @@ import info.cemu.cemu.about.aboutCemuNavigation
 import info.cemu.cemu.common.input.GamepadInputSource
 import info.cemu.cemu.common.ui.components.ActivityContent
 import info.cemu.cemu.common.ui.localization.TranslatableContent
+import info.cemu.cemu.download.DownloadRoute
+import info.cemu.cemu.download.downloadNavigation
 import info.cemu.cemu.emulation.EmulationActivity
 import info.cemu.cemu.games.GameListRoute
 import info.cemu.cemu.games.gamesNavigation
 import info.cemu.cemu.graphicpacks.GraphicPacksRoute
 import info.cemu.cemu.graphicpacks.graphicPacksNavigation
+import info.cemu.cemu.media.MediaRoute
+import info.cemu.cemu.media.mediaNavigation
 import info.cemu.cemu.nativeinterface.NativeGameTitles.Game
 import info.cemu.cemu.nativeinterface.NativeSettings
 import info.cemu.cemu.settings.SettingsRoute
@@ -96,11 +100,15 @@ private fun MainNav() {
             goToTitleManager = { navController.navigate(TitleManagerRoute) },
             goToGraphicPacks = { navController.navigate(GraphicPacksRoute) },
             goToAboutCemu = { navController.navigate(AboutCemuRoute) },
+            goToMedia = { navController.navigate(MediaRoute) },
+            goToDownload = { navController.navigate(DownloadRoute) },
         )
         settingsNavigation(navController)
         titleManagerNavigation(navController)
         graphicPacksNavigation(navController)
         aboutCemuNavigation(navController)
+        mediaNavigation(navController)
+        downloadNavigation(navController)
     }
 }
 

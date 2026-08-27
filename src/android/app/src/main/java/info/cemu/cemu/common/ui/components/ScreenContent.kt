@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -19,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.dropUnlessResumed
 import info.cemu.cemu.R
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 
 @Composable
 fun ScreenContent(
@@ -112,6 +115,62 @@ fun ScreenContentLazy(
             modifier = contentModifier,
         ) {
             content()
+        }
+    }
+}
+
+@Composable
+fun ScreenContentLazyWithSidebar(
+    appBarText: String,
+    sidebarExpanded: Boolean,
+    onSidebarToggle: () -> Unit,
+    sidebarActions: List<SidebarAction>,
+    activeDestination: SidebarDestination,
+    onCloseEmulator: () -> Unit,
+    snackbarHost: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+    contentModifier: Modifier = Modifier.padding(8.dp),
+    contentVerticalArrangement: Arrangement.Vertical = Arrangement.Top,
+    content: LazyListScope.() -> Unit,
+) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = SteamDeckColors.Background,
+        snackbarHost = snackbarHost,
+        topBar = {
+            TopAppBar(
+                actions = actions,
+                title = { DefaultAppBarTitle(appBarText) },
+                navigationIcon = {
+                    SidebarToggleButton(
+                        expanded = sidebarExpanded,
+                        onClick = onSidebarToggle,
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SteamDeckColors.Background,
+                    titleContentColor = SteamDeckColors.TextPrimary,
+                ),
+            )
+        },
+    ) { scaffoldPadding ->
+        Row(
+            modifier = Modifier
+                .padding(scaffoldPadding)
+                .fillMaxSize(),
+        ) {
+            AppSidebar(
+                expanded = sidebarExpanded,
+                activeDestination = activeDestination,
+                actions = sidebarActions,
+                onCloseEmulator = onCloseEmulator,
+            )
+            LazyColumn(
+                verticalArrangement = contentVerticalArrangement,
+                modifier = contentModifier.fillMaxSize(),
+            ) {
+                content()
+            }
         }
     }
 }

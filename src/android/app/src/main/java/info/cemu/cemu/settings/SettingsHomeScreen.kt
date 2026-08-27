@@ -42,6 +42,7 @@ fun SettingsHomeScreen(
     goToAudioSettings: () -> Unit,
     goToAccountSettings: () -> Unit,
     goToOverlaySettings: () -> Unit,
+    goToExperimentalSettings: () -> Unit,
     navigateBack: () -> Unit
 ) {
     val entries = listOf(
@@ -80,9 +81,11 @@ fun SettingsHomeScreen(
             label = tr("Account settings"),
             onClick = dropUnlessResumed(block = goToAccountSettings),
         ),
-        // "Experimental/Hackers" ainda não tem uma tela/rota real por trás -
-        // o ícone (ic_settings_experimental) já está na pasta de drawables,
-        // pronto para uso quando essa funcionalidade existir.
+        SettingsMenuEntry(
+            iconRes = R.drawable.ic_settings_experimental,
+            label = tr("Experimental/Hackers"),
+            onClick = dropUnlessResumed(block = goToExperimentalSettings),
+        ),
     )
 
     Column(

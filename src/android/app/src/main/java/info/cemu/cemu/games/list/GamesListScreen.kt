@@ -4,9 +4,7 @@
 
 package info.cemu.cemu.games.list
 
-import android.content.Context
-import android.content.Intent
-import android.provider.DocumentsContract
+import android.app.Activity
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,6 +12,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,24 +61,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.R
+import info.cemu.cemu.common.ui.components.AppSidebar
 import info.cemu.cemu.common.ui.components.FilledSearchToolbar
+import info.cemu.cemu.common.ui.components.SidebarDestination
+import info.cemu.cemu.common.ui.components.SidebarToggleButton
+import info.cemu.cemu.common.ui.components.rememberDefaultSidebarActions
 import info.cemu.cemu.common.ui.extensions.showMessage
+import info.cemu.cemu.common.cemufiles.logFileExists
+import info.cemu.cemu.common.cemufiles.tryOpenCemuFolder
+import info.cemu.cemu.common.cemufiles.tryShareLogFile
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.common.ui.theme.SteamDeckColors
-import info.cemu.cemu.nativeinterface.NativeActiveSettings
 import info.cemu.cemu.nativeinterface.NativeGameTitles
 import info.cemu.cemu.nativeinterface.NativeGameTitles.Game
-import info.cemu.cemu.provider.DocumentsProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
-import androidx.compose.material3.DropdownMenuItem as MaterialDropdownMenuItem
 
 @Composable
 fun GamesListScreen(
@@ -91,6 +92,8 @@ fun GamesListScreen(
     goToTitleManager: () -> Unit,
     goToGraphicPacks: () -> Unit,
     goToAboutCemu: () -> Unit,
+    goToMedia: () -> Unit,
+    goToDownload: () -> Unit,
     tryCreateShortcut: (Game) -> Boolean,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -101,6 +104,7 @@ fun GamesListScreen(
     val gameSearchQuery by gamesListViewModel.filterText.collectAsStateWithLifecycle()
     val games by gamesListViewModel.games.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var sidebarExpanded by rememberSaveable { mutableStateOf(false) }
 
     val state = rememberPullToRefreshState()
 
@@ -120,37 +124,23 @@ fun GamesListScreen(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             FilledSearchToolbar(
-                actions = {
-                    GameListToolBarActionsMenu(
-                        goToSettings = goToSettings,
-                        goToTitleManager = goToTitleManager,
-                        goToGraphicPacks = goToGraphicPacks,
-                        goToAboutCemu = goToAboutCemu,
-                        openCemuFolder = {
-                            if (!tryOpenCemuFolder(context)) {
-                                snackbarHostState.showMessage(
-                                    coroutineScope,
-                                    tr("Failed to open Cemu folder")
-                                )
-                            }
-                        },
-                        shareLogFile = {
-                            if (!logFileExists()) {
-                                snackbarHostState.showMessage(
-                                    coroutineScope,
-                                    tr("Log file doesn't exist")
-                                )
-                                return@GameListToolBarActionsMenu
-                            }
-
-                            if (!tryShareLogFile(context)) {
-                                snackbarHostState.showMessage(
-                                    coroutineScope,
-                                    tr("Failed to open log file")
-                                )
-                            }
-                        },
+                navigationIcon = {
+                    SidebarToggleButton(
+                        expanded = sidebarExpanded,
+                        onClick = { sidebarExpanded = !sidebarExpanded },
                     )
+                },
+                actions = {
+                    // O menu de 3 pontinhos agora só guarda "Graphic packs", que não
+                    // faz parte da barra lateral no protótipo. O resto (Config.,
+                    // Gerenciador de títulos, Open cemu folder, Share log, Sobre)
+                    // foi para a AppSidebar abaixo.
+                    IconButton(onClick = goToGraphicPacks) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_more_vert),
+                            contentDescription = tr("Graphic packs"),
+                        )
+                    }
                 },
                 hint = tr("Search games"),
                 query = gameSearchQuery,
@@ -158,50 +148,84 @@ fun GamesListScreen(
             )
         },
     ) { scaffoldPadding ->
-        Box(
+        Row(
             modifier = Modifier
                 .padding(scaffoldPadding)
-                .fillMaxSize()
-                .pullToRefresh(
-                    isRefreshing = refreshing,
-                    state = state,
-                    onRefresh = {
-                        coroutineScope.launch {
-                            refreshing = true
-                            gamesListViewModel.refreshGames()
-                            delay(1500)
-                            refreshing = false
+                .fillMaxSize(),
+        ) {
+            AppSidebar(
+                expanded = sidebarExpanded,
+                activeDestination = SidebarDestination.LIBRARY,
+                onCloseEmulator = { (context as? Activity)?.finish() },
+                actions = rememberDefaultSidebarActions(
+                    goToLibrary = {},
+                    goToMedia = goToMedia,
+                    goToDownload = goToDownload,
+                    goToSettings = goToSettings,
+                    goToTitleManager = goToTitleManager,
+                    openCemuFolder = {
+                        if (!tryOpenCemuFolder(context)) {
+                            snackbarHostState.showMessage(
+                                coroutineScope,
+                                tr("Failed to open Cemu folder")
+                            )
                         }
                     },
+                    shareLogFile = {
+                        if (!logFileExists()) {
+                            snackbarHostState.showMessage(coroutineScope, tr("Log file doesn't exist"))
+                        } else if (!tryShareLogFile(context)) {
+                            snackbarHostState.showMessage(coroutineScope, tr("Failed to open log file"))
+                        }
+                    },
+                    goToAboutCemu = goToAboutCemu,
                 ),
-        ) {
-            GameList(
-                games = games,
-                setFavorite = gamesListViewModel::setGameTitleFavorite,
-                deleteShaderCaches = {
-                    gamesListViewModel.removeShadersForGame(it)
-                    snackbarHostState.showMessage(coroutineScope, tr("Shader caches removed"))
-                },
-                startGame = startGame,
-                goToGameDetails = goToGameDetails,
-                goToGameEditProfile = goToGameEditProfile,
-                createShortcut = {
-                    if (!tryCreateShortcut(it)) {
-                        snackbarHostState.showMessage(
-                            coroutineScope,
-                            tr("Couldn't create shortcut for game")
-                        )
-                    }
-                },
             )
 
-            PullToRefreshDefaults.Indicator(
-                modifier = Modifier.align(Alignment.TopCenter),
-                isRefreshing = refreshing,
-                state = state,
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pullToRefresh(
+                        isRefreshing = refreshing,
+                        state = state,
+                        onRefresh = {
+                            coroutineScope.launch {
+                                refreshing = true
+                                gamesListViewModel.refreshGames()
+                                delay(1500)
+                                refreshing = false
+                            }
+                        },
+                    ),
+            ) {
+                GameList(
+                    games = games,
+                    setFavorite = gamesListViewModel::setGameTitleFavorite,
+                    deleteShaderCaches = {
+                        gamesListViewModel.removeShadersForGame(it)
+                        snackbarHostState.showMessage(coroutineScope, tr("Shader caches removed"))
+                    },
+                    startGame = startGame,
+                    goToGameDetails = goToGameDetails,
+                    goToGameEditProfile = goToGameEditProfile,
+                    createShortcut = {
+                        if (!tryCreateShortcut(it)) {
+                            snackbarHostState.showMessage(
+                                coroutineScope,
+                                tr("Couldn't create shortcut for game")
+                            )
+                        }
+                    },
+                )
+
+                PullToRefreshDefaults.Indicator(
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    isRefreshing = refreshing,
+                    state = state,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -422,114 +446,3 @@ private fun GameContextMenu(
     }
 }
 
-@Composable
-private fun GameListToolBarActionsMenu(
-    openCemuFolder: () -> Unit,
-    shareLogFile: () -> Unit,
-    goToSettings: () -> Unit,
-    goToTitleManager: () -> Unit,
-    goToGraphicPacks: () -> Unit,
-    goToAboutCemu: () -> Unit,
-) {
-    var expandMenu by remember { mutableStateOf(false) }
-
-    @Composable
-    fun DropdownMenuItem(onClick: () -> Unit, text: String) {
-        MaterialDropdownMenuItem(
-            onClick = {
-                onClick()
-                expandMenu = false
-            },
-            text = { Text(text) },
-        )
-    }
-    IconButton(
-        modifier = Modifier.padding(end = 8.dp),
-        onClick = { expandMenu = true },
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_more_vert),
-            contentDescription = null
-        )
-    }
-
-    DropdownMenu(
-        expanded = expandMenu,
-        onDismissRequest = { expandMenu = false }
-    ) {
-        DropdownMenuItem(
-            onClick = goToSettings,
-            text = tr("Settings")
-        )
-        DropdownMenuItem(
-            onClick = goToGraphicPacks,
-            text = tr("Graphic packs")
-        )
-        DropdownMenuItem(
-            onClick = goToTitleManager,
-            text = tr("Title manager")
-        )
-        DropdownMenuItem(
-            onClick = openCemuFolder,
-            text = tr("Open Cemu folder")
-        )
-        DropdownMenuItem(
-            onClick = shareLogFile,
-            text = tr("Share log file"),
-        )
-        DropdownMenuItem(
-            onClick = goToAboutCemu,
-            text = tr("About Cemu"),
-        )
-    }
-}
-
-private const val LOG_FILE_NAME = "log.txt"
-
-private fun logFileExists(): Boolean {
-    return File(NativeActiveSettings.getUserDataPath()).resolve(LOG_FILE_NAME).isFile
-}
-
-private fun tryShareLogFile(context: Context): Boolean {
-    try {
-        val fileUri = DocumentsContract.buildDocumentUri(
-            DocumentsProvider.AUTHORITY,
-            DocumentsProvider.ROOT_ID + "/$LOG_FILE_NAME"
-        )
-
-        val documentFile = DocumentFile.fromSingleUri(context, fileUri)!!
-
-        val intent = Intent(Intent.ACTION_SEND)
-            .setDataAndType(documentFile.uri, "text/plain")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            .putExtra(Intent.EXTRA_STREAM, documentFile.uri)
-
-        context.startActivity(Intent.createChooser(intent, null))
-
-        return true
-    } catch (_: Exception) {
-        return false
-    }
-}
-
-private fun tryOpenCemuFolder(context: Context): Boolean {
-    try {
-        val intent = Intent(Intent.ACTION_VIEW)
-            .addCategory(Intent.CATEGORY_DEFAULT)
-            .addFlags(
-                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                        or Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
-                        or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-        intent.data = DocumentsContract.buildRootUri(
-            DocumentsProvider.AUTHORITY,
-            DocumentsProvider.ROOT_ID
-        )
-        context.startActivity(intent)
-
-        return true
-    } catch (_: Exception) {
-        return false
-    }
-}

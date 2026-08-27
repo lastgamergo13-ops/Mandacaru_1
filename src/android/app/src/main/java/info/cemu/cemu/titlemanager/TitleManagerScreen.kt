@@ -5,6 +5,7 @@
 
 package info.cemu.cemu.titlemanager
 
+import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,7 +60,11 @@ import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.R
-import info.cemu.cemu.common.ui.components.ScreenContentLazy
+import info.cemu.cemu.common.cemufiles.tryOpenCemuFolder
+import info.cemu.cemu.common.cemufiles.tryShareLogFile
+import info.cemu.cemu.common.ui.components.ScreenContentLazyWithSidebar
+import info.cemu.cemu.common.ui.components.SidebarDestination
+import info.cemu.cemu.common.ui.components.rememberDefaultSidebarActions
 import info.cemu.cemu.common.ui.extensions.formatBytes
 import info.cemu.cemu.common.ui.localization.regionToString
 import info.cemu.cemu.common.ui.localization.tr
@@ -75,12 +80,17 @@ import java.text.MessageFormat
 @Composable
 fun TitleManagerScreen(
     navigateBack: () -> Unit,
+    goToSettings: () -> Unit,
+    goToMedia: () -> Unit,
+    goToDownload: () -> Unit,
+    goToAboutCemu: () -> Unit,
     titleListViewModel: TitleListViewModel = viewModel(),
 ) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     var showFilterSheet by remember { mutableStateOf(false) }
+    var sidebarExpanded by rememberSaveable { mutableStateOf(true) }
     val titleEntries by titleListViewModel.titleEntries.collectAsState()
     val queuedTitleToInstallError by titleListViewModel.queuedTitleToInstallError.collectAsState()
     val queuedTitleToCompress by titleListViewModel.queuedTitleToCompress.collectAsState()
@@ -146,10 +156,23 @@ fun TitleManagerScreen(
             )
         }
 
-    ScreenContentLazy(
+    ScreenContentLazyWithSidebar(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         appBarText = tr("Title manager"),
-        navigateBack = navigateBack,
+        sidebarExpanded = sidebarExpanded,
+        onSidebarToggle = { sidebarExpanded = !sidebarExpanded },
+        sidebarActions = rememberDefaultSidebarActions(
+            goToLibrary = navigateBack,
+            goToMedia = goToMedia,
+            goToDownload = goToDownload,
+            goToSettings = goToSettings,
+            goToTitleManager = {},
+            openCemuFolder = { tryOpenCemuFolder(context) },
+            shareLogFile = { tryShareLogFile(context) },
+            goToAboutCemu = goToAboutCemu,
+        ),
+        activeDestination = SidebarDestination.TITLE_MANAGER,
+        onCloseEmulator = { (context as? Activity)?.finish() },
         actions = {
             IconButton(onClick = {
                 titleListViewModel.refresh()
