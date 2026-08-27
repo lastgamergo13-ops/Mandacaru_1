@@ -188,6 +188,7 @@ fun ScreenContentWithGamePanel(
     snackbarHost: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
     contentModifier: Modifier = Modifier.padding(8.dp),
+    contentVerticalArrangement: Arrangement.Vertical = Arrangement.Top,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     ScreenContentGeneric(
@@ -208,6 +209,7 @@ fun ScreenContentWithGamePanel(
                 modifier = contentModifier
                     .verticalScroll(rememberScrollState())
                     .fillMaxSize(),
+                verticalArrangement = contentVerticalArrangement,
             ) {
                 content()
             }
