@@ -4,6 +4,7 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
 import info.cemu.cemu.about.AboutCemuRoute
+import info.cemu.cemu.graphicpacks.GraphicPacksRoute
 import info.cemu.cemu.media.MediaRoute
 import info.cemu.cemu.settings.SettingsRoute
 import info.cemu.cemu.titlemanager.TitleManagerRoute
@@ -20,6 +21,7 @@ fun NavGraphBuilder.downloadNavigation(navController: NavHostController) {
             goToTitleManager = { navController.navigate(TitleManagerRoute) },
             goToMedia = { navController.navigate(MediaRoute) },
             goToAboutCemu = { navController.navigate(AboutCemuRoute) },
+            goToGraphicPacksManager = { navController.navigate(GraphicPacksRoute) },
         )
     }
 }

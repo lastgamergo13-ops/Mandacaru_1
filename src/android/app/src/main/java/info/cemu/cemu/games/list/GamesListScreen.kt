@@ -29,7 +29,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -90,7 +89,6 @@ fun GamesListScreen(
     startGame: (Game) -> Unit,
     goToSettings: () -> Unit,
     goToTitleManager: () -> Unit,
-    goToGraphicPacks: () -> Unit,
     goToAboutCemu: () -> Unit,
     goToMedia: () -> Unit,
     goToDownload: () -> Unit,
@@ -129,18 +127,6 @@ fun GamesListScreen(
                         expanded = sidebarExpanded,
                         onClick = { sidebarExpanded = !sidebarExpanded },
                     )
-                },
-                actions = {
-                    // O menu de 3 pontinhos agora só guarda "Graphic packs", que não
-                    // faz parte da barra lateral no protótipo. O resto (Config.,
-                    // Gerenciador de títulos, Open cemu folder, Share log, Sobre)
-                    // foi para a AppSidebar abaixo.
-                    IconButton(onClick = goToGraphicPacks) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_more_vert),
-                            contentDescription = tr("Graphic packs"),
-                        )
-                    }
                 },
                 hint = tr("Search games"),
                 query = gameSearchQuery,

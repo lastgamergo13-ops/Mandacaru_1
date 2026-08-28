@@ -16,6 +16,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.view.WindowCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
 import info.cemu.cemu.about.AboutCemuRoute
@@ -28,7 +29,6 @@ import info.cemu.cemu.download.downloadNavigation
 import info.cemu.cemu.emulation.EmulationActivity
 import info.cemu.cemu.games.GameListRoute
 import info.cemu.cemu.games.gamesNavigation
-import info.cemu.cemu.graphicpacks.GraphicPacksRoute
 import info.cemu.cemu.graphicpacks.graphicPacksNavigation
 import info.cemu.cemu.media.MediaRoute
 import info.cemu.cemu.media.mediaNavigation
@@ -62,6 +62,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // deixa o conteúdo desenhar atrás das barras de status/navegação
+        // (que já são transparentes no tema) em vez de reservar aquele
+        // espaço com o fundo preto padrão da janela
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             TranslatableContent {
                 ActivityContent {
@@ -98,7 +102,6 @@ private fun MainNav() {
             tryCreateShortcut = { tryCreateShortcutForGame(context, it) },
             goToSettings = { navController.navigate(SettingsRoute) },
             goToTitleManager = { navController.navigate(TitleManagerRoute) },
-            goToGraphicPacks = { navController.navigate(GraphicPacksRoute) },
             goToAboutCemu = { navController.navigate(AboutCemuRoute) },
             goToMedia = { navController.navigate(MediaRoute) },
             goToDownload = { navController.navigate(DownloadRoute) },

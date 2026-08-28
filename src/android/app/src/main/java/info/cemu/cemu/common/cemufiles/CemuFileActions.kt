@@ -2,6 +2,7 @@ package info.cemu.cemu.common.cemufiles
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import info.cemu.cemu.nativeinterface.NativeActiveSettings
@@ -52,6 +53,16 @@ fun tryOpenCemuFolder(context: Context): Boolean {
         )
         context.startActivity(intent)
 
+        return true
+    } catch (_: Exception) {
+        return false
+    }
+}
+
+/** Abre uma URL (ex.: página de releases do GitHub) no navegador do sistema. */
+fun tryOpenUrl(context: Context, url: String): Boolean {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         return true
     } catch (_: Exception) {
         return false
