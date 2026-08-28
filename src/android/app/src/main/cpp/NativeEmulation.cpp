@@ -13,6 +13,9 @@
 #include "JNIUtils.h"
 #include "WindowSystem.h"
 
+#include <algorithm>
+#include <cctype>
+
 #if HAS_CUBEB
 #include "audio/CubebAPI.h"
 #endif // HAS_CUBEB
@@ -31,7 +34,12 @@ namespace NativeEmulation
 	{
 		for (const auto& device : VulkanRenderer::GetDevices())
 		{
-			if (device.name.find("Adreno") != std::string::npos)
+			// compara sem diferenciar maiusculas/minusculas - alguns drivers
+			// reportam o nome como "adreno" em vez de "Adreno"
+			std::string deviceNameLower = device.name;
+			std::transform(deviceNameLower.begin(), deviceNameLower.end(), deviceNameLower.begin(),
+				[](unsigned char c) { return std::tolower(c); });
+			if (deviceNameLower.find("adreno") != std::string::npos)
 				return true;
 		}
 		return false;

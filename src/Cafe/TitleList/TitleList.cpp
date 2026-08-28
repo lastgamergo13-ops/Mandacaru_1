@@ -5,6 +5,10 @@
 
 #include <zarchive/zarchivereader.h>
 
+#ifdef __ANDROID__
+#include "Common/android/FilesystemAndroid.h"
+#endif
+
 bool sTLInitialized{ false };
 fs::path sTLCacheFilePath;
 
@@ -349,6 +353,67 @@ bool _IsKnownFileNameOrExtension(const fs::path& path)
 
 void CafeTitleList::ScanGamePath(const fs::path& path)
 {
+#ifdef __ANDROID__
+	if (FilesystemAndroid::IsContentUri(path))
+	{
+		// caminho SAF (content://) - o std::filesystem não sabe ler isso,
+		// tem que passar pela ponte JNI que fala com o ContentResolver do Android
+		std::vector<fs::path> filesInDirectory;
+		std::vector<fs::path> dirsInDirectory;
+		bool hasContentFolder = false, hasCodeFolder = false, hasMetaFolder = false;
+		for (auto& child : FilesystemAndroid::ListFiles(path))
+		{
+			if (FilesystemAndroid::IsDirectory(child))
+			{
+				dirsInDirectory.emplace_back(child);
+				std::string dirName = _pathToUtf8(child.filename());
+				if (boost::iequals(dirName, "content"))
+					hasContentFolder = true;
+				else if (boost::iequals(dirName, "code"))
+					hasCodeFolder = true;
+				else if (boost::iequals(dirName, "meta"))
+					hasMetaFolder = true;
+			}
+			else
+			{
+				filesInDirectory.emplace_back(child);
+			}
+		}
+		for (auto& it : filesInDirectory)
+		{
+			if (!it.has_extension())
+				continue;
+			if (!_IsKnownFileNameOrExtension(it))
+				continue;
+			AddTitleFromPath(it);
+		}
+		if (hasContentFolder && hasCodeFolder && hasMetaFolder)
+		{
+			TitleInfo* titleInfo = new TitleInfo(path);
+			if (titleInfo->IsValid())
+				AddDiscoveredTitle(titleInfo);
+			else
+				delete titleInfo;
+			if (dirsInDirectory.size() > 3)
+			{
+				for (auto& it : dirsInDirectory)
+				{
+					std::string dirName = _pathToUtf8(it.filename());
+					if (!boost::iequals(dirName, "content") &&
+						!boost::iequals(dirName, "code") &&
+						!boost::iequals(dirName, "meta"))
+						ScanGamePath(it);
+				}
+			}
+		}
+		else
+		{
+			for (auto& it : dirsInDirectory)
+				ScanGamePath(it);
+		}
+		return;
+	}
+#endif
 	// scan the whole directory first to determine if this is a title folder
 	std::vector<fs::path> filesInDirectory;
 	std::vector<fs::path> dirsInDirectory;

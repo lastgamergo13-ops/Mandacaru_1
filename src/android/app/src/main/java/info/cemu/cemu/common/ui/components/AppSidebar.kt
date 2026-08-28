@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -127,21 +127,22 @@ private fun SidebarRow(
     }
 }
 
-/** Botão redondo azul que abre/fecha a AppSidebar - igual ao das screenshots/vídeo de referência. */
+/** Botão quadrado que abre/fecha a AppSidebar - igual ao das screenshots/vídeo de referência. */
 @Composable
 fun SidebarToggleButton(expanded: Boolean, onClick: () -> Unit) {
     IconButton(
         onClick = onClick,
         modifier = Modifier
             .padding(start = 8.dp)
-            .size(36.dp)
-            .clip(CircleShape)
+            .size(28.dp)
+            .clip(RoundedCornerShape(4.dp))
             .background(SteamDeckColors.Accent),
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_more_vert),
             contentDescription = if (expanded) tr("Hide menu") else tr("Show menu"),
             tint = Color.Black,
+            modifier = Modifier.size(18.dp),
         )
     }
 }
@@ -167,54 +168,54 @@ fun rememberDefaultSidebarActions(
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_folder,
         label = tr("Library"),
-        iconTint = Color(0xFFFFC107),
+        iconTint = SteamDeckColors.IconBlack,
         onClick = goToLibrary,
         destination = SidebarDestination.LIBRARY,
     ),
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_media,
         label = tr("Media"),
-        iconTint = Color(0xFF4CAF50),
+        iconTint = SteamDeckColors.IconBlack,
         onClick = goToMedia,
         destination = SidebarDestination.MEDIA,
     ),
     SidebarAction(
         iconRes = R.drawable.ic_download,
         label = tr("Download"),
-        iconTint = Color(0xFF29B6F6),
+        iconTint = SteamDeckColors.IconBlack,
         onClick = goToDownload,
         destination = SidebarDestination.DOWNLOAD,
     ),
     SidebarAction(
         iconRes = R.drawable.ic_settings_general,
         label = tr("Settings"),
-        iconTint = SteamDeckColors.TextSecondary,
+        iconTint = SteamDeckColors.IconBlack,
         onClick = goToSettings,
         destination = SidebarDestination.SETTINGS,
     ),
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_titlemanager,
         label = tr("Title manager"),
-        iconTint = Color(0xFFE0E0E0),
+        iconTint = SteamDeckColors.IconBlack,
         onClick = goToTitleManager,
         destination = SidebarDestination.TITLE_MANAGER,
     ),
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_folder,
         label = tr("Open Cemu folder"),
-        iconTint = Color(0xFFFFC107),
+        iconTint = SteamDeckColors.IconBlack,
         onClick = openCemuFolder,
     ),
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_share,
         label = tr("Share log file"),
-        iconTint = Color(0xFFFF7043),
+        iconTint = SteamDeckColors.IconBlack,
         onClick = shareLogFile,
     ),
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_info,
         label = tr("About Cemu"),
-        iconTint = Color(0xFF29B6F6),
+        iconTint = SteamDeckColors.IconBlack,
         onClick = goToAboutCemu,
     ),
 )

@@ -17,6 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
 import info.cemu.cemu.about.AboutCemuRoute
@@ -62,10 +64,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // deixa o conteúdo desenhar atrás das barras de status/navegação
-        // (que já são transparentes no tema) em vez de reservar aquele
-        // espaço com o fundo preto padrão da janela
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        setFullscreen()
         setContent {
             TranslatableContent {
                 ActivityContent {
@@ -83,6 +82,14 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         NativeSettings.saveSettings()
+    }
+
+    private fun setFullscreen() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
     }
 }
 
