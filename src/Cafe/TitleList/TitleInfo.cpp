@@ -10,6 +10,10 @@
 #include "config/ActiveSettings.h"
 #include "util/helpers/helpers.h"
 
+#ifdef __ANDROID__
+#include "Common/android/FilesystemAndroid.h"
+#endif
+
 // detect format by reading file header/footer
 CafeTitleFileType DetermineCafeSystemFileType(fs::path filePath)
 {
@@ -180,6 +184,101 @@ bool TitleInfo::ParseWuaTitleFolderName(std::string_view name, TitleId& titleIdO
 bool TitleInfo::DetectFormat(const fs::path& path, fs::path& pathOut, TitleDataFormat& formatOut)
 {
 	std::error_code ec;
+#ifdef __ANDROID__
+	if (FilesystemAndroid::IsContentUri(path))
+	{
+		// caminho SAF (content://) - nem fs::is_regular_file nem fs::exists
+		// conseguem ler isso, tem que ir pela ponte JNI
+		bool pathIsDirectory = FilesystemAndroid::IsDirectory(path);
+		if (path.has_extension() && !pathIsDirectory)
+		{
+			std::string filenameStr = _pathToUtf8(path.filename());
+			if (boost::iends_with(filenameStr, ".rpx"))
+			{
+				fs::path parentPath = path.parent_path();
+				if (boost::iequals(_pathToUtf8(parentPath.filename()), "code"))
+				{
+					parentPath = parentPath.parent_path();
+					if (FilesystemAndroid::Exists(parentPath / "content") && FilesystemAndroid::Exists(parentPath / "meta"))
+					{
+						formatOut = TitleDataFormat::HOST_FS;
+						pathOut = parentPath;
+						return true;
+					}
+				}
+			}
+			else if (boost::iends_with(filenameStr, ".wud") ||
+					 boost::iends_with(filenameStr, ".wux") ||
+					 boost::iends_with(filenameStr, ".iso"))
+			{
+				formatOut = TitleDataFormat::WUD;
+				pathOut = path;
+				return true;
+			}
+			else if (boost::iequals(filenameStr, "title.tmd"))
+			{
+				formatOut = TitleDataFormat::NUS;
+				pathOut = path;
+				return true;
+			}
+			else if (boost::iends_with(filenameStr, ".wua"))
+			{
+				formatOut = TitleDataFormat::WIIU_ARCHIVE;
+				pathOut = path;
+				ZArchiveReader* zar = ZArchiveReader::OpenFromFile(path);
+				if (!zar)
+					return false;
+				ZArchiveNodeHandle rootDir = zar->LookUp("", false, true);
+				bool foundBase = false;
+				for (uint32 i = 0; i < zar->GetDirEntryCount(rootDir); i++)
+				{
+					ZArchiveReader::DirEntry dirEntry;
+					if (!zar->GetDirEntry(rootDir, i, dirEntry))
+						continue;
+					if (!dirEntry.isDirectory)
+						continue;
+					TitleId parsedId;
+					uint16 parsedVersion;
+					if (!TitleInfo::ParseWuaTitleFolderName(dirEntry.name, parsedId, parsedVersion))
+						continue;
+					TitleIdParser tip(parsedId);
+					TitleIdParser::TITLE_TYPE tt = tip.GetType();
+					if (tt == TitleIdParser::TITLE_TYPE::BASE_TITLE || tt == TitleIdParser::TITLE_TYPE::BASE_TITLE_DEMO ||
+						tt == TitleIdParser::TITLE_TYPE::SYSTEM_TITLE || tt == TitleIdParser::TITLE_TYPE::SYSTEM_OVERLAY_TITLE)
+					{
+						m_subPath = dirEntry.name;
+						foundBase = true;
+						break;
+					}
+				}
+				delete zar;
+				return foundBase;
+			}
+			else if (boost::iends_with(filenameStr, ".wuhb"))
+			{
+				std::unique_ptr<WUHBReader> reader{WUHBReader::FromPath(path)};
+				if (reader)
+				{
+					formatOut = TitleDataFormat::WUHB;
+					pathOut = path;
+					return true;
+				}
+			}
+		}
+		else
+		{
+			// aponta para a raiz de um titulo extraido?
+			if (FilesystemAndroid::Exists(path / "content") && FilesystemAndroid::Exists(path / "meta") && FilesystemAndroid::Exists(path / "code"))
+			{
+				formatOut = TitleDataFormat::HOST_FS;
+				pathOut = path;
+				return true;
+			}
+		}
+		SetInvalidReason(InvalidReason::UNKNOWN_FORMAT);
+		return false;
+	}
+#endif
 	if (path.has_extension() && fs::is_regular_file(path, ec))
 	{
 		std::string filenameStr = _pathToUtf8(path.filename());

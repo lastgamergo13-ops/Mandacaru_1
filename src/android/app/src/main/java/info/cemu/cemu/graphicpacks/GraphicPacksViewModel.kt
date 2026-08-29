@@ -1,6 +1,7 @@
 package info.cemu.cemu.graphicpacks
 
 import android.content.Context
+import info.cemu.cemu.common.android.context.internalFolder
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import info.cemu.cemu.nativeinterface.NativeGameTitles
@@ -203,7 +204,7 @@ class GraphicPacksViewModel(
 
     fun downloadNewUpdate(context: Context) {
 
-        val graphicPacksRootDir = context.getExternalFilesDir(null)
+        val graphicPacksRootDir = context.internalFolder()
 
         if (graphicPacksRootDir == null) {
             _downloadStatus.value = GraphicPacksDownloadStatus.ERROR

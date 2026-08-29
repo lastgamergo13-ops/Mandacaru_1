@@ -59,7 +59,7 @@ android {
     compileSdk = 36
     ndkVersion = ndkVersionForBuild
     defaultConfig {
-        applicationId = "info.cemu.cemu"
+        applicationId = "info.mandacarucemu.cemu"
         minSdk = 30
         targetSdk = 35
         versionName = getVersionName()

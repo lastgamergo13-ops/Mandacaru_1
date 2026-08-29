@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -26,11 +27,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import info.cemu.cemu.R
 import info.cemu.cemu.common.ui.localization.tr
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 
 @Composable
 fun SingleSelection(
@@ -105,24 +109,39 @@ fun <T> SingleSelection(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f)
     )
     {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .then(clickableModifier)
-                .padding(8.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = label,
-                modifier = Modifier.padding(vertical = 8.dp),
-                fontWeight = FontWeight.Medium,
-                fontSize = 20.sp,
-            )
-            Text(
-                text = choiceToString(choice),
-                modifier = Modifier.padding(vertical = 8.dp),
-                fontSize = 16.sp,
-            )
+        SettingsCard(modifier = modifier) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(clickableModifier)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color = SteamDeckColors.TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                    )
+                    Text(
+                        text = choiceToString(choice),
+                        color = SteamDeckColors.TextSecondary,
+                        modifier = Modifier.padding(top = 4.dp),
+                        fontSize = 14.sp,
+                    )
+                }
+                if (enabled) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_chevron_down),
+                        contentDescription = null,
+                        tint = SteamDeckColors.TextSecondary,
+                    )
+                }
+            }
         }
     }
 

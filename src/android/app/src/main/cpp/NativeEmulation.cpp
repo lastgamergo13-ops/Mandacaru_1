@@ -13,9 +13,6 @@
 #include "JNIUtils.h"
 #include "WindowSystem.h"
 
-#include <algorithm>
-#include <cctype>
-
 #if HAS_CUBEB
 #include "audio/CubebAPI.h"
 #endif // HAS_CUBEB
@@ -32,17 +29,10 @@ namespace NativeEmulation
 	// loading is only offered on devices that report an Adreno GPU
 	bool SupportsLoadingCustomDriver()
 	{
-		for (const auto& device : VulkanRenderer::GetDevices())
-		{
-			// compara sem diferenciar maiusculas/minusculas - alguns drivers
-			// reportam o nome como "adreno" em vez de "Adreno"
-			std::string deviceNameLower = device.name;
-			std::transform(deviceNameLower.begin(), deviceNameLower.end(), deviceNameLower.begin(),
-				[](unsigned char c) { return std::tolower(c); });
-			if (deviceNameLower.find("adreno") != std::string::npos)
-				return true;
-		}
-		return false;
+		// mostra a opção para qualquer aparelho, independente do fabricante da
+		// GPU (Adreno/Mali/Exynos/etc) - quem decide se tenta usar um driver
+		// customizado é o usuário
+		return true;
 	}
 
 	void CreateAudioDevice(IAudioAPI::AudioAPI audioApi, AudioChannels channels, sint32 volume, bool isTV)

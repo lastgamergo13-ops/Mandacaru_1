@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 import kotlin.math.roundToInt
 import androidx.compose.material3.Slider as MaterialSlider
 
@@ -39,40 +40,43 @@ fun Slider(
     val interactionSource = remember { MutableInteractionSource() }
     val indication = LocalIndication.current
 
-    Column(
-        modifier = modifier
-            .focusable(
+    SettingsCard(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .focusable(
+                    enabled = enabled,
+                    interactionSource = interactionSource
+                )
+                .indication(
+                    interactionSource = interactionSource,
+                    indication = if (enabled) indication else null
+                )
+                .padding(12.dp)
+                .alpha(if (enabled) 1f else 0.6f)
+        ) {
+            Text(
+                modifier = Modifier.padding(bottom = 4.dp),
+                text = label,
+                color = SteamDeckColors.TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+            )
+            Text(
+                text = labelFormatter(sliderValue.roundToInt()),
+                color = SteamDeckColors.Accent,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+            )
+            MaterialSlider(
+                valueRange = valueFrom.toFloat()..valueTo.toFloat(),
+                steps = steps,
+                value = sliderValue,
                 enabled = enabled,
-                interactionSource = interactionSource
-            )
-            .indication(
+                onValueChangeFinished = { onValueChange(sliderValue.roundToInt()) },
+                onValueChange = { sliderValue = it },
                 interactionSource = interactionSource,
-                indication = if (enabled) indication else null
             )
-            .padding(8.dp)
-            .alpha(if (enabled) 1f else 0.6f)
-    ) {
-        Text(
-            modifier = Modifier.padding(bottom = 8.dp),
-            text = label,
-            fontWeight = FontWeight.Medium,
-            fontSize = 16.sp,
-        )
-        Text(
-            modifier = Modifier.padding(top = 8.dp),
-            text = labelFormatter(sliderValue.roundToInt()),
-            fontWeight = FontWeight.Light,
-            fontSize = 14.sp,
-        )
-        MaterialSlider(
-            valueRange = valueFrom.toFloat()..valueTo.toFloat(),
-            steps = steps,
-            value = sliderValue,
-            enabled = enabled,
-            onValueChangeFinished = { onValueChange(sliderValue.roundToInt()) },
-            onValueChange = { sliderValue = it },
-            interactionSource = interactionSource,
-        )
+        }
     }
 }
 
