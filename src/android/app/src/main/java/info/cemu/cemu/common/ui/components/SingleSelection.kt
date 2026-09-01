@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import info.cemu.cemu.common.ui.localization.tr
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 
 @Composable
 fun SingleSelection(
