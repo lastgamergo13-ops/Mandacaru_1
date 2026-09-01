@@ -35,8 +35,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -67,9 +65,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.R
-import info.cemu.cemu.common.ui.components.AppSidebar
+import info.cemu.cemu.common.ui.components.AppSidebarWithToggle
 import info.cemu.cemu.common.ui.components.SidebarDestination
-import info.cemu.cemu.common.ui.components.SidebarToggleButton
 import info.cemu.cemu.common.ui.components.rememberDefaultSidebarActions
 import info.cemu.cemu.common.ui.extensions.showMessage
 import info.cemu.cemu.common.cemufiles.logFileExists
@@ -120,29 +117,15 @@ fun GamesListScreen(
     Scaffold(
         containerColor = SteamDeckColors.Background,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    SidebarToggleButton(
-                        expanded = sidebarExpanded,
-                        onClick = { sidebarExpanded = !sidebarExpanded },
-                    )
-                },
-                title = { Text(tr("Library")) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SteamDeckColors.Background,
-                    titleContentColor = SteamDeckColors.TextPrimary,
-                ),
-            )
-        },
     ) { scaffoldPadding ->
         Row(
             modifier = Modifier
                 .padding(scaffoldPadding)
                 .fillMaxSize(),
         ) {
-            AppSidebar(
+            AppSidebarWithToggle(
                 expanded = sidebarExpanded,
+                onToggleExpanded = { sidebarExpanded = !sidebarExpanded },
                 activeDestination = SidebarDestination.LIBRARY,
                 onCloseEmulator = { (context as? Activity)?.finish() },
                 actions = rememberDefaultSidebarActions(

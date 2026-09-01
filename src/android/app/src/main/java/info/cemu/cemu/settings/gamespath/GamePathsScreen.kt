@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.SnackbarHost
@@ -29,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.R
 import info.cemu.cemu.common.ui.components.ScreenContentLazy
 import info.cemu.cemu.common.ui.localization.tr
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 import kotlinx.coroutines.launch
 
 @Composable
@@ -88,7 +91,11 @@ fun GamePathsListItem(
     gamesPath: String,
     onDelete: () -> Unit,
 ) {
-    Card(modifier = modifier.padding(8.dp)) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SteamDeckColors.CardBackground),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier.padding(vertical = 4.dp),
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -100,6 +107,7 @@ fun GamePathsListItem(
                     .padding(horizontal = 12.dp, vertical = 8.dp)
                     .basicMarquee(),
                 text = gamesPath,
+                color = SteamDeckColors.TextPrimary,
                 maxLines = 1,
             )
             IconButton(
@@ -108,6 +116,7 @@ fun GamePathsListItem(
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_delete),
+                    tint = SteamDeckColors.Danger,
                     contentDescription = null
                 )
             }

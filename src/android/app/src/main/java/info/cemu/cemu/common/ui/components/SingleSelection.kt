@@ -13,7 +13,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -27,14 +26,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import info.cemu.cemu.R
 import info.cemu.cemu.common.ui.localization.tr
-import info.cemu.cemu.common.ui.theme.SteamDeckColors
 
 @Composable
 fun SingleSelection(
@@ -109,39 +105,24 @@ fun <T> SingleSelection(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f)
     )
     {
-        SettingsCard(modifier = modifier) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(clickableModifier)
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color = SteamDeckColors.TextPrimary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                    )
-                    Text(
-                        text = choiceToString(choice),
-                        color = SteamDeckColors.TextSecondary,
-                        modifier = Modifier.padding(top = 4.dp),
-                        fontSize = 14.sp,
-                    )
-                }
-                if (enabled) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_chevron_down),
-                        contentDescription = null,
-                        tint = SteamDeckColors.TextSecondary,
-                    )
-                }
-            }
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .then(clickableModifier)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = label,
+                modifier = Modifier.padding(vertical = 8.dp),
+                fontWeight = FontWeight.Medium,
+                fontSize = 20.sp,
+            )
+            Text(
+                text = choiceToString(choice),
+                modifier = Modifier.padding(vertical = 8.dp),
+                fontSize = 16.sp,
+            )
         }
     }
 
@@ -171,7 +152,7 @@ private fun <T> SelectDialog(
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                containerColor = SteamDeckColors.CardBackground,
             ),
             modifier = Modifier
                 .sizeIn(maxWidth = 560.dp, maxHeight = 560.dp)
@@ -186,7 +167,9 @@ private fun <T> SelectDialog(
                     bottom = 8.dp
                 ),
                 text = label,
-                fontSize = 24.sp,
+                color = SteamDeckColors.TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp,
             )
             Column(
                 modifier = Modifier
@@ -208,7 +191,7 @@ private fun <T> SelectDialog(
                 }
             }
 
-            HorizontalDivider()
+            HorizontalDivider(color = SteamDeckColors.TextSecondary.copy(alpha = 0.2f))
 
             TextButton(
                 onClick = onDismissRequest,
@@ -216,7 +199,7 @@ private fun <T> SelectDialog(
                     .padding(8.dp)
                     .align(Alignment.End),
             ) {
-                Text(tr("Cancel"))
+                Text(tr("Cancel"), color = SteamDeckColors.Accent)
             }
         }
     }
@@ -236,11 +219,15 @@ private fun Choice(label: String, selected: Boolean, isEnabled: Boolean, onClick
             enabled = isEnabled,
             selected = selected,
             onClick = null,
+            colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                selectedColor = SteamDeckColors.Accent,
+                unselectedColor = SteamDeckColors.TextSecondary,
+            ),
         )
         Text(
             text = label,
-            color = if (isEnabled) LocalContentColor.current
-            else LocalContentColor.current.copy(alpha = 0.6f)
+            color = if (isEnabled) SteamDeckColors.TextPrimary
+            else SteamDeckColors.TextPrimary.copy(alpha = 0.6f)
         )
     }
 }

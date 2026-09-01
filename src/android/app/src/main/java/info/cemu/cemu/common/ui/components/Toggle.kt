@@ -19,7 +19,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import info.cemu.cemu.common.ui.theme.SteamDeckColors
 
 @Composable
 fun Toggle(
@@ -29,42 +28,38 @@ fun Toggle(
     description: String? = null,
     enabled: Boolean = true,
 ) {
-    SettingsCard {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled) { onCheckedChanged(!checked) }
+            .alpha(if (enabled) 1f else 0.6f),
+    ) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = enabled) { onCheckedChanged(!checked) }
-                .alpha(if (enabled) 1f else 0.6f),
+                .weight(1.0f)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.Center,
         ) {
-            Column(
-                modifier = Modifier
-                    .weight(1.0f)
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = label,
-                    color = SteamDeckColors.TextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                )
-                if (description != null) {
-                    Text(
-                        text = description,
-                        color = SteamDeckColors.TextSecondary,
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                }
-            }
-            Switch(
-                modifier = Modifier.padding(end = 12.dp, top = 8.dp, bottom = 8.dp),
-                checked = checked,
-                onCheckedChange = null,
-                enabled = enabled,
+            Text(
+                text = label,
+                fontWeight = FontWeight.Medium,
+                fontSize = 20.sp,
             )
+            if (description != null) {
+                Text(
+                    text = description,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
+        Switch(
+            modifier = Modifier.padding(end = 8.dp, top = 8.dp, bottom = 8.dp),
+            checked = checked,
+            onCheckedChange = null,
+            enabled = enabled,
+        )
     }
 }
 

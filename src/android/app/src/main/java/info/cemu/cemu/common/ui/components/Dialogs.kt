@@ -11,16 +11,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import info.cemu.cemu.common.ui.localization.tr
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 
 @Composable
 fun GenericDialog(
@@ -32,19 +33,21 @@ fun GenericDialog(
 ) {
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            colors = CardDefaults.cardColors(containerColor = SteamDeckColors.CardBackground),
             modifier = modifier,
             shape = RoundedCornerShape(16.dp),
         ) {
             Text(
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
                 text = title,
-                fontSize = 24.sp,
+                color = SteamDeckColors.TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp,
             )
 
             content()
 
-            HorizontalDivider()
+            HorizontalDivider(color = SteamDeckColors.TextSecondary.copy(alpha = 0.2f))
 
             buttons()
         }
@@ -86,6 +89,6 @@ private fun ColumnScope.DefaultDialogButtons(onDismissRequest: () -> Unit) {
             .padding(8.dp)
             .align(Alignment.End),
     ) {
-        Text(tr("Cancel"))
+        Text(tr("Cancel"), color = SteamDeckColors.Accent)
     }
 }

@@ -158,7 +158,6 @@ fun TitleManagerScreen(
 
     ScreenContentLazyWithSidebar(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        appBarText = tr("Title manager"),
         sidebarExpanded = sidebarExpanded,
         onSidebarToggle = { sidebarExpanded = !sidebarExpanded },
         sidebarActions = rememberDefaultSidebarActions(

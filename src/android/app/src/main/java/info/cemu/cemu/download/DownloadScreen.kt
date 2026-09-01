@@ -18,8 +18,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -35,9 +33,8 @@ import androidx.compose.ui.unit.sp
 import info.cemu.cemu.common.cemufiles.tryOpenCemuFolder
 import info.cemu.cemu.common.cemufiles.tryOpenUrl
 import info.cemu.cemu.common.cemufiles.tryShareLogFile
-import info.cemu.cemu.common.ui.components.AppSidebar
+import info.cemu.cemu.common.ui.components.AppSidebarWithToggle
 import info.cemu.cemu.common.ui.components.SidebarDestination
-import info.cemu.cemu.common.ui.components.SidebarToggleButton
 import info.cemu.cemu.common.ui.components.rememberDefaultSidebarActions
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.common.ui.theme.SteamDeckColors
@@ -77,29 +74,15 @@ fun DownloadScreen(
 
     Scaffold(
         containerColor = SteamDeckColors.Background,
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    SidebarToggleButton(
-                        expanded = sidebarExpanded,
-                        onClick = { sidebarExpanded = !sidebarExpanded },
-                    )
-                },
-                title = { Text(tr("Download")) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SteamDeckColors.Background,
-                    titleContentColor = SteamDeckColors.TextPrimary,
-                ),
-            )
-        },
     ) { scaffoldPadding ->
         Row(
             modifier = Modifier
                 .padding(scaffoldPadding)
                 .fillMaxSize(),
         ) {
-            AppSidebar(
+            AppSidebarWithToggle(
                 expanded = sidebarExpanded,
+                onToggleExpanded = { sidebarExpanded = !sidebarExpanded },
                 activeDestination = SidebarDestination.DOWNLOAD,
                 onCloseEmulator = { (context as? Activity)?.finish() },
                 actions = rememberDefaultSidebarActions(

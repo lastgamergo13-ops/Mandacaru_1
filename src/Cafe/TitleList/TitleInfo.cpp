@@ -190,6 +190,7 @@ bool TitleInfo::DetectFormat(const fs::path& path, fs::path& pathOut, TitleDataF
 		// caminho SAF (content://) - nem fs::is_regular_file nem fs::exists
 		// conseguem ler isso, tem que ir pela ponte JNI
 		bool pathIsDirectory = FilesystemAndroid::IsDirectory(path);
+		cemuLog_log(LogType::Force, "[SAF scan] TitleInfo::DetectFormat: {} (isDirectory={})", _pathToUtf8(path), pathIsDirectory);
 		if (path.has_extension() && !pathIsDirectory)
 		{
 			std::string filenameStr = _pathToUtf8(path.filename());
@@ -268,7 +269,11 @@ bool TitleInfo::DetectFormat(const fs::path& path, fs::path& pathOut, TitleDataF
 		else
 		{
 			// aponta para a raiz de um titulo extraido?
-			if (FilesystemAndroid::Exists(path / "content") && FilesystemAndroid::Exists(path / "meta") && FilesystemAndroid::Exists(path / "code"))
+			bool existsContent = FilesystemAndroid::Exists(path / "content");
+			bool existsMeta = FilesystemAndroid::Exists(path / "meta");
+			bool existsCode = FilesystemAndroid::Exists(path / "code");
+			cemuLog_log(LogType::Force, "[SAF scan] HOST_FS check for {}: content={} meta={} code={}", _pathToUtf8(path), existsContent, existsMeta, existsCode);
+			if (existsContent && existsMeta && existsCode)
 			{
 				formatOut = TitleDataFormat::HOST_FS;
 				pathOut = path;

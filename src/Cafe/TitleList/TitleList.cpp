@@ -276,8 +276,12 @@ bool CafeTitleList::RefreshWorkerThread()
 		sTLListPending = sTLList;
 		sTLMutex.unlock();
 		// scan game paths
+		cemuLog_log(LogType::Force, "[SAF scan] Starting refresh, {} configured game path(s)", gamePaths.size());
 		for (auto& it : gamePaths)
+		{
+			cemuLog_log(LogType::Force, "[SAF scan] Configured game path: {}", _pathToUtf8(it));
 			ScanGamePath(it);
+		}
 		// scan MLC
 		if (!mlcPath.empty())
 		{
@@ -358,15 +362,19 @@ void CafeTitleList::ScanGamePath(const fs::path& path)
 	{
 		// caminho SAF (content://) - o std::filesystem não sabe ler isso,
 		// tem que passar pela ponte JNI que fala com o ContentResolver do Android
+		cemuLog_log(LogType::Force, "[SAF scan] Scanning content URI: {}", _pathToUtf8(path));
 		std::vector<fs::path> filesInDirectory;
 		std::vector<fs::path> dirsInDirectory;
 		bool hasContentFolder = false, hasCodeFolder = false, hasMetaFolder = false;
-		for (auto& child : FilesystemAndroid::ListFiles(path))
+		auto children = FilesystemAndroid::ListFiles(path);
+		cemuLog_log(LogType::Force, "[SAF scan] ListFiles returned {} entries for {}", children.size(), _pathToUtf8(path));
+		for (auto& child : children)
 		{
 			if (FilesystemAndroid::IsDirectory(child))
 			{
 				dirsInDirectory.emplace_back(child);
 				std::string dirName = _pathToUtf8(child.filename());
+				cemuLog_log(LogType::Force, "[SAF scan]   dir entry: \"{}\" (from {})", dirName, _pathToUtf8(child));
 				if (boost::iequals(dirName, "content"))
 					hasContentFolder = true;
 				else if (boost::iequals(dirName, "code"))
@@ -377,6 +385,7 @@ void CafeTitleList::ScanGamePath(const fs::path& path)
 			else
 			{
 				filesInDirectory.emplace_back(child);
+				cemuLog_log(LogType::Force, "[SAF scan]   file entry: \"{}\" (from {})", _pathToUtf8(child.filename()), _pathToUtf8(child));
 			}
 		}
 		for (auto& it : filesInDirectory)
@@ -385,15 +394,23 @@ void CafeTitleList::ScanGamePath(const fs::path& path)
 				continue;
 			if (!_IsKnownFileNameOrExtension(it))
 				continue;
+			cemuLog_log(LogType::Force, "[SAF scan]   -> adding file as title candidate: {}", _pathToUtf8(it));
 			AddTitleFromPath(it);
 		}
+		cemuLog_log(LogType::Force, "[SAF scan] hasContent={} hasCode={} hasMeta={} for {}", hasContentFolder, hasCodeFolder, hasMetaFolder, _pathToUtf8(path));
 		if (hasContentFolder && hasCodeFolder && hasMetaFolder)
 		{
 			TitleInfo* titleInfo = new TitleInfo(path);
 			if (titleInfo->IsValid())
+			{
+				cemuLog_log(LogType::Force, "[SAF scan] -> valid title found at {}", _pathToUtf8(path));
 				AddDiscoveredTitle(titleInfo);
+			}
 			else
+			{
+				cemuLog_log(LogType::Force, "[SAF scan] -> found content/code/meta folders but TitleInfo::IsValid() returned false for {}", _pathToUtf8(path));
 				delete titleInfo;
+			}
 			if (dirsInDirectory.size() > 3)
 			{
 				for (auto& it : dirsInDirectory)

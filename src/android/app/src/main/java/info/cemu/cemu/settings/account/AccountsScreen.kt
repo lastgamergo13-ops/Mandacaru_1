@@ -2,6 +2,7 @@
 
 package info.cemu.cemu.settings.account
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -17,7 +19,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -52,6 +54,7 @@ import info.cemu.cemu.common.ui.components.ScreenContent
 import info.cemu.cemu.common.ui.components.SelectField
 import info.cemu.cemu.common.ui.components.SingleSelection
 import info.cemu.cemu.common.ui.localization.tr
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 import info.cemu.cemu.nativeinterface.NativeAccount
 import info.cemu.cemu.nativeinterface.NativeAccount.AccountGender
 import info.cemu.cemu.nativeinterface.NativeAccount.MAX_ACCOUNT_COUNT
@@ -170,10 +173,10 @@ private fun AccountStatusIcon(isValid: Boolean) {
 
     if (isValid) {
         resId = R.drawable.ic_check_circle
-        tint = MaterialTheme.colorScheme.primary
+        tint = SteamDeckColors.Success
     } else {
         resId = R.drawable.ic_warning
-        tint = MaterialTheme.colorScheme.error
+        tint = SteamDeckColors.Danger
     }
 
     Icon(
@@ -200,10 +203,21 @@ private fun OnlinePlayRequirements(
     Header(tr("Online play requirements"))
 
     Row(
-        modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+            .then(
+                if (!onlineFullyValid)
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SteamDeckColors.Danger.copy(alpha = 0.15f))
+                        .padding(12.dp)
+                else Modifier
+            ),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         AccountStatusIcon(onlineFullyValid)
-        Text(getAccountStatus(account, onlineFilesStatus))
+        Text(getAccountStatus(account, onlineFilesStatus), color = SteamDeckColors.TextPrimary)
     }
 
     if (!onlineFullyValid) {
@@ -293,7 +307,7 @@ private fun OnlineTutorial() {
                 LinkAnnotation.Url(
                     stringResource(R.string.cemu_online_guide), TextLinkStyles(
                         style = SpanStyle(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = SteamDeckColors.Accent,
                             textDecoration = TextDecoration.Underline,
                         ),
                     )

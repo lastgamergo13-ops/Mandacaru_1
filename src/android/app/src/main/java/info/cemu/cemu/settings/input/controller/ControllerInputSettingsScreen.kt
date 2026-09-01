@@ -26,7 +26,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -246,7 +246,7 @@ private fun ControllerSettingsDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            colors = CardDefaults.cardColors(containerColor = SteamDeckColors.Background),
             modifier = Modifier.fillMaxSize(),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -372,7 +372,7 @@ private fun ControllerSelectDialog(
 ) {
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            colors = CardDefaults.cardColors(containerColor = SteamDeckColors.CardBackground),
             modifier = Modifier
                 .sizeIn(maxWidth = 560.dp, maxHeight = 560.dp)
                 .fillMaxWidth(),
@@ -448,7 +448,7 @@ private fun InputBindingPopup(
             contentAlignment = Alignment.Center,
         ) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                colors = CardDefaults.cardColors(containerColor = SteamDeckColors.CardBackground),
                 modifier = Modifier
                     .sizeIn(maxWidth = 560.dp, maxHeight = 560.dp)
                     .padding(16.dp),

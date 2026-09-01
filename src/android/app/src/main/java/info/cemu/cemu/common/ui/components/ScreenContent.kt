@@ -121,8 +121,8 @@ fun ScreenContentLazy(
 }
 
 @Composable
+@Composable
 fun ScreenContentLazyWithSidebar(
-    appBarText: String,
     sidebarExpanded: Boolean,
     onSidebarToggle: () -> Unit,
     sidebarActions: List<SidebarAction>,
@@ -138,39 +138,32 @@ fun ScreenContentLazyWithSidebar(
         modifier = Modifier.fillMaxSize(),
         containerColor = SteamDeckColors.Background,
         snackbarHost = snackbarHost,
-        topBar = {
-            TopAppBar(
-                actions = actions,
-                title = { DefaultAppBarTitle(appBarText) },
-                navigationIcon = {
-                    SidebarToggleButton(
-                        expanded = sidebarExpanded,
-                        onClick = onSidebarToggle,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SteamDeckColors.Background,
-                    titleContentColor = SteamDeckColors.TextPrimary,
-                ),
-            )
-        },
     ) { scaffoldPadding ->
         Row(
             modifier = Modifier
                 .padding(scaffoldPadding)
                 .fillMaxSize(),
         ) {
-            AppSidebar(
+            AppSidebarWithToggle(
                 expanded = sidebarExpanded,
+                onToggleExpanded = onSidebarToggle,
                 activeDestination = activeDestination,
                 actions = sidebarActions,
                 onCloseEmulator = onCloseEmulator,
             )
-            LazyColumn(
-                verticalArrangement = contentVerticalArrangement,
-                modifier = contentModifier.fillMaxSize(),
-            ) {
-                content()
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    actions()
+                }
+                LazyColumn(
+                    verticalArrangement = contentVerticalArrangement,
+                    modifier = contentModifier.fillMaxSize(),
+                ) {
+                    content()
+                }
             }
         }
     }
@@ -227,6 +220,7 @@ private fun ScreenContentGeneric(
 ) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        containerColor = SteamDeckColors.Background,
         snackbarHost = snackbarHost,
         topBar = {
             TopAppBar(
@@ -237,9 +231,14 @@ private fun ScreenContentGeneric(
                         Icon(
                             painter = painterResource(R.drawable.ic_arrow_back),
                             contentDescription = null,
+                            tint = SteamDeckColors.TextPrimary,
                         )
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SteamDeckColors.Background,
+                    titleContentColor = SteamDeckColors.TextPrimary,
+                ),
             )
         },
     ) { scaffoldPadding ->

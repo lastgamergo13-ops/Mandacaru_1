@@ -9,8 +9,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,9 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import info.cemu.cemu.common.cemufiles.tryOpenCemuFolder
 import info.cemu.cemu.common.cemufiles.tryShareLogFile
-import info.cemu.cemu.common.ui.components.AppSidebar
+import info.cemu.cemu.common.ui.components.AppSidebarWithToggle
 import info.cemu.cemu.common.ui.components.SidebarDestination
-import info.cemu.cemu.common.ui.components.SidebarToggleButton
 import info.cemu.cemu.common.ui.components.rememberDefaultSidebarActions
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.common.ui.theme.SteamDeckColors
@@ -49,29 +46,15 @@ fun MediaScreen(
 
     Scaffold(
         containerColor = SteamDeckColors.Background,
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    SidebarToggleButton(
-                        expanded = sidebarExpanded,
-                        onClick = { sidebarExpanded = !sidebarExpanded },
-                    )
-                },
-                title = { Text(tr("Media")) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SteamDeckColors.Background,
-                    titleContentColor = SteamDeckColors.TextPrimary,
-                ),
-            )
-        },
     ) { scaffoldPadding ->
         Row(
             modifier = Modifier
                 .padding(scaffoldPadding)
                 .fillMaxSize(),
         ) {
-            AppSidebar(
+            AppSidebarWithToggle(
                 expanded = sidebarExpanded,
+                onToggleExpanded = { sidebarExpanded = !sidebarExpanded },
                 activeDestination = SidebarDestination.MEDIA,
                 onCloseEmulator = { (context as? Activity)?.finish() },
                 actions = rememberDefaultSidebarActions(

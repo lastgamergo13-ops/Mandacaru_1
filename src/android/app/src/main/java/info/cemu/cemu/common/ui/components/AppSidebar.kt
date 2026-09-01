@@ -1,8 +1,6 @@
 package info.cemu.cemu.common.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,29 +44,35 @@ data class SidebarAction(
     val destination: SidebarDestination? = null,
 )
 
+private val SIDEBAR_WIDTH = 230.dp
+private val TOGGLE_BUTTON_SIZE = 14.dp
+private val TOGGLE_ICON_SIZE = 10.dp
+
 /**
- * Barra lateral persistente (retrátil) usada em toda a navegação principal do app,
- * igual ao protótipo (Biblioteca / Mídia / Download / Configurações / Gerenciador de
- * títulos / Open cemu folder / Share log file / Sobre o emulador / Fecha emulador).
+ * Barra lateral persistente (retrátil) com o botão de abrir/fechar "grudado"
+ * na borda direita dela, deslizando junto conforme ela abre/fecha - igual ao
+ * protótipo de referência. Ocupa a tela inteira (sem barra de título acima).
  *
- * Empurra o conteúdo ao lado (não é um overlay/modal) - use dentro de um Row junto
- * com o conteúdo da tela.
+ * Use no lugar de um Scaffold(topBar = ...): chame isso dentro de um Row,
+ * junto com o conteúdo da tela ao lado.
  */
 @Composable
-fun AppSidebar(
+fun AppSidebarWithToggle(
     expanded: Boolean,
+    onToggleExpanded: () -> Unit,
     activeDestination: SidebarDestination?,
     actions: List<SidebarAction>,
     onCloseEmulator: () -> Unit,
 ) {
-    AnimatedVisibility(
-        visible = expanded,
-        enter = expandHorizontally(),
-        exit = shrinkHorizontally(),
-    ) {
+    val sidebarWidth by animateDpAsState(
+        targetValue = if (expanded) SIDEBAR_WIDTH else 0.dp,
+        label = "sidebarWidth",
+    )
+
+    Box(modifier = Modifier.fillMaxHeight()) {
         Column(
             modifier = Modifier
-                .width(230.dp)
+                .width(sidebarWidth)
                 .fillMaxHeight()
                 .background(SteamDeckColors.SidebarBackground)
                 .verticalScroll(rememberScrollState()),
@@ -98,6 +103,24 @@ fun AppSidebar(
                 labelColor = SteamDeckColors.Danger,
             )
         }
+
+        // botão "grudado" na borda direita da barra lateral - anda junto com ela
+        IconButton(
+            onClick = onToggleExpanded,
+            modifier = Modifier
+                .padding(top = 8.dp, start = 4.dp)
+                .offset(x = sidebarWidth)
+                .size(TOGGLE_BUTTON_SIZE)
+                .clip(RoundedCornerShape(3.dp))
+                .background(SteamDeckColors.Accent),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_more_vert),
+                contentDescription = if (expanded) tr("Hide menu") else tr("Show menu"),
+                tint = Color.Black,
+                modifier = Modifier.size(TOGGLE_ICON_SIZE),
+            )
+        }
     }
 }
 
@@ -126,26 +149,6 @@ private fun SidebarRow(
             text = action.label,
             color = if (isActive) SteamDeckColors.TextPrimary else labelColor,
             fontSize = 14.sp,
-        )
-    }
-}
-
-/** Botão quadrado que abre/fecha a AppSidebar - igual ao das screenshots/vídeo de referência. */
-@Composable
-fun SidebarToggleButton(expanded: Boolean, onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .padding(start = 8.dp)
-            .size(28.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(SteamDeckColors.Accent),
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_more_vert),
-            contentDescription = if (expanded) tr("Hide menu") else tr("Show menu"),
-            tint = Color.Black,
-            modifier = Modifier.size(18.dp),
         )
     }
 }

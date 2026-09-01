@@ -45,6 +45,7 @@ import info.cemu.cemu.common.settings.HotkeyAction
 import info.cemu.cemu.common.settings.HotkeyCombo
 import info.cemu.cemu.common.ui.components.ScreenContent
 import info.cemu.cemu.common.ui.localization.tr
+import info.cemu.cemu.common.ui.theme.SteamDeckColors
 import kotlinx.coroutines.delay
 
 @Composable
@@ -141,7 +142,7 @@ private fun HotkeyBindingDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            colors = CardDefaults.cardColors(containerColor = SteamDeckColors.CardBackground),
             modifier = Modifier
                 .sizeIn(maxWidth = 560.dp, maxHeight = 560.dp)
                 .onKeyEvent {
@@ -217,7 +218,7 @@ private fun hotkeyActionToString(hotkeyAction: HotkeyAction) = when (hotkeyActio
 private fun KeyChip(key: Int) {
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
+        color = SteamDeckColors.ActiveItemBackground,
         modifier = Modifier.padding(vertical = 4.dp),
         tonalElevation = 2.dp,
     ) {
