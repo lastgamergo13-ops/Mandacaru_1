@@ -19,9 +19,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,8 +47,8 @@ data class SidebarAction(
 )
 
 private val SIDEBAR_WIDTH = 230.dp
-private val TOGGLE_BUTTON_SIZE = 14.dp
-private val TOGGLE_ICON_SIZE = 10.dp
+private val TOGGLE_BUTTON_SIZE = 24.dp
+private val TOGGLE_ICON_SIZE = 16.dp
 
 /**
  * Barra lateral persistente (retrátil) com o botão de abrir/fechar "grudado"
@@ -105,22 +106,27 @@ fun AppSidebarWithToggle(
             )
         }
 
-        // botão "grudado" na borda direita da barra lateral - anda junto com ela
-        IconButton(
-            onClick = onToggleExpanded,
-            modifier = Modifier
-                .padding(top = 8.dp, start = 4.dp)
-                .offset(x = sidebarWidth)
-                .size(TOGGLE_BUTTON_SIZE)
-                .clip(RoundedCornerShape(3.dp))
-                .background(SteamDeckColors.Accent),
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_more_vert),
-                contentDescription = if (expanded) tr("Hide menu") else tr("Show menu"),
-                tint = Color.Black,
-                modifier = Modifier.size(TOGGLE_ICON_SIZE),
-            )
+        // botão "grudado" na borda direita da barra lateral - anda junto com ela.
+        // CompositionLocalProvider desliga o tamanho mínimo de toque de 48dp que o
+        // Material3 força por padrão em qualquer IconButton, senão o botão renderiza
+        // bem maior do que TOGGLE_BUTTON_SIZE por baixo dos panos.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+            IconButton(
+                onClick = onToggleExpanded,
+                modifier = Modifier
+                    .padding(top = 20.dp, start = 16.dp)
+                    .offset(x = sidebarWidth)
+                    .size(TOGGLE_BUTTON_SIZE)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(SteamDeckColors.Accent),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_more_vert),
+                    contentDescription = if (expanded) tr("Hide menu") else tr("Show menu"),
+                    tint = Color.Black,
+                    modifier = Modifier.size(TOGGLE_ICON_SIZE),
+                )
+            }
         }
     }
 }
