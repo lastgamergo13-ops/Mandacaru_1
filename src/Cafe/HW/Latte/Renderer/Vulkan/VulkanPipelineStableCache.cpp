@@ -77,6 +77,11 @@ bool VulkanPipelineStableCache::UpdateLoading(uint32& pipelinesLoadedTotal, uint
 {
 	pipelinesLoadedTotal = g_vkCacheState.pipelinesLoaded;
 	pipelinesMissingShaders = 0;
+	// s_cache can be null if the cache file failed to open/create (e.g. corrupted file that
+	// could not be recreated, or no write permission). Without this check, pipelineLoadIndex(0)
+	// <= pipelineMaxFileIndex(0) is still true and we'd dereference a null s_cache below -> SIGSEGV.
+	if (!s_cache)
+		return false;
 	while (g_vkCacheState.pipelineLoadIndex <= g_vkCacheState.pipelineMaxFileIndex)
 	{
 		if (m_compilationQueue.size() >= 50)
