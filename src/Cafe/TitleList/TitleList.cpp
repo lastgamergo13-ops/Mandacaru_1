@@ -7,7 +7,30 @@
 
 #ifdef __ANDROID__
 #include "Common/android/FilesystemAndroid.h"
+#include <unistd.h>
 #endif
+
+// Abre um ZArchiveReader tanto para um fs::path normal quanto para uma URI SAF
+// (content://) do Android. ZArchiveReader::OpenFromFile usa um std::ifstream por baixo
+// dos panos e não sabe ler URIs content:// diretamente - por isso, quando o caminho é
+// uma URI SAF, pedimos um file descriptor pra ela via ponte JNI/ContentResolver e
+// reabrimos esse mesmo fd através de /proc/self/fd/<fd>, que o Linux/Android expõem
+// como um caminho de arquivo real apontando de volta pro fd já aberto.
+static ZArchiveReader* OpenZArchiveReaderCompat(const fs::path& path)
+{
+#ifdef __ANDROID__
+	if (FilesystemAndroid::IsContentUri(path))
+	{
+		int fd = FilesystemAndroid::OpenContentUri(path);
+		if (fd < 0)
+			return nullptr;
+		ZArchiveReader* zar = ZArchiveReader::OpenFromFile(fmt::format("/proc/self/fd/{}", fd));
+		close(fd);
+		return zar;
+	}
+#endif
+	return ZArchiveReader::OpenFromFile(path);
+}
 
 bool sTLInitialized{ false };
 fs::path sTLCacheFilePath;
@@ -220,7 +243,7 @@ void CafeTitleList::AddTitleFromPath(fs::path path)
 {
 	if (path.has_extension() && boost::iequals(_pathToUtf8(path.extension()), ".wua"))
 	{
-		ZArchiveReader* zar = ZArchiveReader::OpenFromFile(path);
+		ZArchiveReader* zar = OpenZArchiveReaderCompat(path);
 		if (!zar)
 		{
 			cemuLog_log(LogType::Force, "Found {} but it is not a valid Wii U archive file", _pathToUtf8(path));

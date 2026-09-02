@@ -12,7 +12,30 @@
 
 #ifdef __ANDROID__
 #include "Common/android/FilesystemAndroid.h"
+#include <unistd.h>
 #endif
+
+// Abre um ZArchiveReader tanto para um fs::path normal quanto para uma URI SAF
+// (content://) do Android. ZArchiveReader::OpenFromFile usa um std::ifstream por baixo
+// dos panos e não sabe ler URIs content:// diretamente - por isso, quando o caminho é
+// uma URI SAF, pedimos um file descriptor pra ela via ponte JNI/ContentResolver e
+// reabrimos esse mesmo fd através de /proc/self/fd/<fd>, que o Linux/Android expõem
+// como um caminho de arquivo real apontando de volta pro fd já aberto.
+static ZArchiveReader* OpenZArchiveReaderCompat(const fs::path& path)
+{
+#ifdef __ANDROID__
+	if (FilesystemAndroid::IsContentUri(path))
+	{
+		int fd = FilesystemAndroid::OpenContentUri(path);
+		if (fd < 0)
+			return nullptr;
+		ZArchiveReader* zar = ZArchiveReader::OpenFromFile(fmt::format("/proc/self/fd/{}", fd));
+		close(fd);
+		return zar;
+	}
+#endif
+	return ZArchiveReader::OpenFromFile(path);
+}
 
 // detect format by reading file header/footer
 CafeTitleFileType DetermineCafeSystemFileType(fs::path filePath)
@@ -226,7 +249,7 @@ bool TitleInfo::DetectFormat(const fs::path& path, fs::path& pathOut, TitleDataF
 			{
 				formatOut = TitleDataFormat::WIIU_ARCHIVE;
 				pathOut = path;
-				ZArchiveReader* zar = ZArchiveReader::OpenFromFile(path);
+				ZArchiveReader* zar = OpenZArchiveReaderCompat(path);
 				if (!zar)
 					return false;
 				ZArchiveNodeHandle rootDir = zar->LookUp("", false, true);
@@ -459,7 +482,7 @@ ZArchiveReader* _ZArchivePool_AcquireInstance(const fs::path& path)
 	}
 	_lock.unlock();
 	// opening wua files can be expensive, so we do it outside of the lock
-	ZArchiveReader* zar = ZArchiveReader::OpenFromFile(path);
+	ZArchiveReader* zar = OpenZArchiveReaderCompat(path);
 	if (!zar)
 		return nullptr;
 	_lock.lock();

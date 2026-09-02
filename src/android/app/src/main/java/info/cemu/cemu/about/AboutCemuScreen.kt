@@ -50,7 +50,7 @@ fun AboutCemuScreen(navigateBack: () -> Unit) {
     val libraries by produceLibraries(R.raw.aboutlibraries)
 
     ScreenContentLazy(
-        appBarText = tr("About Cemu"),
+        appBarText = tr("About Mandacaru Wii U"),
         navigateBack = navigateBack,
         contentModifier = Modifier
             .fillMaxWidth()

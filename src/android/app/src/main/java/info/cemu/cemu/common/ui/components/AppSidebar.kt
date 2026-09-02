@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import info.cemu.cemu.R
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.common.ui.theme.SteamDeckColors
@@ -50,6 +51,7 @@ data class SidebarAction(
 private val SIDEBAR_WIDTH = 230.dp
 private val TOGGLE_BUTTON_SIZE = 24.dp
 private val TOGGLE_ICON_SIZE = 16.dp
+private val TOGGLE_BUTTON_START_PADDING = 16.dp
 
 /**
  * Barra lateral persistente (retrátil) com o botão de abrir/fechar "grudado"
@@ -72,7 +74,13 @@ fun AppSidebarWithToggle(
         label = "sidebarWidth",
     )
 
-    Box(modifier = Modifier.fillMaxHeight()) {
+    // zIndex garante que este Box (e o botão de toggle deslocado via offset dentro dele)
+    // sempre vença o teste de toque em relação ao conteúdo vizinho no Row pai. Sem isso,
+    // quando a sidebar está expandida, o botão (deslocado para a borda direita dela) cai
+    // fisicamente dentro da área que o Row reserva para o conteúdo ao lado - e como esse
+    // conteúdo é o outro filho do Row, ele "rouba" o toque do botão, impedindo de fechar
+    // a sidebar de novo.
+    Box(modifier = Modifier.fillMaxHeight().zIndex(1f)) {
         Column(
             modifier = Modifier
                 .width(sidebarWidth)
@@ -115,7 +123,7 @@ fun AppSidebarWithToggle(
             IconButton(
                 onClick = onToggleExpanded,
                 modifier = Modifier
-                    .padding(top = 20.dp, start = 16.dp)
+                    .padding(top = 20.dp, start = TOGGLE_BUTTON_START_PADDING)
                     .offset(x = sidebarWidth)
                     .size(TOGGLE_BUTTON_SIZE)
                     .clip(RoundedCornerShape(4.dp))
@@ -216,7 +224,7 @@ fun rememberDefaultSidebarActions(
     ),
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_folder,
-        label = tr("Open Cemu folder"),
+        label = tr("Open Mandacaru Wii U folder"),
         iconTint = SteamDeckColors.IconBlack,
         onClick = openCemuFolder,
     ),
@@ -228,7 +236,7 @@ fun rememberDefaultSidebarActions(
     ),
     SidebarAction(
         iconRes = R.drawable.ic_sidebar_info,
-        label = tr("About Cemu"),
+        label = tr("About Mandacaru Wii U"),
         iconTint = SteamDeckColors.IconBlack,
         onClick = goToAboutCemu,
     ),

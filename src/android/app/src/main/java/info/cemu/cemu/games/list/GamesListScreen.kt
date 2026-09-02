@@ -138,7 +138,7 @@ fun GamesListScreen(
                         if (!tryOpenCemuFolder(context)) {
                             snackbarHostState.showMessage(
                                 coroutineScope,
-                                tr("Failed to open Cemu folder")
+                                tr("Failed to open Mandacaru Wii U folder")
                             )
                         }
                     },
