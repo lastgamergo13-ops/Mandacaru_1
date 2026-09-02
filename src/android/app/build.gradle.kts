@@ -79,6 +79,10 @@ android {
 
     packaging {
         jniLibs.useLegacyPackaging = true
+        // By default AGP strips native symbols from the .so files it packages into the APK.
+        // Keep them so dladdr() (used by our Android crash handler) can resolve function
+        // names+offsets at runtime instead of only raw addresses. Increases APK size a bit.
+        jniLibs.keepDebugSymbols.add("**/*.so")
     }
 
     val keystoreFilePath: String? = System.getenv("ANDROID_STORE_FILE")
@@ -97,6 +101,9 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
         }
         release {
             isMinifyEnabled = true
@@ -108,6 +115,11 @@ android {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")
+            }
+            ndk {
+                // For Play Console-style crash deobfuscation (native-debug-symbols.zip), if ever used.
+                // Not what makes dladdr() work at runtime -- that's jniLibs.keepDebugSymbols above.
+                debugSymbolLevel = "FULL"
             }
         }
     }
