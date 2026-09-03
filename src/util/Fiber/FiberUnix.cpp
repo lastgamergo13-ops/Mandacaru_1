@@ -1,6 +1,7 @@
 #include "Fiber.h"
 #include <atomic>
 #include <cstdlib>
+#include "Cemu/Logging/CemuLogging.h"
 
 #ifdef __ANDROID__
 // Bionic (a libc do Android) nunca implementou ucontext.h (getcontext/makecontext/
@@ -29,12 +30,19 @@ namespace
 
 Fiber::Fiber(void(*FiberEntryPoint)(void* userParam), void* userParam, void* privateData) : m_privateData(privateData)
 {
+	if (!FiberEntryPoint)
+		cemuLog_log(LogType::Force, "Fiber: constructed with a null FiberEntryPoint (userParam={})", userParam);
+
 	const size_t stackSize = 2 * 1024 * 1024;
 	m_stackPtr = malloc(stackSize);
+	if (!m_stackPtr)
+		cemuLog_log(LogType::Force, "Fiber: malloc({}) for the fiber stack failed", stackSize);
 
 	// Boost.Context espera o ponteiro para o topo (endereco mais alto) da stack.
 	void* stackTop = static_cast<char*>(m_stackPtr) + stackSize;
 	fcontext_t ctx = make_fcontext(stackTop, stackSize, &FiberTrampoline);
+	if (!ctx)
+		cemuLog_log(LogType::Force, "Fiber: make_fcontext() returned null (stackPtr={}, stackTop={}, size={}) - Boost.Context may be broken for this build/ABI", m_stackPtr, stackTop, stackSize);
 
 	m_implData = new fcontext_t(ctx);
 	m_androidEntryPoint = FiberEntryPoint;
@@ -74,6 +82,14 @@ void Fiber::Switch(Fiber& targetFiber)
 
 	fcontext_t* leavingCtx = static_cast<fcontext_t*>(leavingFiber->m_implData);
 	fcontext_t* targetCtx = static_cast<fcontext_t*>(targetFiber.m_implData);
+
+	if (!targetCtx || !*targetCtx)
+	{
+		// this would otherwise crash inside jump_fcontext() with pc=0 and no useful backtrace.
+		// logging it here first pinpoints it precisely to a bad/uninitialized fcontext_t instead.
+		cemuLog_log(LogType::Force, "Fiber::Switch: about to jump into a null/invalid fcontext_t (target entryPoint={}, userParam={}, stackPtr={}) - this will crash",
+			(void*)targetFiber.m_androidEntryPoint, targetFiber.m_androidUserParam, targetFiber.m_stackPtr);
+	}
 
 	transfer_t result = jump_fcontext(*targetCtx, &targetFiber);
 

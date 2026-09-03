@@ -8,11 +8,174 @@
 
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/HW/Espresso/Debugger/GDBBreakpoints.h"
+#include "Cemu/Logging/CemuLogging.h"
+
+#if defined(__ANDROID__)
+#include "Cafe/HW/Espresso/PPCState.h"
+#endif
 
 #if defined(__ANDROID__)
 #include <ucontext.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <exception>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+#include <mutex>
+#include <unordered_map>
+#include <thread>
+#include <chrono>
+#include <atomic>
+
+// ---------------------------------------------------------------------------------------------
+// Watchdog: lightweight per-thread "what am I doing right now" status registry + a background
+// thread that periodically logs it together with current memory usage. Purpose: if the process
+// dies WITHOUT our signal handler running at all (frozen/ANR-killed by the system watchdog, or
+// OOM-killed by the kernel -- neither raises a catchable signal), log.txt still has the last
+// known status of every tracked thread and the memory trend leading up to it, instead of just
+// stopping dead with no explanation.
+// ---------------------------------------------------------------------------------------------
+namespace
+{
+	struct WatchdogEntry
+	{
+		std::string threadName;
+		std::string status;
+	};
+
+	std::mutex s_watchdogMutex;
+	std::unordered_map<pid_t, WatchdogEntry> s_watchdogEntries;
+	std::atomic_bool s_watchdogThreadStarted{false};
+
+	// returns current resident set size in KB, or -1 if it couldn't be read
+	long AndroidReadCurrentRSSKb()
+	{
+		FILE* f = fopen("/proc/self/status", "r");
+		if (!f)
+			return -1;
+		long rssKb = -1;
+		char line[256];
+		while (fgets(line, sizeof(line), f))
+		{
+			if (strncmp(line, "VmRSS:", 6) == 0)
+			{
+				sscanf(line + 6, "%ld", &rssKb);
+				break;
+			}
+		}
+		fclose(f);
+		return rssKb;
+	}
+
+	void WatchdogThreadFunc()
+	{
+		long lastRssKb = -1;
+		int iteration = 0;
+		while (true)
+		{
+			std::this_thread::sleep_for(std::chrono::seconds(3));
+			long rssKb = AndroidReadCurrentRSSKb();
+
+			// immediate warning on a large jump, independent of the periodic heartbeat below --
+			// this is the sign of a leak/runaway allocation that's about to get us OOM-killed
+			if (rssKb > 0 && lastRssKb > 0 && (rssKb - lastRssKb) > 200 * 1024)
+			{
+				cemuLog_log(LogType::Force, "[Watchdog] Memory usage jumped by {}MB in the last ~3s (now {}MB) - possible leak/runaway allocation, OOM-kill may follow",
+					(rssKb - lastRssKb) / 1024, rssKb / 1024);
+			}
+			lastRssKb = rssKb;
+
+			iteration++;
+			if ((iteration % 5) == 0) // ~every 15s
+			{
+				std::string statusDump;
+				{
+					std::lock_guard lock(s_watchdogMutex);
+					for (auto& [tid, entry] : s_watchdogEntries)
+						statusDump += fmt::format("\n    tid={} \"{}\": {}", tid, entry.threadName, entry.status.empty() ? "(idle)" : entry.status);
+				}
+				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - tracked threads:{}", rssKb > 0 ? rssKb / 1024 : -1, statusDump);
+			}
+		}
+	}
+
+	void EnsureWatchdogThreadStarted()
+	{
+		bool expected = false;
+		if (s_watchdogThreadStarted.compare_exchange_strong(expected, true))
+		{
+			std::thread(WatchdogThreadFunc).detach();
+		}
+	}
+}
+
+void Watchdog_SetThreadStatus(std::string_view status)
+{
+	EnsureWatchdogThreadStarted();
+	pid_t tid = gettid();
+	std::lock_guard lock(s_watchdogMutex);
+	auto& entry = s_watchdogEntries[tid];
+	if (entry.threadName.empty())
+	{
+		char threadName[16] = {};
+		pthread_getname_np(pthread_self(), threadName, sizeof(threadName));
+		entry.threadName = threadName;
+	}
+	entry.status = std::string(status);
+}
+
+void Watchdog_ClearThreadStatus()
+{
+	pid_t tid = gettid();
+	std::lock_guard lock(s_watchdogMutex);
+	auto it = s_watchdogEntries.find(tid);
+	if (it != s_watchdogEntries.end())
+		it->second.status.clear();
+}
+
+// looks up the last status set by the given thread, empty string if none was ever set
+std::string AndroidGetWatchdogStatusForThread(pid_t tid)
+{
+	std::lock_guard lock(s_watchdogMutex);
+	auto it = s_watchdogEntries.find(tid);
+	if (it == s_watchdogEntries.end() || it->second.status.empty())
+		return {};
+	return it->second.status;
+}
+
+// captured by AndroidTerminateHandler and printed by AndroidPrintCrashContext once the resulting
+// SIGABRT reaches handlerDumpingSignal. Kept separate (instead of calling CrashLog_Create()/Write
+// here) because CrashLog_Create() only succeeds once -- calling it here would make the real
+// signal handler's own CrashLog_Create() call fail and skip printing the backtrace entirely.
+static std::string s_terminateExceptionMessage;
+
+// std::terminate() is called for uncaught C++ exceptions, noexcept violations, exceptions thrown
+// while unwinding, etc. By default it just calls abort() (-> SIGABRT, already handled below), but
+// without this we'd have no idea *which* exception caused it or what its .what() message was.
+void AndroidTerminateHandler()
+{
+	if (auto exPtr = std::current_exception())
+	{
+		try
+		{
+			std::rethrow_exception(exPtr);
+		}
+		catch (const std::exception& e)
+		{
+			s_terminateExceptionMessage = fmt::format("std::exception: {}", e.what());
+		}
+		catch (...)
+		{
+			s_terminateExceptionMessage = "unknown exception (not derived from std::exception)";
+		}
+	}
+	else
+	{
+		s_terminateExceptionMessage = "std::terminate called with no active exception (direct terminate()/abort() call, a noexcept violation, or an exception thrown while already unwinding)";
+	}
+	std::abort();
+}
 
 // human readable si_code, covers the codes that actually show up for the signals we handle
 const char* AndroidSignalCodeToString(int sig, int code)
@@ -132,13 +295,68 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 			codeDescription ? fmt::format("  ({})", codeDescription) : ""));
 	}
 
+	if (sig == SIGABRT && !s_terminateExceptionMessage.empty())
+		CrashLog_WriteLine(fmt::format("Uncaught C++ exception: {}", s_terminateExceptionMessage));
+
 	char threadName[16] = {};
 	pthread_getname_np(pthread_self(), threadName, sizeof(threadName));
-	CrashLog_WriteLine(fmt::format("Crashing thread: tid={}  name=\"{}\"", gettid(), threadName));
+	pid_t crashingTid = gettid();
+	CrashLog_WriteLine(fmt::format("Crashing thread: tid={}  name=\"{}\"", crashingTid, threadName));
+
+	std::string watchdogStatus = AndroidGetWatchdogStatusForThread(crashingTid);
+	if (!watchdogStatus.empty())
+		CrashLog_WriteLine(fmt::format("Last known status of this thread: {}", watchdogStatus));
 
 #if defined(__aarch64__)
 	AndroidPrintRegisters(context);
 #endif
+
+	// If this thread was running the PPC interpreter/recompiler, print the emulated CPU state.
+	// PPCInterpreter_getCurrentInstance() is thread_local and returns null on any thread that
+	// isn't currently executing emulated PPC code (most threads), so this is always safe to call.
+	PPCInterpreter_t* hCPU = PPCInterpreter_getCurrentInstance();
+	if (hCPU)
+	{
+		CrashLog_WriteLine("PPC interpreter/recompiler state (this thread was executing emulated code):");
+		CrashLog_WriteLine(fmt::format("  instructionPointer (PPC PC) = 0x{:08x}", hCPU->instructionPointer));
+		CrashLog_WriteLine(fmt::format("  LR = 0x{:08x}  CTR = 0x{:08x}  XER = 0x{:08x}", hCPU->spr.LR, hCPU->spr.CTR, hCPU->spr.XER));
+		CrashLog_WriteLine(fmt::format("  gpr[1] (PPC SP) = 0x{:08x}  coreInterruptMask = 0x{:08x}", hCPU->gpr[1], hCPU->coreInterruptMask));
+		CrashLog_WriteLine(fmt::format("  reservedMemAddr = 0x{:08x}  memoryException = {}", hCPU->reservedMemAddr, hCPU->memoryException));
+		for (int i = 0; i < 32; i += 4)
+		{
+			CrashLog_WriteLine(fmt::format("  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}",
+				i, hCPU->gpr[i], i + 1, hCPU->gpr[i + 1], i + 2, hCPU->gpr[i + 2], i + 3, hCPU->gpr[i + 3]));
+		}
+	}
+}
+
+void AndroidPrintLoadedLibraries()
+{
+	FILE* f = fopen("/proc/self/maps", "r");
+	if (!f)
+		return;
+	CrashLog_WriteLine("Loaded libraries:");
+	char line[512];
+	std::string lastPath;
+	while (fgets(line, sizeof(line), f))
+	{
+		std::string_view lineView(line);
+		size_t pathStart = lineView.find('/');
+		if (pathStart == std::string_view::npos)
+			continue;
+		std::string_view path = lineView.substr(pathStart);
+		while (!path.empty() && (path.back() == '\n' || path.back() == '\r'))
+			path.remove_suffix(1);
+		if (path.size() < 3 || path.substr(path.size() - 3) != ".so")
+			continue;
+		if (path == lastPath) // skip additional segments (r-x, rw-, ...) of a library we already printed
+			continue;
+		lastPath = std::string(path);
+		size_t spacePos = lineView.find(' ');
+		std::string_view addrRange = lineView.substr(0, spacePos);
+		CrashLog_WriteLine(fmt::format("  {}  {}", addrRange, path));
+	}
+	fclose(f);
 }
 
 #endif
@@ -263,6 +481,7 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
 		AndroidPrintBacktrace(backtraceArray, size);
 	else
 		CrashLog_WriteLine("Backtrace not available on Android");
+	AndroidPrintLoadedLibraries();
 #endif
 
     std::cerr << fmt::format("\nStacktrace and additional info written to:") << std::endl;
@@ -295,8 +514,40 @@ void handler_SIGINT(int sig)
 	_Exit(0);
 }
 
+#if defined(__ANDROID__)
+void ExceptionHandler_InstallAltStackForCurrentThread()
+{
+	// sigaltstack() is per-thread and needs its own dedicated memory per thread (never share one
+	// buffer between two threads that could both be handling a signal at the same time).
+	// Deliberately never freed: this is only ever called for a handful of long-lived threads
+	// (main thread, the PPC core scheduler threads) and there's no safe point to free it before
+	// the thread exits.
+	auto* altStackMem = new uint8_t[SIGSTKSZ * 4];
+	stack_t altStack{};
+	altStack.ss_sp = altStackMem;
+	altStack.ss_size = SIGSTKSZ * 4;
+	altStack.ss_flags = 0;
+	sigaltstack(&altStack, nullptr);
+}
+#endif
+
 void ExceptionHandler_Init()
 {
+#if defined(__ANDROID__)
+	// Run the signal handler on a separate stack. Without this, a crash caused by a stack
+	// overflow (a very real possibility with the recursive PPC recompiler / deep C++ call
+	// chains) has no stack space left to run handlerDumpingSignal at all -- the process would
+	// just die silently with nothing useful in log.txt. Note: sigaltstack() is per-thread, so
+	// this only covers the thread that calls ExceptionHandler_Init() (normally main()/JNI init).
+	// Other important threads (PPC core scheduler threads) install their own via
+	// ExceptionHandler_InstallAltStackForCurrentThread(), see coreinit_Thread.cpp.
+	ExceptionHandler_InstallAltStackForCurrentThread();
+
+	// catch uncaught C++ exceptions (see AndroidTerminateHandler) so their .what() message ends
+	// up in the crash log instead of just "signal 6" with no context
+	std::set_terminate(AndroidTerminateHandler);
+#endif
+
 	struct sigaction action;
 	action.sa_flags = 0;
 	sigfillset(&action.sa_mask); // don't allow signals to be interrupted
@@ -306,6 +557,9 @@ void ExceptionHandler_Init()
 	sigaction(SIGTERM, &action, nullptr);
 
     action.sa_flags = SA_SIGINFO;
+#if defined(__ANDROID__)
+    action.sa_flags |= SA_ONSTACK;
+#endif
     action.sa_handler = nullptr;
 	action.sa_sigaction = handlerDumpingSignal;
 	sigaction(SIGABRT, &action, nullptr);

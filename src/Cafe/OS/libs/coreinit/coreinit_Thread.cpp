@@ -15,6 +15,10 @@
 
 #include "util/helpers/helpers.h"
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 #ifdef __arm64__
 #if defined(__clang__)
 #include <arm_acle.h>
@@ -1378,6 +1382,15 @@ namespace coreinit
 
 		enableFlushDenormalsToZero();
 
+#if defined(__ANDROID__)
+		// Not updated per-iteration (that loop can run many thousands of times per second --
+		// too hot a path for a mutex+format call). The exact PPC instructionPointer/registers at
+		// the moment of a crash are already captured separately by the crash handler itself via
+		// PPCInterpreter_getCurrentInstance(), so this is just enough to know which emulated
+		// thread's fiber was active if we hang/freeze without actually crashing.
+		Watchdog_SetThreadStatus(fmt::format("core {} - running emulated OSThread (host ptr {})", (uintptr_t)t_assignedCoreIndex, (void*)hostThread->m_thread));
+#endif
+
 		PPCInterpreter_t* hCPU = &hostThread->ppcInstance;
 		__OSLoadThread(hostThread->m_thread, hCPU, hostThread->selectedCore);
 		__OSThreadStartTimeslice(hostThread->m_thread, &hostThread->ppcInstance);
@@ -1423,6 +1436,16 @@ namespace coreinit
 		SetThreadName(fmt::format("OSSched[core={}]", (uintptr_t)_assignedCoreIndex).c_str());
 		t_assignedCoreIndex = (sint32)(uintptr_t)_assignedCoreIndex;
 
+#if defined(__ANDROID__)
+		// PPC core scheduler threads recurse deeply (recompiler/interpreter call chains) and are
+		// where the emulated game code actually runs, so they're the most likely place for a
+		// stack overflow or a crash inside a specific title's recompiled code. Without its own
+		// alt-signal-stack, a stack-overflow crash on this thread would have no room left to run
+		// our crash handler at all and die with nothing in log.txt.
+		ExceptionHandler_InstallAltStackForCurrentThread();
+		Watchdog_SetThreadStatus(fmt::format("core {} - starting up", (uintptr_t)_assignedCoreIndex));
+#endif
+
 		enableFlushDenormalsToZero();
 
 #if BOOST_OS_LINUX
@@ -1443,12 +1466,28 @@ namespace coreinit
 		t_schedulerFiber = Fiber::PrepareCurrentThread();
 
 		// create scheduler idle fiber and switch to it
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus(fmt::format("core {} - creating idle fiber", (uintptr_t)_assignedCoreIndex));
+#endif
 		g_idleLoopFiber[t_assignedCoreIndex] = new Fiber(__OSThreadCoreIdle, nullptr, nullptr);
+		if (PPCInterpreter_getCurrentInstance() != nullptr)
+			cemuLog_log(LogType::Force, "OSSchedulerCoreEmulationThread: PPCInterpreter_getCurrentInstance() unexpectedly non-null before scheduler start (core {})", (uintptr_t)_assignedCoreIndex);
 		cemu_assert_debug(PPCInterpreter_getCurrentInstance() == nullptr);
 		__OSLockScheduler();
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus(fmt::format("core {} - switching into idle fiber (first fiber switch on this thread)", (uintptr_t)_assignedCoreIndex));
+#endif
 		Fiber::Switch(*g_idleLoopFiber[t_assignedCoreIndex]);
 		// returned from scheduler loop, exit thread
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus(fmt::format("core {} - scheduler loop returned, thread exiting", (uintptr_t)_assignedCoreIndex));
+#endif
+		if (__OSHasSchedulerLock())
+			cemuLog_log(LogType::Force, "OSSchedulerCoreEmulationThread: scheduler lock still held on thread exit (core {})", (uintptr_t)_assignedCoreIndex);
 		cemu_assert_debug(!__OSHasSchedulerLock());
+#if defined(__ANDROID__)
+		Watchdog_ClearThreadStatus();
+#endif
 	}
 
 	std::vector<std::thread::native_handle_type> g_schedulerThreadHandles;
