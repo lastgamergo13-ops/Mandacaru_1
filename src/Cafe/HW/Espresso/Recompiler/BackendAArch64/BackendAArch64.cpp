@@ -15,6 +15,13 @@
 #include "HW/Espresso/Interpreter/PPCInterpreterHelper.h"
 #include "HW/Espresso/PPCState.h"
 
+#ifdef __ANDROID__
+#include <sys/mman.h>
+#include <unistd.h>
+#include <mutex>
+#include <unordered_map>
+#endif
+
 using namespace Xbyak_aarch64;
 
 constexpr uint32 TEMP_GPR_1_ID = 25;
@@ -60,10 +67,114 @@ static const FPReg TEMP_FPR{TEMP_FPR_ID};
 
 static const util::Cpu s_cpu;
 
+#ifdef __ANDROID__
+// Em dispositivos Android recentes (principalmente com targetSdk >= 34, que já é o caso
+// deste app) o sistema aplica "Memory Deny Write Execute" (MDWE) e/ou proteções W^X
+// equivalentes de fabricante (ex: proteções de kernel da Samsung). Isso bloqueia, de forma
+// silenciosa em alguns aparelhos, qualquer mapeamento de memória que passe a ser gravável E
+// executável ao mesmo tempo - e é exatamente isso que o alocador padrão do xbyak_aarch64 faz
+// (aloca a página como RW e depois chama mprotect() pra virar RWX/RE). O mprotect() parece
+// funcionar (retorna sucesso), mas na hora de EXECUTAR o código gerado o sistema barra e mata
+// o app com SIGSEGV (SEGV_ACCERR) - exatamente o crash relatado ao rodar um jogo.
+//
+// A correção é nunca deixar uma página ser gravável e executável ao mesmo tempo, e nunca
+// fazer uma página gravável virar executável via mprotect(). Para isso, mapeamos a MESMA
+// memória física duas vezes, em dois endereços virtuais diferentes: um só leitura+escrita
+// (usado pelo recompilador pra gerar o código) e outro só leitura+execução (usado de fato
+// pra rodar o código). Como os dois mapeamentos espelham os mesmos offsets da mesma memória
+// física, os saltos relativos calculados durante a geração do código continuam válidos na
+// hora de executar através do outro endereço.
+class DualMapAllocator : public Allocator
+{
+	struct Mapping
+	{
+		void* execAddr;
+		size_t size;
+		int fd;
+	};
+
+	inline static std::mutex s_mutex;
+	inline static std::unordered_map<void*, Mapping> s_mappings;
+
+  public:
+	uint32* alloc(size_t size) override
+	{
+		size_t pageSize = (size_t)sysconf(_SC_PAGESIZE);
+		size = (size + pageSize - 1) & ~(pageSize - 1);
+
+		int fd = memfd_create("cemu_jit_code", 0);
+		if (fd < 0)
+			return nullptr;
+		if (ftruncate(fd, size) != 0)
+		{
+			close(fd);
+			return nullptr;
+		}
+		void* writeAddr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (writeAddr == MAP_FAILED)
+		{
+			close(fd);
+			return nullptr;
+		}
+		void* execAddr = mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
+		if (execAddr == MAP_FAILED)
+		{
+			munmap(writeAddr, size);
+			close(fd);
+			return nullptr;
+		}
+		// já podemos fechar o fd - as duas mmap regions continuam válidas até serem
+		// desmapeadas, mesmo sem o fd aberto
+		close(fd);
+		{
+			std::lock_guard<std::mutex> lock(s_mutex);
+			s_mappings[writeAddr] = { execAddr, size, -1 };
+		}
+		return reinterpret_cast<uint32*>(writeAddr);
+	}
+
+	void free(uint32* p) override
+	{
+		if (!p)
+			return;
+		std::lock_guard<std::mutex> lock(s_mutex);
+		auto it = s_mappings.find(p);
+		if (it == s_mappings.end())
+			return;
+		munmap(it->second.execAddr, it->second.size);
+		munmap(p, it->second.size);
+		s_mappings.erase(it);
+	}
+
+	[[nodiscard]] bool useProtect() const override
+	{
+		// os dois mapeamentos já nascem com a permissão certa (RW e RX) e nunca mudam -
+		// nunca devemos chamar mprotect() nelas
+		return false;
+	}
+
+	// traduz um ponteiro do mapeamento gravável (top_ / getCode() do CodeArray) para o
+	// endereço executável correspondente - é esse endereço que deve de fato ser chamado
+	static void* TranslateToExecAddress(void* writeAddr)
+	{
+		std::lock_guard<std::mutex> lock(s_mutex);
+		for (auto& [base, mapping] : s_mappings)
+		{
+			if (writeAddr >= base && writeAddr < (uint8*)base + mapping.size)
+				return (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
+		}
+		cemu_assert_suspicious(); // não deveria acontecer: ponteiro não pertence a nenhuma alocação do DualMapAllocator
+		return writeAddr;
+	}
+};
+#endif
+
 class AArch64Allocator : public Allocator
 {
   private:
-#ifdef XBYAK_USE_MMAP_ALLOCATOR
+#ifdef __ANDROID__
+	inline static DualMapAllocator s_allocator;
+#elif defined(XBYAK_USE_MMAP_ALLOCATOR)
 	inline static MmapAllocator s_allocator;
 #else
 	inline static Allocator s_allocator;
@@ -94,6 +205,24 @@ class AArch64Allocator : public Allocator
 	[[nodiscard]] bool useProtect() const override
 	{
 		return !m_freeDisabled && m_allocatorImpl->useProtect();
+	}
+
+	// No Android, o ponteiro retornado por CodeArray::getCode() aponta pro mapeamento
+	// GRAVÁVEL, que não é executável. Antes de chamar/saltar pra ele é preciso traduzir
+	// pro endereço executável correspondente e garantir que o cache de instruções desse
+	// endereço (que é uma mmap fisicamente diferente da usada pra escrever o código) seja
+	// invalidado - a invalidação de cache feita internamente pela lib usa o endereço
+	// gravável, que não necessariamente alcança as linhas de i-cache do endereço
+	// executável. Em outras plataformas isso é um no-op (só retorna o mesmo ponteiro).
+	static void* FinalizeExecutableCode(void* codePtr, size_t codeSize)
+	{
+#ifdef __ANDROID__
+		void* execPtr = DualMapAllocator::TranslateToExecAddress(codePtr);
+		__builtin___clear_cache((char*)execPtr, (char*)execPtr + codeSize);
+		return execPtr;
+#else
+		return codePtr;
+#endif
 	}
 };
 
@@ -1614,7 +1743,7 @@ bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, 
 	aarch64GenContext.readyRE();
 
 	// set code
-	PPCRecFunction->x86Code = aarch64GenContext.getCode<void*>();
+	PPCRecFunction->x86Code = AArch64Allocator::FinalizeExecutableCode(aarch64GenContext.getCode<void*>(), aarch64GenContext.getSize());
 	PPCRecFunction->x86Size = aarch64GenContext.getMaxSize();
 	// set free disabled to skip freeing the code from the CodeGenerator destructor
 	allocator.setFreeDisabled(true);
@@ -1673,10 +1802,13 @@ void AArch64GenContext_t::leaveRecompilerCode()
 }
 
 bool initializedInterfaceFunctions = false;
-AArch64GenContext_t enterRecompilerCode_ctx{};
+AArch64Allocator enterRecompilerCode_allocator;
+AArch64GenContext_t enterRecompilerCode_ctx{&enterRecompilerCode_allocator};
 
-AArch64GenContext_t leaveRecompilerCode_unvisited_ctx{};
-AArch64GenContext_t leaveRecompilerCode_visited_ctx{};
+AArch64Allocator leaveRecompilerCode_unvisited_allocator;
+AArch64GenContext_t leaveRecompilerCode_unvisited_ctx{&leaveRecompilerCode_unvisited_allocator};
+AArch64Allocator leaveRecompilerCode_visited_allocator;
+AArch64GenContext_t leaveRecompilerCode_visited_ctx{&leaveRecompilerCode_visited_allocator};
 void PPCRecompilerAArch64Gen_generateRecompilerInterfaceFunctions()
 {
 	if (initializedInterfaceFunctions)
@@ -1685,13 +1817,13 @@ void PPCRecompilerAArch64Gen_generateRecompilerInterfaceFunctions()
 
 	enterRecompilerCode_ctx.enterRecompilerCode();
 	enterRecompilerCode_ctx.readyRE();
-	PPCRecompiler_enterRecompilerCode = enterRecompilerCode_ctx.getCode<decltype(PPCRecompiler_enterRecompilerCode)>();
+	PPCRecompiler_enterRecompilerCode = decltype(PPCRecompiler_enterRecompilerCode)(AArch64Allocator::FinalizeExecutableCode(enterRecompilerCode_ctx.getCode<void*>(), enterRecompilerCode_ctx.getSize()));
 
 	leaveRecompilerCode_unvisited_ctx.leaveRecompilerCode();
 	leaveRecompilerCode_unvisited_ctx.readyRE();
-	PPCRecompiler_leaveRecompilerCode_unvisited = leaveRecompilerCode_unvisited_ctx.getCode<decltype(PPCRecompiler_leaveRecompilerCode_unvisited)>();
+	PPCRecompiler_leaveRecompilerCode_unvisited = decltype(PPCRecompiler_leaveRecompilerCode_unvisited)(AArch64Allocator::FinalizeExecutableCode(leaveRecompilerCode_unvisited_ctx.getCode<void*>(), leaveRecompilerCode_unvisited_ctx.getSize()));
 
 	leaveRecompilerCode_visited_ctx.leaveRecompilerCode();
 	leaveRecompilerCode_visited_ctx.readyRE();
-	PPCRecompiler_leaveRecompilerCode_visited = leaveRecompilerCode_visited_ctx.getCode<decltype(PPCRecompiler_leaveRecompilerCode_visited)>();
+	PPCRecompiler_leaveRecompilerCode_visited = decltype(PPCRecompiler_leaveRecompilerCode_visited)(AArch64Allocator::FinalizeExecutableCode(leaveRecompilerCode_visited_ctx.getCode<void*>(), leaveRecompilerCode_visited_ctx.getSize()));
 }
