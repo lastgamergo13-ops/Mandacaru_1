@@ -18,9 +18,16 @@ namespace
 {
 	void FiberTrampoline(transfer_t t)
 	{
-		// So executado na primeira vez que se troca para esse fiber. 'data' e o
-		// ponteiro para o proprio objeto Fiber, passado no primeiro jump_fcontext.
-		Fiber* self = static_cast<Fiber*>(t.data);
+		// So executado na primeira vez que se troca para esse fiber.
+		// 't.data' e um ponteiro para o Fiber que fez a troca para nos (ver
+		// Switch() abaixo) - atualiza o slot de contexto DELE com o continuation
+		// que o Boost.Context acabou de criar pra ele, exatamente como toda
+		// retomada normal faz. sCurrentFiber ja aponta pra nos mesmos (Switch()
+		// seta isso antes do jump), entao usamos ele pra saber "quem somos".
+		Fiber* switchedFrom = static_cast<Fiber*>(t.data);
+		*static_cast<fcontext_t*>(switchedFrom->m_implData) = t.fctx;
+
+		Fiber* self = sCurrentFiber;
 		self->AndroidRunEntryPoint();
 		// FiberEntryPoint nao deveria retornar (mesma premissa do resto do projeto
 		// pras outras plataformas). Se retornar, nao ha um destino valido pra saltar.
@@ -80,7 +87,6 @@ void Fiber::Switch(Fiber& targetFiber)
 	sCurrentFiber = &targetFiber;
 	std::atomic_thread_fence(std::memory_order_seq_cst);
 
-	fcontext_t* leavingCtx = static_cast<fcontext_t*>(leavingFiber->m_implData);
 	fcontext_t* targetCtx = static_cast<fcontext_t*>(targetFiber.m_implData);
 
 	if (!targetCtx || !*targetCtx)
@@ -91,12 +97,14 @@ void Fiber::Switch(Fiber& targetFiber)
 			(void*)targetFiber.m_androidEntryPoint, targetFiber.m_androidUserParam, targetFiber.m_stackPtr);
 	}
 
-	transfer_t result = jump_fcontext(*targetCtx, &targetFiber);
+	// Passa 'leavingFiber' (nos mesmos) como data - assim, quando alguem trocar
+	// de volta pra ca (nesse mesmo ponto do codigo, mais tarde), sabemos - via
+	// result.data - qual fiber acabou de entrar e cujo continuation precisa ser
+	// atualizado. Nunca atualizamos nosso proprio slot aqui.
+	transfer_t result = jump_fcontext(*targetCtx, leavingFiber);
 
-	// Chegamos aqui quando outro fiber troca de volta para 'leavingFiber' (nos
-	// mesmos). Atualiza nosso proprio ponto de retomada com o que acabamos de
-	// receber, para que outros possam trocar para nos corretamente no futuro.
-	*leavingCtx = result.fctx;
+	Fiber* switchedFrom = static_cast<Fiber*>(result.data);
+	*static_cast<fcontext_t*>(switchedFrom->m_implData) = result.fctx;
 
 	std::atomic_thread_fence(std::memory_order_seq_cst);
 }
