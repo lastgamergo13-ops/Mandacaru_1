@@ -25,7 +25,7 @@ namespace
 		// retomada normal faz. sCurrentFiber ja aponta pra nos mesmos (Switch()
 		// seta isso antes do jump), entao usamos ele pra saber "quem somos".
 		Fiber* switchedFrom = static_cast<Fiber*>(t.data);
-		*static_cast<fcontext_t*>(switchedFrom->m_implData) = t.fctx;
+		*static_cast<fcontext_t*>(switchedFrom->AndroidGetContextSlot()) = t.fctx;
 
 		Fiber* self = sCurrentFiber;
 		self->AndroidRunEntryPoint();

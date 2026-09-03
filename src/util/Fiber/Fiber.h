@@ -18,6 +18,10 @@ public:
 	// Usado internamente pela ponte (trampoline) do Boost.Context no Android -
 	// nao chame diretamente.
 	void AndroidRunEntryPoint();
+	// Ponteiro pro slot interno de fcontext_t (na verdade um fcontext_t*) -
+	// usado só pela troca de fiber (Boost.Context) dentro de FiberUnix.cpp.
+	// Não mexa nisso fora dali.
+	void* AndroidGetContextSlot() const { return m_implData; }
 #endif
 
 private:
