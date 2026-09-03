@@ -20,6 +20,8 @@
 #include <unistd.h>
 #include <mutex>
 #include <unordered_map>
+#include <cerrno>
+#include <atomic>
 #endif
 
 using namespace Xbyak_aarch64;
@@ -104,21 +106,27 @@ class DualMapAllocator : public Allocator
 
 		int fd = memfd_create("cemu_jit_code", 0);
 		if (fd < 0)
+		{
+			cemuLog_log(LogType::Force, "[JIT] memfd_create falhou, errno={}", errno);
 			return nullptr;
+		}
 		if (ftruncate(fd, size) != 0)
 		{
+			cemuLog_log(LogType::Force, "[JIT] ftruncate falhou, errno={}", errno);
 			close(fd);
 			return nullptr;
 		}
 		void* writeAddr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 		if (writeAddr == MAP_FAILED)
 		{
+			cemuLog_log(LogType::Force, "[JIT] mmap RW falhou, errno={}", errno);
 			close(fd);
 			return nullptr;
 		}
 		void* execAddr = mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
 		if (execAddr == MAP_FAILED)
 		{
+			cemuLog_log(LogType::Force, "[JIT] mmap RX falhou, errno={}", errno);
 			munmap(writeAddr, size);
 			close(fd);
 			return nullptr;
@@ -129,6 +137,9 @@ class DualMapAllocator : public Allocator
 		{
 			std::lock_guard<std::mutex> lock(s_mutex);
 			s_mappings[writeAddr] = { execAddr, size, -1 };
+			static std::atomic<int> s_logCount{0};
+			if (s_logCount.fetch_add(1) < 8)
+				cemuLog_log(LogType::Force, "[JIT] alloc OK size={:x} write={:x} exec={:x} total_mappings={}", size, (uintptr_t)writeAddr, (uintptr_t)execAddr, s_mappings.size());
 		}
 		return reinterpret_cast<uint32*>(writeAddr);
 	}
@@ -140,7 +151,10 @@ class DualMapAllocator : public Allocator
 		std::lock_guard<std::mutex> lock(s_mutex);
 		auto it = s_mappings.find(p);
 		if (it == s_mappings.end())
+		{
+			cemuLog_log(LogType::Force, "[JIT] free: ponteiro write={:x} nao encontrado em s_mappings", (uintptr_t)p);
 			return;
+		}
 		munmap(it->second.execAddr, it->second.size);
 		munmap(p, it->second.size);
 		s_mappings.erase(it);
@@ -161,8 +175,15 @@ class DualMapAllocator : public Allocator
 		for (auto& [base, mapping] : s_mappings)
 		{
 			if (writeAddr >= base && writeAddr < (uint8*)base + mapping.size)
-				return (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
+			{
+				void* execPtr = (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
+				static std::atomic<int> s_logCount{0};
+				if (s_logCount.fetch_add(1) < 8)
+					cemuLog_log(LogType::Force, "[JIT] translate write={:x} -> exec={:x} (base={:x} size={:x})", (uintptr_t)writeAddr, (uintptr_t)execPtr, (uintptr_t)base, mapping.size);
+				return execPtr;
+			}
 		}
+		cemuLog_log(LogType::Force, "[JIT] translate FALHOU: write={:x} nao pertence a nenhuma alocacao (total_mappings={})", (uintptr_t)writeAddr, s_mappings.size());
 		cemu_assert_suspicious(); // não deveria acontecer: ponteiro não pertence a nenhuma alocação do DualMapAllocator
 		return writeAddr;
 	}
