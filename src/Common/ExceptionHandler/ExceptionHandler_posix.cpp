@@ -328,6 +328,38 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 				i, hCPU->gpr[i], i + 1, hCPU->gpr[i + 1], i + 2, hCPU->gpr[i + 2], i + 3, hCPU->gpr[i + 3]));
 		}
 	}
+#if defined(__aarch64__)
+	else
+	{
+		// PPCInterpreter_getCurrentInstance() relies on a thread_local variable, which can be
+		// unset/unreliable specifically while this thread is executing JIT-recompiled code
+		// (the recompiler keeps hCPU in a dedicated register instead of touching the
+		// thread_local at all - see HCPU_REG/x29 in BackendAArch64.cpp). As a fallback, read
+		// that same dedicated register directly from the crash context: if this thread really
+		// was executing recompiled code, x29 holds the hCPU pointer regardless of the
+		// thread_local's state.
+		ucontext_t* uc = static_cast<ucontext_t*>(context);
+		uint64_t x29 = (uint64_t)uc->uc_mcontext.regs[29];
+		PPCInterpreter_t* hCPUFromReg = reinterpret_cast<PPCInterpreter_t*>(x29);
+		if (hCPUFromReg)
+		{
+			CrashLog_WriteLine("PPC interpreter/recompiler state (inferred from JIT register x29/HCPU_REG - this thread may have been executing recompiled code; the thread_local instance was unset):");
+			CrashLog_WriteLine(fmt::format("  instructionPointer (PPC PC) = 0x{:08x}", hCPUFromReg->instructionPointer));
+			CrashLog_WriteLine(fmt::format("  LR = 0x{:08x}  CTR = 0x{:08x}  XER = 0x{:08x}", hCPUFromReg->spr.LR, hCPUFromReg->spr.CTR, hCPUFromReg->spr.XER));
+			CrashLog_WriteLine(fmt::format("  gpr[1] (PPC SP) = 0x{:08x}  coreInterruptMask = 0x{:08x}", hCPUFromReg->gpr[1], hCPUFromReg->coreInterruptMask));
+			CrashLog_WriteLine(fmt::format("  reservedMemAddr = 0x{:08x}  memoryException = {}", hCPUFromReg->reservedMemAddr, hCPUFromReg->memoryException));
+			for (int i = 0; i < 32; i += 4)
+			{
+				CrashLog_WriteLine(fmt::format("  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}",
+					i, hCPUFromReg->gpr[i], i + 1, hCPUFromReg->gpr[i + 1], i + 2, hCPUFromReg->gpr[i + 2], i + 3, hCPUFromReg->gpr[i + 3]));
+			}
+			// x27/x28 are the recompiler's other two dedicated registers (instance data / emulated
+			// memory base) - printing them helps confirm whether this really looks like JIT code
+			CrashLog_WriteLine(fmt::format("  x27 (PPC_REC_INSTANCE_REG) = 0x{:016x}  x28 (MEM_BASE_REG) = 0x{:016x}",
+				(uint64_t)uc->uc_mcontext.regs[27], (uint64_t)uc->uc_mcontext.regs[28]));
+		}
+	}
+#endif
 }
 
 void AndroidPrintLoadedLibraries()

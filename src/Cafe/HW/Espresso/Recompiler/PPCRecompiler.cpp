@@ -1,4 +1,5 @@
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
+#include <atomic>
 #include "PPCFunctionBoundaryTracker.h"
 #include "PPCRecompiler.h"
 #include "PPCRecompilerIml.h"
@@ -116,6 +117,14 @@ void PPCRecompiler_recompileIfUnvisited(uint32 enterAddress)
 
 void PPCRecompiler_enter(PPCInterpreter_t* hCPU, PPCREC_JUMP_ENTRY funcPtr)
 {
+	{
+		static std::atomic<int> s_enterLogCount{0};
+		if (s_enterLogCount.fetch_add(1) < 500)
+		{
+			cemuLog_log(LogType::Force, "[JIT] enter ppcAddr=0x{:08x} funcPtr={:x}", hCPU->instructionPointer, (uintptr_t)funcPtr);
+			cemuLog_waitForFlush();
+		}
+	}
 #if BOOST_OS_WINDOWS
 	uint32 prevState = _controlfp(0, 0);
 	_controlfp(_RC_NEAR, _MCW_RC);

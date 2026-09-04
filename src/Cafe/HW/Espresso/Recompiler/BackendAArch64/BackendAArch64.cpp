@@ -108,11 +108,13 @@ class DualMapAllocator : public Allocator
 		if (fd < 0)
 		{
 			cemuLog_log(LogType::Force, "[JIT] memfd_create falhou, errno={}", errno);
+			cemuLog_waitForFlush();
 			return nullptr;
 		}
 		if (ftruncate(fd, size) != 0)
 		{
 			cemuLog_log(LogType::Force, "[JIT] ftruncate falhou, errno={}", errno);
+			cemuLog_waitForFlush();
 			close(fd);
 			return nullptr;
 		}
@@ -120,6 +122,7 @@ class DualMapAllocator : public Allocator
 		if (writeAddr == MAP_FAILED)
 		{
 			cemuLog_log(LogType::Force, "[JIT] mmap RW falhou, errno={}", errno);
+			cemuLog_waitForFlush();
 			close(fd);
 			return nullptr;
 		}
@@ -127,6 +130,7 @@ class DualMapAllocator : public Allocator
 		if (execAddr == MAP_FAILED)
 		{
 			cemuLog_log(LogType::Force, "[JIT] mmap RX falhou, errno={}", errno);
+			cemuLog_waitForFlush();
 			munmap(writeAddr, size);
 			close(fd);
 			return nullptr;
@@ -134,13 +138,22 @@ class DualMapAllocator : public Allocator
 		// já podemos fechar o fd - as duas mmap regions continuam válidas até serem
 		// desmapeadas, mesmo sem o fd aberto
 		close(fd);
+		bool shouldFlush = false;
 		{
 			std::lock_guard<std::mutex> lock(s_mutex);
 			s_mappings[writeAddr] = { execAddr, size, -1 };
 			static std::atomic<int> s_logCount{0};
-			if (s_logCount.fetch_add(1) < 8)
+			if (s_logCount.fetch_add(1) < 500)
+			{
 				cemuLog_log(LogType::Force, "[JIT] alloc OK size={:x} write={:x} exec={:x} total_mappings={}", size, (uintptr_t)writeAddr, (uintptr_t)execAddr, s_mappings.size());
+				shouldFlush = true;
+			}
 		}
+		// grava a linha de log imediatamente no arquivo, sem esperar a thread de log
+		// assíncrona - importante porque um crash pode acontecer poucos milissegundos
+		// depois desta alocação, sem dar tempo da thread de log rodar sozinha
+		if (shouldFlush)
+			cemuLog_waitForFlush();
 		return reinterpret_cast<uint32*>(writeAddr);
 	}
 
@@ -153,6 +166,7 @@ class DualMapAllocator : public Allocator
 		if (it == s_mappings.end())
 		{
 			cemuLog_log(LogType::Force, "[JIT] free: ponteiro write={:x} nao encontrado em s_mappings", (uintptr_t)p);
+			cemuLog_waitForFlush();
 			return;
 		}
 		munmap(it->second.execAddr, it->second.size);
@@ -171,21 +185,41 @@ class DualMapAllocator : public Allocator
 	// endereço executável correspondente - é esse endereço que deve de fato ser chamado
 	static void* TranslateToExecAddress(void* writeAddr)
 	{
-		std::lock_guard<std::mutex> lock(s_mutex);
-		for (auto& [base, mapping] : s_mappings)
+		void* execPtr = nullptr;
+		bool shouldFlush = false;
+		bool found = false;
 		{
-			if (writeAddr >= base && writeAddr < (uint8*)base + mapping.size)
+			std::lock_guard<std::mutex> lock(s_mutex);
+			for (auto& [base, mapping] : s_mappings)
 			{
-				void* execPtr = (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
-				static std::atomic<int> s_logCount{0};
-				if (s_logCount.fetch_add(1) < 8)
-					cemuLog_log(LogType::Force, "[JIT] translate write={:x} -> exec={:x} (base={:x} size={:x})", (uintptr_t)writeAddr, (uintptr_t)execPtr, (uintptr_t)base, mapping.size);
-				return execPtr;
+				if (writeAddr >= base && writeAddr < (uint8*)base + mapping.size)
+				{
+					execPtr = (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
+					static std::atomic<int> s_logCount{0};
+					if (s_logCount.fetch_add(1) < 500)
+					{
+						cemuLog_log(LogType::Force, "[JIT] translate write={:x} -> exec={:x} (base={:x} size={:x})", (uintptr_t)writeAddr, (uintptr_t)execPtr, (uintptr_t)base, mapping.size);
+						shouldFlush = true;
+					}
+					found = true;
+					break;
+				}
 			}
+			if (!found)
+				cemuLog_log(LogType::Force, "[JIT] translate FALHOU: write={:x} nao pertence a nenhuma alocacao (total_mappings={})", (uintptr_t)writeAddr, s_mappings.size());
 		}
-		cemuLog_log(LogType::Force, "[JIT] translate FALHOU: write={:x} nao pertence a nenhuma alocacao (total_mappings={})", (uintptr_t)writeAddr, s_mappings.size());
-		cemu_assert_suspicious(); // não deveria acontecer: ponteiro não pertence a nenhuma alocação do DualMapAllocator
-		return writeAddr;
+		if (!found)
+		{
+			// esse é o log mais crítico de todos: se aparecer, achamos a causa exata do
+			// crash (um código pulando pro endereço GRAVÁVEL, não executável, de um bloco
+			// JIT que não existe/já foi liberado)
+			cemuLog_waitForFlush();
+			cemu_assert_suspicious(); // não deveria acontecer: ponteiro não pertence a nenhuma alocação do DualMapAllocator
+			return writeAddr;
+		}
+		if (shouldFlush)
+			cemuLog_waitForFlush();
+		return execPtr;
 	}
 };
 #endif
