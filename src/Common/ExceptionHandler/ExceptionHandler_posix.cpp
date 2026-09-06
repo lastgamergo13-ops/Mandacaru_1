@@ -12,6 +12,7 @@
 
 #if defined(__ANDROID__)
 #include "Cafe/HW/Espresso/PPCState.h"
+#include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
 #endif
 
 #if defined(__ANDROID__)
@@ -360,6 +361,10 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 		}
 	}
 #endif
+	// histórico das últimas entradas em código recompilado (todas as threads), útil pra
+	// identificar exatamente qual função estava rodando e o que veio logo antes de um
+	// crash - mesmo que essa thread específica não tenha hCPU disponível acima
+	PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog();
 }
 
 void AndroidPrintLoadedLibraries()

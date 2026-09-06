@@ -166,6 +166,12 @@ extern void ATTR_MS_ABI (*PPCRecompiler_enterRecompilerCode)(uint64 codeMem, uin
 extern void ATTR_MS_ABI (*PPCRecompiler_leaveRecompilerCode_visited)();
 extern void ATTR_MS_ABI (*PPCRecompiler_leaveRecompilerCode_unvisited)();
 
+// Diagnóstico de crash: despeja no log.txt (via CrashLog_WriteLine, síncrono) o histórico
+// das últimas chamadas de entrada em código recompilado, na ordem em que aconteceram.
+// Só deve ser chamada UMA VEZ, dentro do handler de crash (faz I/O, mas isso não é
+// problema ali - a essa altura o processo já está terminando de qualquer forma).
+void PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog();
+
 // recompiler interface
 
 void PPCRecompiler_recompileIfUnvisited(uint32 enterAddress);

@@ -1,5 +1,7 @@
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include <atomic>
+#include <thread>
+#include <functional>
 #include "PPCFunctionBoundaryTracker.h"
 #include "PPCRecompiler.h"
 #include "PPCRecompilerIml.h"
@@ -115,18 +117,41 @@ void PPCRecompiler_recompileIfUnvisited(uint32 enterAddress)
 	PPCRecompiler_visitAddressNoBlock(enterAddress);
 }
 
+// buffer circular de diagnóstico: guarda as últimas entradas em código JIT (de todas as
+// threads/núcleos) sem fazer nenhum I/O - só grava em um array na memória, custo mínimo.
+// Só é lido pelo handler de crash (PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog).
+namespace
+{
+	struct JitEnterLogEntry
+	{
+		uint32 ppcAddr;
+		uint64 funcPtr;
+		uint32 threadId;
+	};
+	constexpr size_t kJitEnterRingBufferSize = 64;
+	JitEnterLogEntry s_jitEnterRingBuffer[kJitEnterRingBufferSize]{};
+	std::atomic<uint64> s_jitEnterRingCounter{0};
+} // namespace
+
+void PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog()
+{
+	uint64 totalCount = s_jitEnterRingCounter.load();
+	uint64 numEntries = totalCount < kJitEnterRingBufferSize ? totalCount : kJitEnterRingBufferSize;
+	CrashLog_WriteLine(fmt::format("Recent JIT code entries (most recent last, {} of {} total):", numEntries, totalCount));
+	uint64 startIdx = totalCount < kJitEnterRingBufferSize ? 0 : totalCount - kJitEnterRingBufferSize;
+	for (uint64 i = startIdx; i < totalCount; i++)
+	{
+		const auto& entry = s_jitEnterRingBuffer[i % kJitEnterRingBufferSize];
+		CrashLog_WriteLine(fmt::format("  [{}] tid={} ppcAddr=0x{:08x} funcPtr=0x{:x}", i, entry.threadId, entry.ppcAddr, entry.funcPtr));
+	}
+}
+
 void PPCRecompiler_enter(PPCInterpreter_t* hCPU, PPCREC_JUMP_ENTRY funcPtr)
 {
 	{
-		// Diagnóstico do crash: registra as primeiras entradas em código JIT.
-		// NUNCA chamamos cemuLog_waitForFlush() aqui - essa função roda constantemente
-		// (a cada troca entre interpretador e código recompilado), e forçar flush nesse
-		// caminho pode travar o app inteiro (a thread de log pode não conseguir ser
-		// escalonada a tempo com todos os núcleos ocupados pela emulação). Confiamos no
-		// flush natural/assíncrono do próprio sistema de log.
-		static std::atomic<int> s_enterLogCount{0};
-		if (s_enterLogCount.fetch_add(1) < 500)
-			cemuLog_log(LogType::Force, "[JIT] enter ppcAddr=0x{:08x} funcPtr={:x}", hCPU->instructionPointer, (uintptr_t)funcPtr);
+		uint64 idx = s_jitEnterRingCounter.fetch_add(1) % kJitEnterRingBufferSize;
+		uint32 threadId = (uint32)std::hash<std::thread::id>{}(std::this_thread::get_id());
+		s_jitEnterRingBuffer[idx] = { hCPU->instructionPointer, (uint64)funcPtr, threadId };
 	}
 #if BOOST_OS_WINDOWS
 	uint32 prevState = _controlfp(0, 0);
