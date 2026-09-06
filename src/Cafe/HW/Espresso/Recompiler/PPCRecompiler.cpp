@@ -119,19 +119,14 @@ void PPCRecompiler_enter(PPCInterpreter_t* hCPU, PPCREC_JUMP_ENTRY funcPtr)
 {
 	{
 		// Diagnóstico do crash: registra as primeiras entradas em código JIT.
-		// cemuLog_waitForFlush() bloqueia a thread de emulação até a thread de
-		// log terminar de escrever no disco - isso é caro (mais ainda em
-		// armazenamento Android/SAF), então só forçamos o flush de vez em
-		// quando (a cada 25 entradas) em vez de em toda entrada. Ainda cobre
-		// bem o início da execução para o diagnóstico, sem travar o app.
+		// NUNCA chamamos cemuLog_waitForFlush() aqui - essa função roda constantemente
+		// (a cada troca entre interpretador e código recompilado), e forçar flush nesse
+		// caminho pode travar o app inteiro (a thread de log pode não conseguir ser
+		// escalonada a tempo com todos os núcleos ocupados pela emulação). Confiamos no
+		// flush natural/assíncrono do próprio sistema de log.
 		static std::atomic<int> s_enterLogCount{0};
-		int count = s_enterLogCount.fetch_add(1);
-		if (count < 500)
-		{
+		if (s_enterLogCount.fetch_add(1) < 500)
 			cemuLog_log(LogType::Force, "[JIT] enter ppcAddr=0x{:08x} funcPtr={:x}", hCPU->instructionPointer, (uintptr_t)funcPtr);
-			if ((count % 25) == 0)
-				cemuLog_waitForFlush();
-		}
 	}
 #if BOOST_OS_WINDOWS
 	uint32 prevState = _controlfp(0, 0);

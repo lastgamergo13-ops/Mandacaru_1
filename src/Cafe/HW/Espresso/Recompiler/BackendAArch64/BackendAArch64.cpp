@@ -138,22 +138,13 @@ class DualMapAllocator : public Allocator
 		// já podemos fechar o fd - as duas mmap regions continuam válidas até serem
 		// desmapeadas, mesmo sem o fd aberto
 		close(fd);
-		bool shouldFlush = false;
 		{
 			std::lock_guard<std::mutex> lock(s_mutex);
 			s_mappings[writeAddr] = { execAddr, size, -1 };
 			static std::atomic<int> s_logCount{0};
 			if (s_logCount.fetch_add(1) < 500)
-			{
 				cemuLog_log(LogType::Force, "[JIT] alloc OK size={:x} write={:x} exec={:x} total_mappings={}", size, (uintptr_t)writeAddr, (uintptr_t)execAddr, s_mappings.size());
-				shouldFlush = true;
-			}
 		}
-		// grava a linha de log imediatamente no arquivo, sem esperar a thread de log
-		// assíncrona - importante porque um crash pode acontecer poucos milissegundos
-		// depois desta alocação, sem dar tempo da thread de log rodar sozinha
-		if (shouldFlush)
-			cemuLog_waitForFlush();
 		return reinterpret_cast<uint32*>(writeAddr);
 	}
 
@@ -186,7 +177,6 @@ class DualMapAllocator : public Allocator
 	static void* TranslateToExecAddress(void* writeAddr)
 	{
 		void* execPtr = nullptr;
-		bool shouldFlush = false;
 		bool found = false;
 		{
 			std::lock_guard<std::mutex> lock(s_mutex);
@@ -196,18 +186,8 @@ class DualMapAllocator : public Allocator
 				{
 					execPtr = (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
 					static std::atomic<int> s_logCount{0};
-					int count = s_logCount.fetch_add(1);
-					if (count < 500)
-					{
+					if (s_logCount.fetch_add(1) < 500)
 						cemuLog_log(LogType::Force, "[JIT] translate write={:x} -> exec={:x} (base={:x} size={:x})", (uintptr_t)writeAddr, (uintptr_t)execPtr, (uintptr_t)base, mapping.size);
-						// cemuLog_waitForFlush() é caro (bloqueia a thread de emulação até a
-						// thread de log terminar de escrever no disco) e essa função roda no
-						// caminho mais quente do recompilador - só forçamos o flush de vez em
-						// quando (a cada 25 chamadas) em vez de em toda chamada, senão o app
-						// congela nas primeiras centenas de chamadas de função do jogo.
-						if ((count % 25) == 0)
-							shouldFlush = true;
-					}
 					found = true;
 					break;
 				}
@@ -219,13 +199,12 @@ class DualMapAllocator : public Allocator
 		{
 			// esse é o log mais crítico de todos: se aparecer, achamos a causa exata do
 			// crash (um código pulando pro endereço GRAVÁVEL, não executável, de um bloco
-			// JIT que não existe/já foi liberado)
+			// JIT que não existe/já foi liberado). Esse caminho só deveria disparar se algo
+			// já estiver errado, então o custo do flush aqui é aceitável.
 			cemuLog_waitForFlush();
 			cemu_assert_suspicious(); // não deveria acontecer: ponteiro não pertence a nenhuma alocação do DualMapAllocator
 			return writeAddr;
 		}
-		if (shouldFlush)
-			cemuLog_waitForFlush();
 		return execPtr;
 	}
 };
