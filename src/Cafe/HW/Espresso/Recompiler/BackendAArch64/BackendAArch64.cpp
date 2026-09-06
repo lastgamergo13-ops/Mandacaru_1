@@ -196,10 +196,17 @@ class DualMapAllocator : public Allocator
 				{
 					execPtr = (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
 					static std::atomic<int> s_logCount{0};
-					if (s_logCount.fetch_add(1) < 500)
+					int count = s_logCount.fetch_add(1);
+					if (count < 500)
 					{
 						cemuLog_log(LogType::Force, "[JIT] translate write={:x} -> exec={:x} (base={:x} size={:x})", (uintptr_t)writeAddr, (uintptr_t)execPtr, (uintptr_t)base, mapping.size);
-						shouldFlush = true;
+						// cemuLog_waitForFlush() é caro (bloqueia a thread de emulação até a
+						// thread de log terminar de escrever no disco) e essa função roda no
+						// caminho mais quente do recompilador - só forçamos o flush de vez em
+						// quando (a cada 25 chamadas) em vez de em toda chamada, senão o app
+						// congela nas primeiras centenas de chamadas de função do jogo.
+						if ((count % 25) == 0)
+							shouldFlush = true;
 					}
 					found = true;
 					break;
