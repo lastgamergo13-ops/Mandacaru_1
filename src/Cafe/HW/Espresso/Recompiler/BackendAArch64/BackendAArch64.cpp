@@ -474,7 +474,20 @@ T gpReg(const IMLReg& imlReg)
 		cemu_assert_unimplemented();
 
 	auto regId = imlReg.GetRegID();
-	cemu_assert_debug(regId >= IMLArchAArch64::PHYSREG_GPR_BASE && regId < IMLArchAArch64::PHYSREG_GPR_BASE + IMLArchAArch64::PHYSREG_GPR_COUNT);
+	// cemu_assert_debug não faz nada em builds release - por isso, se o alocador de
+	// registradores do IML algum dia devolver um regId fora da faixa alocável, isso passava
+	// batido silenciosamente e T(regId) podia acabar sendo um dos registradores RESERVADOS
+	// (25=TEMP_GPR1, 26=TEMP_GPR2/LR, 27=PPC_REC_INSTANCE_REG, 28=MEM_BASE_REG,
+	// 29=HCPU_REG), corrompendo um deles sem nenhum aviso - exatamente o tipo de corrupção
+	// aleatória vista nos crashes em produção. Essa verificação roda sempre (não só em
+	// debug) e força um crash imediato e diagnosticável em vez de uma corrupção silenciosa.
+	if (regId < IMLArchAArch64::PHYSREG_GPR_BASE || regId >= IMLArchAArch64::PHYSREG_GPR_BASE + IMLArchAArch64::PHYSREG_GPR_COUNT)
+	{
+		cemuLog_log(LogType::Force, "[JIT] BUG: gpReg() recebeu regId={} fora da faixa alocavel [{}, {}) - isso corromperia um registrador reservado (25=TEMP_GPR1, 26=TEMP_GPR2/LR, 27=PPC_REC_INSTANCE_REG, 28=MEM_BASE_REG, 29=HCPU_REG)",
+			regId, IMLArchAArch64::PHYSREG_GPR_BASE, IMLArchAArch64::PHYSREG_GPR_BASE + IMLArchAArch64::PHYSREG_GPR_COUNT);
+		cemuLog_waitForFlush();
+		abort();
+	}
 	return T(regId - IMLArchAArch64::PHYSREG_GPR_BASE);
 }
 

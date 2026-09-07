@@ -341,7 +341,12 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 		// thread_local's state.
 		ucontext_t* uc = static_cast<ucontext_t*>(context);
 		uint64_t x29 = (uint64_t)uc->uc_mcontext.regs[29];
-		PPCInterpreter_t* hCPUFromReg = reinterpret_cast<PPCInterpreter_t*>(x29);
+		// verificação de sanidade básica: ponteiros de heap/mmap válidos no Android sempre
+		// ficam bem acima desse limite. Sem isso, um x29 com lixo óbvio (visto em crashes
+		// reais - ex: valor 0x75) fazia o handler tentar ler memória inválida e crashar de
+		// novo NELE MESMO, cortando o resto do log logo depois desta seção.
+		constexpr uint64_t kMinPlausibleHeapPointer = 0x1000000; // 16 MB
+		PPCInterpreter_t* hCPUFromReg = (x29 >= kMinPlausibleHeapPointer) ? reinterpret_cast<PPCInterpreter_t*>(x29) : nullptr;
 		if (hCPUFromReg)
 		{
 			CrashLog_WriteLine("PPC interpreter/recompiler state (inferred from JIT register x29/HCPU_REG - this thread may have been executing recompiled code; the thread_local instance was unset):");
