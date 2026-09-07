@@ -2,6 +2,9 @@
 #include <atomic>
 #include <thread>
 #include <functional>
+#if !BOOST_OS_WINDOWS
+#include <unistd.h>
+#endif
 #include "PPCFunctionBoundaryTracker.h"
 #include "PPCRecompiler.h"
 #include "PPCRecompilerIml.h"
@@ -128,7 +131,7 @@ namespace
 		uint64 funcPtr;
 		uint32 threadId;
 	};
-	constexpr size_t kJitEnterRingBufferSize = 64;
+	constexpr size_t kJitEnterRingBufferSize = 192;
 	JitEnterLogEntry s_jitEnterRingBuffer[kJitEnterRingBufferSize]{};
 	std::atomic<uint64> s_jitEnterRingCounter{0};
 } // namespace
@@ -150,7 +153,11 @@ void PPCRecompiler_enter(PPCInterpreter_t* hCPU, PPCREC_JUMP_ENTRY funcPtr)
 {
 	{
 		uint64 idx = s_jitEnterRingCounter.fetch_add(1) % kJitEnterRingBufferSize;
-		uint32 threadId = (uint32)std::hash<std::thread::id>{}(std::this_thread::get_id());
+#if BOOST_OS_WINDOWS
+		uint32 threadId = (uint32)GetCurrentThreadId();
+#else
+		uint32 threadId = (uint32)gettid();
+#endif
 		s_jitEnterRingBuffer[idx] = { hCPU->instructionPointer, (uint64)funcPtr, threadId };
 	}
 #if BOOST_OS_WINDOWS

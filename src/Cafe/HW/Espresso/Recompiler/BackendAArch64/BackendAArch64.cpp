@@ -1042,7 +1042,7 @@ void* PPCRecompiler_virtualHLE(PPCInterpreter_t* ppcInterpreter, uint32 hleFuncI
 		ppcInterpreter->remainingCycles -= 500; // let subtract about 500 cycles for each HLE call
 		ppcInterpreter->gpr[3] = 0;
 		PPCInterpreter_nextInstruction(ppcInterpreter);
-		return PPCInterpreter_getCurrentInstance();
+		return ppcInterpreter;
 	}
 	else
 	{
@@ -1051,7 +1051,14 @@ void* PPCRecompiler_virtualHLE(PPCInterpreter_t* ppcInterpreter, uint32 hleFuncI
 		hleCall(ppcInterpreter);
 	}
 	ppcInterpreter->rspTemp = prevRSPTemp;
-	return PPCInterpreter_getCurrentInstance();
+	// IMPORTANTE: o código JIT gerado (macro() logo abaixo, case PPCREC_IML_MACRO_HLE) pega
+	// o valor de retorno desta função e recoloca ele direto no registrador dedicado HCPU_REG.
+	// Por isso é essencial devolver exatamente o parâmetro recebido (que está sempre correto),
+	// e NUNCA reconsultar PPCInterpreter_getCurrentInstance() - essa thread_local não é
+	// mantida atualizada durante a execução de código recompilado no Android (o JIT usa o
+	// registrador dedicado em vez dela), então podia devolver um ponteiro desatualizado/nulo
+	// aqui, corrompendo HCPU_REG e derrubando o emulador logo na primeira chamada HLE.
+	return ppcInterpreter;
 }
 
 bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)

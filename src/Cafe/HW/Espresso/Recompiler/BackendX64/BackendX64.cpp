@@ -170,7 +170,10 @@ void* ATTR_MS_ABI PPCRecompiler_virtualHLE(PPCInterpreter_t* hCPU, uint32 hleFun
 		hleCall(hCPU);
 	}
 	hCPU->rspTemp = prevRSPTemp;
-	return PPCInterpreter_getCurrentInstance();
+	// devolve o próprio parâmetro recebido (sempre correto) em vez de reconsultar
+	// PPCInterpreter_getCurrentInstance() - o código gerado usa esse valor de retorno pra
+	// restaurar o registrador/estado que guarda o hCPU logo após a chamada HLE
+	return hCPU;
 }
 
 bool PPCRecompilerX64Gen_imlInstruction_macro(PPCRecFunction_t* PPCRecFunction, ppcImlGenContext_t* ppcImlGenContext, x64GenContext_t* x64GenContext, IMLInstruction* imlInstruction)
