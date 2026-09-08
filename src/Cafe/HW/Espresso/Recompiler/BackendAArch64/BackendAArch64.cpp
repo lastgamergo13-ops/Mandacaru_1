@@ -1152,8 +1152,8 @@ bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 		// que usam uma convenção de registradores não-padrão, livre pra usar qualquer
 		// registrador de propósito geral sem saber que esses 3 são reservados aqui.
 		// Salvando e restaurando manualmente, ficamos protegidos independente da causa.
-		stp(x27, x28, AdrPreImm(sp, -32));
-		stp(x29, x30, AdrUimm(sp, 16));
+		stp(x27, x28, AdrPreImm(sp, -16));
+		stp(x29, x30, AdrPreImm(sp, -16));
 
 		mov(x0, HCPU_REG);
 		mov(w1, funcId);
@@ -1162,8 +1162,8 @@ bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 		mov(TEMP_GPR1.XReg, (uint64)PPCRecompiler_virtualHLE);
 		blr(TEMP_GPR1.XReg);
 
-		ldp(x29, x30, AdrUimm(sp, 16));
-		ldp(x27, x28, AdrPostImm(sp, 32));
+		ldp(x29, x30, AdrPostImm(sp, 16));
+		ldp(x27, x28, AdrPostImm(sp, 16));
 
 		// check if cycles where decreased beyond zero, if yes -> leave recompiler
 		ldr(TEMP_GPR1.WReg, AdrUimm(HCPU_REG, offsetof(PPCInterpreter_t, remainingCycles)));
@@ -1630,12 +1630,12 @@ void AArch64GenContext_t::call_imm(IMLInstruction* imlInstruction)
 	// chamada pra código C++ arbitrário pode, em teoria, mexer nesses 3 registradores
 	// reservados sem que isso apareça em nenhuma busca no código-fonte (ex: "outline
 	// atomics" do compilador). Salvar/restaurar manualmente nos protege de qualquer forma.
-	stp(x27, x28, AdrPreImm(sp, -32));
-	stp(x29, x30, AdrUimm(sp, 16));
+	stp(x27, x28, AdrPreImm(sp, -16));
+	stp(x29, x30, AdrPreImm(sp, -16));
 	mov(TEMP_GPR1.XReg, imlInstruction->op_call_imm.callAddress);
 	blr(TEMP_GPR1.XReg);
-	ldp(x29, x30, AdrUimm(sp, 16));
-	ldp(x27, x28, AdrPostImm(sp, 32));
+	ldp(x29, x30, AdrPostImm(sp, 16));
+	ldp(x27, x28, AdrPostImm(sp, 16));
 }
 
 bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, struct ppcImlGenContext_t* ppcImlGenContext)
