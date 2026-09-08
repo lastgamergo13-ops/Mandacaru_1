@@ -19,6 +19,23 @@ execute_process(
 )
 add_definitions(-DEMULATOR_HASH=${GIT_HASH})
 
+if(ANDROID)
+	# O recompilador AArch64 (src/Cafe/HW/Espresso/Recompiler/BackendAArch64) reserva 3
+	# registradores de CPU pra uso exclusivo próprio (x27/x28/x29) enquanto executa código
+	# recompilado, e espera que QUALQUER função C++ chamada a partir desse código os
+	# preserve intactos. A flag "-moutline-atomics" (ligada por padrão no NDK/Clang pra
+	# armv8-a) faz o compilador, em qualquer arquivo .cpp normal, trocar operações
+	# atômicas por chamadas para pequenas funções auxiliares do compiler-rt que usam uma
+	# convenção de registradores NÃO PADRÃO - o registrador escolhido pra carregar o valor
+	# atômico pode ser QUALQUER registrador de propósito geral, dependendo só de como o
+	# compilador decidiu alocar aquela variável especificamente ali, sem nenhuma ideia de
+	# que x27/28/29 são "reservados" por um código completamente não relacionado (o JIT).
+	# Isso explica um padrão de corrupção intermitente e imprevisível (às vezes um
+	# registrador reservado fica com lixo, às vezes outro) sem deixar rastro nenhum no
+	# código-fonte pra buscar. Desabilitamos globalmente no build Android por segurança.
+	add_compile_options(-mno-outline-atomics)
+endif()
+
 if (ENABLE_VCPKG)
 	# check if vcpkg is shallow and unshallow it if necessary
 	execute_process(
