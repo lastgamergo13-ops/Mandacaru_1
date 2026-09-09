@@ -295,6 +295,7 @@ struct AArch64GenContext_t : CodeGenerator
 	explicit AArch64GenContext_t(Allocator* allocator = nullptr);
 	void enterRecompilerCode();
 	void leaveRecompilerCode();
+	void emitRegisterCanaryCheck(const char* checkpointTag);
 
 	void r_name(IMLInstruction* imlInstruction);
 	void name_r(IMLInstruction* imlInstruction);
@@ -1080,32 +1081,33 @@ void* PPCRecompiler_virtualHLE(PPCInterpreter_t* ppcInterpreter, uint32 hleFuncI
 // só avisa - a execução continua com o valor (ainda errado) que já estava lá, então o
 // crash de sempre ainda deve acontecer logo em seguida, mas agora com uma linha no log
 // mostrando exatamente entre quais instruções a corrupção já tinha acontecido.
-void PPCRecompiler_reportRegisterCorruption(uint32 whichReg, uint64 actualValue, uint64 expectedValue)
+void PPCRecompiler_reportRegisterCorruption(const char* checkpointTag, uint32 whichReg, uint64 actualValue, uint64 expectedValue)
 {
 	static std::atomic<int> s_count{0};
 	if (s_count.fetch_add(1) < 20)
 	{
-		cemuLog_log(LogType::Force, "[JIT] CANARIO: x{} = 0x{:x} mas deveria ser 0x{:x} (registrador reservado corrompido)", whichReg, actualValue, expectedValue);
+		cemuLog_log(LogType::Force, "[JIT] CANARIO ({}): x{} = 0x{:x} mas deveria ser 0x{:x} (registrador reservado corrompido)", checkpointTag, whichReg, actualValue, expectedValue);
 		cemuLog_waitForFlush();
 	}
 }
 
-bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
+// emite código que compara x27/x28 contra os globais que eles deveriam sempre igualar,
+// e reporta (sem corrigir, sem parar a execução) se estiverem errados. Ver comentário em
+// PPCRecompiler_reportRegisterCorruption. Chamado tanto no início de cada macro() quanto
+// logo depois de qualquer chamada pra código C++ (HLE, call_imm), pra restringir ao
+// máximo ONDE exatamente a corrupção acontece.
+void AArch64GenContext_t::emitRegisterCanaryCheck(const char* checkpointTag)
 {
-	// canário: detecta o mais cedo possível se x27/x28 saíram dos valores globais
-	// esperados (ver comentário na função de report acima). Inserido no início de
-	// macro() porque essa função roda com bastante frequência (toda vez que o código
-	// recompilado faz um branch, chamada, HLE, etc) mas sem o overhead de rodar a cada
-	// instrução aritmética simples.
 	{
 		mov(TEMP_GPR1.XReg, (uint64)ppcRecompilerInstanceData);
 		cmp(PPC_REC_INSTANCE_REG, TEMP_GPR1.XReg);
 		Label x27ok;
 		beq(x27ok);
 		str(x30, AdrPreImm(sp, -16));
-		mov(x0, 27);
-		mov(x1, PPC_REC_INSTANCE_REG);
-		mov(x2, TEMP_GPR1.XReg);
+		mov(x0, (uint64)checkpointTag);
+		mov(x1, 27);
+		mov(x2, PPC_REC_INSTANCE_REG);
+		mov(x3, TEMP_GPR1.XReg);
 		mov(TEMP_GPR2.XReg, (uint64)PPCRecompiler_reportRegisterCorruption);
 		blr(TEMP_GPR2.XReg);
 		ldr(x30, AdrPostImm(sp, 16));
@@ -1117,14 +1119,24 @@ bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 		Label x28ok;
 		beq(x28ok);
 		str(x30, AdrPreImm(sp, -16));
-		mov(x0, 28);
-		mov(x1, MEM_BASE_REG);
-		mov(x2, TEMP_GPR1.XReg);
+		mov(x0, (uint64)checkpointTag);
+		mov(x1, 28);
+		mov(x2, MEM_BASE_REG);
+		mov(x3, TEMP_GPR1.XReg);
 		mov(TEMP_GPR2.XReg, (uint64)PPCRecompiler_reportRegisterCorruption);
 		blr(TEMP_GPR2.XReg);
 		ldr(x30, AdrPostImm(sp, 16));
 		L(x28ok);
 	}
+}
+
+bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
+{
+	// canário: detecta o mais cedo possível se x27/x28 saíram dos valores globais
+	// esperados. Inserido no início de macro() porque essa função roda com bastante
+	// frequência (toda vez que o código recompilado faz um branch, chamada, HLE, etc)
+	// mas sem o overhead de rodar a cada instrução aritmética simples.
+	emitRegisterCanaryCheck("macro_entry");
 	if (imlInstruction->operation == PPCREC_IML_MACRO_B_TO_REG)
 	{
 		WReg branchDstReg = gpReg<WReg>(imlInstruction->op_macro.paramReg);
@@ -1213,6 +1225,7 @@ bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 
 		ldp(x29, x30, AdrPostImm(sp, 16));
 		ldp(x27, x28, AdrPostImm(sp, 16));
+		emitRegisterCanaryCheck("after_hle_call");
 
 		// check if cycles where decreased beyond zero, if yes -> leave recompiler
 		ldr(TEMP_GPR1.WReg, AdrUimm(HCPU_REG, offsetof(PPCInterpreter_t, remainingCycles)));
@@ -1685,6 +1698,7 @@ void AArch64GenContext_t::call_imm(IMLInstruction* imlInstruction)
 	blr(TEMP_GPR1.XReg);
 	ldp(x29, x30, AdrPostImm(sp, 16));
 	ldp(x27, x28, AdrPostImm(sp, 16));
+	emitRegisterCanaryCheck("after_call_imm");
 }
 
 bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, struct ppcImlGenContext_t* ppcImlGenContext)
