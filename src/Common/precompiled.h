@@ -589,7 +589,7 @@ std::atomic<T>* _rawPtrToAtomic(T* ptr)
     return reinterpret_cast<std::atomic<T>*>(ptr);
 }
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(_M_X64))
 #define ATTR_MS_ABI __attribute__((ms_abi))
 #else
 #define ATTR_MS_ABI
