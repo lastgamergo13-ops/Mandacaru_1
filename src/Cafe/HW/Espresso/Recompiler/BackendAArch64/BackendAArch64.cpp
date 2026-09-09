@@ -1074,8 +1074,57 @@ void* PPCRecompiler_virtualHLE(PPCInterpreter_t* ppcInterpreter, uint32 hleFuncI
 	return ppcInterpreter;
 }
 
+// Diagnóstico: chamado pelo "canário" inserido no início de macro() sempre que x27
+// (PPC_REC_INSTANCE_REG) ou x28 (MEM_BASE_REG) não batem com os valores globais
+// esperados (que NUNCA mudam durante toda a sessão do emulador). Isso não corrige nada,
+// só avisa - a execução continua com o valor (ainda errado) que já estava lá, então o
+// crash de sempre ainda deve acontecer logo em seguida, mas agora com uma linha no log
+// mostrando exatamente entre quais instruções a corrupção já tinha acontecido.
+void PPCRecompiler_reportRegisterCorruption(uint32 whichReg, uint64 actualValue, uint64 expectedValue)
+{
+	static std::atomic<int> s_count{0};
+	if (s_count.fetch_add(1) < 20)
+	{
+		cemuLog_log(LogType::Force, "[JIT] CANARIO: x{} = 0x{:x} mas deveria ser 0x{:x} (registrador reservado corrompido)", whichReg, actualValue, expectedValue);
+		cemuLog_waitForFlush();
+	}
+}
+
 bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 {
+	// canário: detecta o mais cedo possível se x27/x28 saíram dos valores globais
+	// esperados (ver comentário na função de report acima). Inserido no início de
+	// macro() porque essa função roda com bastante frequência (toda vez que o código
+	// recompilado faz um branch, chamada, HLE, etc) mas sem o overhead de rodar a cada
+	// instrução aritmética simples.
+	{
+		mov(TEMP_GPR1.XReg, (uint64)ppcRecompilerInstanceData);
+		cmp(PPC_REC_INSTANCE_REG, TEMP_GPR1.XReg);
+		Label x27ok;
+		beq(x27ok);
+		str(x30, AdrPreImm(sp, -16));
+		mov(x0, 27);
+		mov(x1, PPC_REC_INSTANCE_REG);
+		mov(x2, TEMP_GPR1.XReg);
+		mov(TEMP_GPR2.XReg, (uint64)PPCRecompiler_reportRegisterCorruption);
+		blr(TEMP_GPR2.XReg);
+		ldr(x30, AdrPostImm(sp, 16));
+		L(x27ok);
+	}
+	{
+		mov(TEMP_GPR1.XReg, (uint64)memory_base);
+		cmp(MEM_BASE_REG, TEMP_GPR1.XReg);
+		Label x28ok;
+		beq(x28ok);
+		str(x30, AdrPreImm(sp, -16));
+		mov(x0, 28);
+		mov(x1, MEM_BASE_REG);
+		mov(x2, TEMP_GPR1.XReg);
+		mov(TEMP_GPR2.XReg, (uint64)PPCRecompiler_reportRegisterCorruption);
+		blr(TEMP_GPR2.XReg);
+		ldr(x30, AdrPostImm(sp, 16));
+		L(x28ok);
+	}
 	if (imlInstruction->operation == PPCREC_IML_MACRO_B_TO_REG)
 	{
 		WReg branchDstReg = gpReg<WReg>(imlInstruction->op_macro.paramReg);
