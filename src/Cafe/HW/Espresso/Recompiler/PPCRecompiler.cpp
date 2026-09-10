@@ -445,6 +445,16 @@ bool PPCRecompiler_makeRecompiledFunctionActive(uint32 initialEntryPoint, PPCFun
 		ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[itr.first / 4] = (PPCREC_JUMP_ENTRY)((uint8*)ppcRecFunc->x86Code + itr.second);
 		ppcRecFunc->jumpTableEntries.emplace_back(itr.first, ((uint8*)ppcRecFunc->x86Code + itr.second));
 	}
+	// Barreira de memoria: garante que os bytes do codigo recem-compilado (ja
+	// escritos e com o icache invalidado antes de chegar aqui) fiquem
+	// globalmente visiveis ANTES que o ponteiro publicado acima possa ser
+	// observado por outro nucleo. Necessaria porque o codigo JIT le essa
+	// tabela via um load bruto sem lock (por performance), entao o spinlock
+	// que protege esta escrita nao da nenhuma garantia de ordem pra esse
+	// leitor - no modelo de memoria fraco do ARM64 isso pode deixar outro
+	// nucleo enxergar o ponteiro novo antes do codigo apontado por ele estar
+	// de fato coerente, causando execucao de lixo / registradores corrompidos.
+	std::atomic_thread_fence(std::memory_order_seq_cst);
 
 	// due to inlining, some entrypoints can get optimized away
 	// therefore we reset all addresses that are still marked as visited (but not recompiled)

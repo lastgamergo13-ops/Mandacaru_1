@@ -1953,9 +1953,20 @@ void AArch64GenContext_t::enterRecompilerCode()
 	stp(x29, x30, AdrPostImm(x9, 16));
 	st4((v8.d - v11.d)[0], AdrPostImm(x9, 32));
 	st4((v12.d - v15.d)[0], AdrPostImm(x9, 32));
+	// Le o ENDERECO ATUAL das variaveis globais (nao um valor fixo gravado aqui) toda
+	// vez que essa funcao roda. Isso e essencial porque PPCRecompiler_init() libera e
+	// realoca ppcRecompilerInstanceData/memory_base cada vez que um titulo e preparado
+	// (ex: usuario volta ao menu e abre outro jogo, ou relanca o mesmo, sem fechar o
+	// app) - mas este trampolim so e gerado UMA VEZ por processo (guard
+	// initializedInterfaceFunctions). Se gravassemos o valor como constante fixa aqui,
+	// x27/x28 ficariam apontando pra memoria ja liberada em qualquer sessao de jogo
+	// depois da primeira, causando corrupcao/crash so nesses casos - exatamente o tipo
+	// de comportamento inconsistente observado nos logs de crash.
 	mov(HCPU_REG, x1); // call argument 2
-	mov(PPC_REC_INSTANCE_REG, (uint64)ppcRecompilerInstanceData);
-	mov(MEM_BASE_REG, (uint64)memory_base);
+	mov(TEMP_GPR1.XReg, (uint64)&ppcRecompilerInstanceData);
+	ldr(PPC_REC_INSTANCE_REG, AdrUimm(TEMP_GPR1.XReg, 0));
+	mov(TEMP_GPR1.XReg, (uint64)&memory_base);
+	ldr(MEM_BASE_REG, AdrUimm(TEMP_GPR1.XReg, 0));
 
 	// branch to recFunc
 	blr(x0); // call argument 1
