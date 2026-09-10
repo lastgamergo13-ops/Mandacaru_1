@@ -370,6 +370,7 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 	// identificar exatamente qual função estava rodando e o que veio logo antes de um
 	// crash - mesmo que essa thread específica não tenha hCPU disponível acima
 	PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog();
+	PPCRecompiler_dumpRecentHleCallHistoryToCrashLog();
 }
 
 void AndroidPrintLoadedLibraries()

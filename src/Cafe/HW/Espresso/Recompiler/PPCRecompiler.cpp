@@ -1,5 +1,6 @@
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <functional>
 #if !BOOST_OS_WINDOWS
@@ -545,11 +546,22 @@ constexpr uint32 PPCRecompiler_GetNumAddressSpaceBlocks()
 }
 
 std::bitset<PPCRecompiler_GetNumAddressSpaceBlocks()> ppcRecompiler_reservedBlockMask;
+std::mutex ppcRecompiler_reservedBlockMutex;
 
 void PPCRecompiler_reserveLookupTableBlock(uint32 offset)
 {
 	uint32 blockIndex = offset / PPC_REC_ALLOC_BLOCK_SIZE;
 	offset = blockIndex * PPC_REC_ALLOC_BLOCK_SIZE;
+
+	// Essa funcao e chamada por qualquer um dos 3 nucleos (threads reais de
+	// verdade, nao cooperativas) que compilam codigo em enderecos dentro desse
+	// bloco. Sem o lock, dois nucleos podiam entrar aqui pro MESMO blockIndex ao
+	// mesmo tempo (a checagem da flag e o set dela nao sao atomicos juntos) e
+	// mapear/zerar a mesma regiao de memoria duas vezes - a segunda mmap apaga
+	// entradas da tabela de saltos que o outro nucleo ja tinha acabado de
+	// escrever (inclusive ponteiros de funcao ja compilados), fazendo o codigo
+	// gerado pular pra um endereco zerado/invalido depois.
+	std::lock_guard<std::mutex> lock(ppcRecompiler_reservedBlockMutex);
 
 	if (ppcRecompiler_reservedBlockMask[blockIndex])
 		return;

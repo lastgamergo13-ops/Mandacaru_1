@@ -171,6 +171,9 @@ extern void ATTR_MS_ABI (*PPCRecompiler_leaveRecompilerCode_unvisited)();
 // Só deve ser chamada UMA VEZ, dentro do handler de crash (faz I/O, mas isso não é
 // problema ali - a essa altura o processo já está terminando de qualquer forma).
 void PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog();
+// Diagnóstico de crash: mesma ideia acima, mas para as últimas chamadas HLE (funções de
+// sistema/gráficas do Wii U, ex: GX2DrawEx), com o nome legível de cada uma.
+void PPCRecompiler_dumpRecentHleCallHistoryToCrashLog();
 
 // recompiler interface
 

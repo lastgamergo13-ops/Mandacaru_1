@@ -14,6 +14,7 @@
 #include "HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include "HW/Espresso/Interpreter/PPCInterpreterHelper.h"
 #include "HW/Espresso/PPCState.h"
+#include "Common/ExceptionHandler/ExceptionHandler.h"
 
 #ifdef __ANDROID__
 #include <sys/mman.h>
@@ -1048,8 +1049,50 @@ void AArch64GenContext_t::conditionalJumpCycleCheck(IMLSegment* imlSegment)
 	});
 }
 
+// buffer circular de diagnóstico: guarda as últimas chamadas HLE (funções de sistema/
+// gráficas do Wii U, como GX2DrawEx) de todas as threads, com o NOME legível da função -
+// sem I/O no caminho quente, só grava num array na memória. Só é lido pelo handler de
+// crash (PPCRecompiler_dumpRecentHleCallHistoryToCrashLog), útil pra confirmar se o
+// crash está relacionado a uma função gráfica específica.
+namespace
+{
+	struct HleCallLogEntry
+	{
+		uint32 ppcAddr;
+		uint32 hleFuncId;
+		uint32 threadId;
+	};
+	constexpr size_t kHleCallRingBufferSize = 64;
+	HleCallLogEntry s_hleCallRingBuffer[kHleCallRingBufferSize]{};
+	std::atomic<uint64> s_hleCallRingCounter{0};
+} // namespace
+
+void PPCRecompiler_dumpRecentHleCallHistoryToCrashLog()
+{
+	uint64 totalCount = s_hleCallRingCounter.load();
+	uint64 numEntries = totalCount < kHleCallRingBufferSize ? totalCount : kHleCallRingBufferSize;
+	CrashLog_WriteLine(fmt::format("Recent HLE calls (most recent last, {} of {} total):", numEntries, totalCount));
+	uint64 startIdx = totalCount < kHleCallRingBufferSize ? 0 : totalCount - kHleCallRingBufferSize;
+	for (uint64 i = startIdx; i < totalCount; i++)
+	{
+		const auto& entry = s_hleCallRingBuffer[i % kHleCallRingBufferSize];
+		const std::string& name = PPCInterpreter_getHLEName(entry.hleFuncId);
+		CrashLog_WriteLine(fmt::format("  [{}] tid={} ppcAddr=0x{:08x} hleFuncId={} name=\"{}\"", i, entry.threadId, entry.ppcAddr, entry.hleFuncId, name.empty() ? "?" : name));
+	}
+}
+
 void* PPCRecompiler_virtualHLE(PPCInterpreter_t* ppcInterpreter, uint32 hleFuncId)
 {
+	if (hleFuncId != 0xFFD0)
+	{
+		uint64 idx = s_hleCallRingCounter.fetch_add(1) % kHleCallRingBufferSize;
+#if BOOST_OS_WINDOWS
+		uint32 threadId = (uint32)GetCurrentThreadId();
+#else
+		uint32 threadId = (uint32)gettid();
+#endif
+		s_hleCallRingBuffer[idx] = { ppcInterpreter->instructionPointer, hleFuncId, threadId };
+	}
 	void* prevRSPTemp = ppcInterpreter->rspTemp;
 	if (hleFuncId == 0xFFD0)
 	{

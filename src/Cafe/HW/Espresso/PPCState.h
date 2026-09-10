@@ -235,6 +235,9 @@ using HLEIDX = sint32;
 
 HLEIDX PPCInterpreter_registerHLECall(HLECALL hleCall, std::string hleName);
 HLECALL PPCInterpreter_getHLECall(HLEIDX funcIndex);
+// Diagnóstico: nome legível da chamada HLE (ex: "GX2DrawEx"), pra logar qual função
+// estava sendo executada antes de um crash. Retorna string vazia se o índice não existe.
+const std::string& PPCInterpreter_getHLEName(HLEIDX funcIndex);
 
 // HLE scheduler
 
