@@ -1,6 +1,9 @@
 #include "Fiber.h"
 #include <atomic>
+#include <cerrno>
 #include <cstdlib>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "Cemu/Logging/CemuLogging.h"
 
 #ifdef __ANDROID__
@@ -41,12 +44,31 @@ Fiber::Fiber(void(*FiberEntryPoint)(void* userParam), void* userParam, void* pri
 		cemuLog_log(LogType::Force, "Fiber: constructed with a null FiberEntryPoint (userParam={})", userParam);
 
 	const size_t stackSize = 2 * 1024 * 1024;
-	m_stackPtr = malloc(stackSize);
-	if (!m_stackPtr)
-		cemuLog_log(LogType::Force, "Fiber: malloc({}) for the fiber stack failed", stackSize);
+	const size_t guardSize = (size_t)sysconf(_SC_PAGESIZE);
+	const size_t totalSize = guardSize + stackSize;
+
+	// mmap em vez de malloc(): a pilha de cada fiber fica numa regiao propria,
+	// com uma pagina extra no INICIO (endereco mais baixo, pra onde a pilha
+	// cresce) marcada como PROT_NONE. Se a pilha estourar, o acesso a essa
+	// pagina de guarda causa um SIGSEGV imediato e claro, apontando pra pilha
+	// que de fato estourou - em vez de corromper silenciosamente memoria
+	// vizinha (o que antes, com malloc(), podia se manifestar bem mais tarde
+	// como corrupcao "aleatoria" de registradores em outro lugar qualquer).
+	void* base = mmap(nullptr, totalSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED)
+	{
+		cemuLog_log(LogType::Force, "Fiber: mmap({}) for the fiber stack failed, errno={}", totalSize, errno);
+		base = nullptr;
+	}
+	else if (mprotect(base, guardSize, PROT_NONE) != 0)
+	{
+		cemuLog_log(LogType::Force, "Fiber: mprotect(PROT_NONE) for the fiber stack guard page failed, errno={}", errno);
+	}
+	m_stackPtr = base;
+	m_stackMapSize = base ? totalSize : 0;
 
 	// Boost.Context espera o ponteiro para o topo (endereco mais alto) da stack.
-	void* stackTop = static_cast<char*>(m_stackPtr) + stackSize;
+	void* stackTop = static_cast<char*>(m_stackPtr) + totalSize;
 	fcontext_t ctx = make_fcontext(stackTop, stackSize, &FiberTrampoline);
 	if (!ctx)
 		cemuLog_log(LogType::Force, "Fiber: make_fcontext() returned null (stackPtr={}, stackTop={}, size={}) - Boost.Context may be broken for this build/ABI", m_stackPtr, stackTop, stackSize);
@@ -63,6 +85,7 @@ Fiber::Fiber(void* privateData) : m_privateData(privateData)
 	// vez via Switch() - antes disso nunca sera usado como alvo de um jump_fcontext.
 	m_implData = new fcontext_t();
 	m_stackPtr = nullptr;
+	m_stackMapSize = 0;
 	m_androidEntryPoint = nullptr;
 	m_androidUserParam = nullptr;
 }
@@ -70,7 +93,7 @@ Fiber::Fiber(void* privateData) : m_privateData(privateData)
 Fiber::~Fiber()
 {
 	if (m_stackPtr)
-		free(m_stackPtr);
+		munmap(m_stackPtr, m_stackMapSize);
 	delete static_cast<fcontext_t*>(m_implData);
 }
 

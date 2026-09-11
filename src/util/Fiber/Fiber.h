@@ -33,5 +33,8 @@ private:
 #ifdef __ANDROID__
 	void (*m_androidEntryPoint)(void* userParam){nullptr};
 	void* m_androidUserParam{nullptr};
+	// Tamanho TOTAL da regiao mapeada via mmap (pagina de guarda + pilha
+	// usavel) - necessario pro munmap() no destrutor liberar a coisa certa.
+	size_t m_stackMapSize{0};
 #endif
 };
