@@ -1073,6 +1073,29 @@ namespace coreinit
 		OSHostThread* hostThread = s_threadToFiber.find(thread)->second;
 		hostThread->selectedCore = coreIndex;
 		Fiber::Switch(hostThread->m_fiber);
+#ifdef __ANDROID__
+		// Ultimo ponto sem instrumentacao: checa x27/x28 assim que QUALQUER fiber e
+		// retomado apos ter sido suspenso por Fiber::Switch() (o codigo aqui embaixo
+		// roda no fiber que acabou de ser trocado DE VOLTA pra ca, nao no 'thread'
+		// passado como argumento). Se a corrupcao acontece enquanto um fiber esta
+		// suspenso (na memoria salva pelo Boost.Context, nao nos registradores "ao
+		// vivo" durante execucao normal), ela so pode ser vista bem aqui, no instante
+		// exato da retomada - antes mesmo de qualquer macro()/chamada HLE rodar de
+		// novo. Nenhum outro canario ja existente cobre esse instante especifico.
+		{
+			register uint64_t curX27 asm("x27");
+			register uint64_t curX28 asm("x28");
+			asm volatile("" : "=r"(curX27), "=r"(curX28));
+			const uint64_t expectedX27 = (uint64_t)ppcRecompilerInstanceData;
+			const uint64_t expectedX28 = (uint64_t)memory_base;
+			if (expectedX27 != 0 && (curX27 != expectedX27 || curX28 != expectedX28))
+			{
+				cemuLog_log(LogType::Force,
+					"[JIT] CANARIO pos-fiber-switch: x27={:#x} (esperado {:#x}) x28={:#x} (esperado {:#x}) coreIndex={}",
+					curX27, expectedX27, curX28, expectedX28, coreIndex);
+			}
+		}
+#endif
 	}
 
 	void __OSThreadLoadContext(PPCInterpreter_t* hCPU, OSThread_t* thread)
