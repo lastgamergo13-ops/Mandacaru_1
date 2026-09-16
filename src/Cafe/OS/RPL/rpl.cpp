@@ -5,6 +5,7 @@
 #include "Cafe/OS/RPL/rpl.h"
 #include "Cafe/OS/RPL/rpl_structs.h"
 #include "Cafe/OS/RPL/rpl_symbol_storage.h"
+#include <mutex>
 #include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
 #include "Cafe/HW/Espresso/Debugger/Debugger.h"
 #include "Cafe/GraphicPack/GraphicPack2.h"
@@ -77,6 +78,8 @@ struct RPLRegionMappingTable
 void RPLLoader_UnloadModule(RPLDependency* rplDependency, bool skipPPCCalls);
 void RPLLoader_RemoveDependency(std::string_view name);
 
+std::mutex g_mutex_trampolineArea;
+
 uint8* RPLLoader_AllocateTrampolineCodeSpace(RPLModule* rplLoaderContext, sint32 size)
 {	
 	if (rplLoaderContext)
@@ -84,7 +87,11 @@ uint8* RPLLoader_AllocateTrampolineCodeSpace(RPLModule* rplLoaderContext, sint32
 		// allocation owned by rpl
 		return (uint8*)rplLoaderContext->heapTrampolineArea.alloc(size, 4);
 	}
-	// allocation owned by global context
+	// allocation owned by global context - protected by a mutex because this can be
+	// called concurrently from multiple PPC/OS threads (e.g. RPLLoader_MakePPCCallable
+	// being triggered by more than one game thread around the same time), and the
+	// underlying bump allocator is not thread-safe on its own
+	std::unique_lock _l(g_mutex_trampolineArea);
 	auto result = (uint8*)g_heapTrampolineArea.alloc(size, 4);
 	rplLoader_maxCodeAddress = std::max(rplLoader_maxCodeAddress, memory_getVirtualOffsetFromPointer(g_heapTrampolineArea.getCurrentBlockPtr()) + g_heapTrampolineArea.getCurrentBlockOffset());
 	return result;
@@ -726,8 +733,15 @@ void _calculateMappedImportNameHash(const char* rplName, const char* funcName, u
 	*h2Out = h2;
 }
 
+std::mutex g_mutex_callableExports;
+
 uint32 RPLLoader_MakePPCCallable(void(*ppcCallableExport)(PPCInterpreter_t* hCPU))
 {
+	// protegido por mutex porque essa função pode ser chamada concorrentemente
+	// por várias threads PPC/OS ao mesmo tempo (ex.: mais de uma thread do jogo
+	// registrando/pedindo o mesmo callback quase ao mesmo tempo) - g_map_callableExports
+	// é um std::map comum, não seguro pra acesso concorrente sem essa proteção
+	std::unique_lock _l(g_mutex_callableExports);
 	auto it = g_map_callableExports.find(ppcCallableExport);
 	if (it != g_map_callableExports.end())
 		return it->second;
@@ -2522,7 +2536,10 @@ void RPLLoader_UnloadAll()
 	// free all code imports
 	g_heapTrampolineArea.releaseAll();
 	list_mappedFunctionImports.clear();
-	g_map_callableExports.clear();
+	{
+		std::unique_lock _l(g_mutex_callableExports);
+		g_map_callableExports.clear();
+	}
 	rplLoader_applicationHasMemoryControl = false;
 	rplLoader_maxCodeAddress = 0;
 	rplLoader_currentDataAllocatorAddr = 0x10000000;
