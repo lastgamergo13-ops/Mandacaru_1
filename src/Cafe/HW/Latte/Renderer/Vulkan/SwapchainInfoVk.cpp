@@ -392,7 +392,18 @@ VkSwapchainCreateInfoKHR SwapchainInfoVk::CreateSwapchainCreateInfo(VkSurfaceKHR
 	else
 		createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-	createInfo.preTransform = swapchainSupport.capabilities.currentTransform;
+	// Do NOT use swapchainSupport.capabilities.currentTransform here: setting
+	// preTransform to a non-identity value tells the presentation engine "the
+	// image content I'm submitting is already rotated/mirrored to match this
+	// transform", which is only correct if the renderer itself compensates by
+	// pre-rotating what it draws. This renderer never does that - it always
+	// draws a plain, unrotated framebuffer - so on phones (where the physical
+	// panel's native buffer orientation is portrait and currentTransform
+	// comes back as a 90/270 rotation while running forced-landscape) this
+	// caused the emulated game's framebuffer to be presented rotated on
+	// screen. IDENTITY is guaranteed to be present in supportedTransforms by
+	// the Vulkan spec, and tells the compositor to do the rotation itself.
+	createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 	createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 	createInfo.presentMode = ChoosePresentMode(swapchainSupport.presentModes);
 	createInfo.clipped = VK_TRUE;

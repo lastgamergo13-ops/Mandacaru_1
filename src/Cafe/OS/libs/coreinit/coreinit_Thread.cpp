@@ -1280,8 +1280,16 @@ namespace coreinit
 
 	// idle fiber per core if no thread is runnable
 	// this is necessary since we can't block in __OSThreadSwitchToNext() (__OSStoreThread + thread switch must happen inside same scheduler lock)
-	void __OSThreadCoreIdle(void* unusedParam)
+	void __OSThreadCoreIdle(void* assignedCoreIndexParam)
 	{
+#if defined(__ANDROID__)
+		// This fiber's entry point runs on its own brand new real pthread (see
+		// FiberUnix.cpp), which does NOT inherit t_assignedCoreIndex from the
+		// OSSched[core=X] thread that created it - that thread_local starts at
+		// its default (0) here regardless of which core we actually are.
+		// Recover it from the explicit param instead of trusting inherited TLS.
+		t_assignedCoreIndex = (uint32)(uintptr_t)assignedCoreIndexParam;
+#endif
 		bool isMainCore = g_isMulticoreMode == false || t_assignedCoreIndex == 1;
 		sint32 coreIndex = t_assignedCoreIndex;
 		__OSUnlockScheduler();
@@ -1380,6 +1388,16 @@ namespace coreinit
 #endif
 		OSHostThread* hostThread = (OSHostThread*)_thread;
 
+#if defined(__ANDROID__)
+		// See the matching comment in __OSThreadCoreIdle: this fiber's real
+		// pthread starts with a fresh, zeroed t_assignedCoreIndex on Android.
+		// __OSSwitchToThreadFiber() always sets hostThread->selectedCore right
+		// before switching into us, so that's the correct value to adopt here -
+		// everything downstream in this thread's own __OSThreadSwitchToNext()
+		// calls (run queue lookups, idle fiber selection, etc.) depends on it.
+		t_assignedCoreIndex = hostThread->selectedCore;
+#endif
+
 		enableFlushDenormalsToZero();
 
 #if defined(__ANDROID__)
@@ -1469,7 +1487,7 @@ namespace coreinit
 #if defined(__ANDROID__)
 		Watchdog_SetThreadStatus(fmt::format("core {} - creating idle fiber", (uintptr_t)_assignedCoreIndex));
 #endif
-		g_idleLoopFiber[t_assignedCoreIndex] = new Fiber(__OSThreadCoreIdle, nullptr, nullptr);
+		g_idleLoopFiber[t_assignedCoreIndex] = new Fiber(__OSThreadCoreIdle, (void*)(uintptr_t)t_assignedCoreIndex, nullptr);
 		if (PPCInterpreter_getCurrentInstance() != nullptr)
 			cemuLog_log(LogType::Force, "OSSchedulerCoreEmulationThread: PPCInterpreter_getCurrentInstance() unexpectedly non-null before scheduler start (core {})", (uintptr_t)_assignedCoreIndex);
 		cemu_assert_debug(PPCInterpreter_getCurrentInstance() == nullptr);

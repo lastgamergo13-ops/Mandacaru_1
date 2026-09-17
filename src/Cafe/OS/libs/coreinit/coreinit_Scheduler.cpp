@@ -1,43 +1,70 @@
 #include "Cafe/OS/common/OSCommon.h"
 #include "coreinit_Scheduler.h"
+#include <atomic>
 
-thread_local sint32 s_schedulerLockCount = 0;
+// NOTE: this used to be `thread_local`, and on non-Android platforms the lock
+// primitive used to be a plain pthread_mutex_t / CRITICAL_SECTION. Both of
+// those choices silently assumed that __OSLockScheduler() and the matching
+// __OSUnlockScheduler() always happen on the same real OS thread - true in
+// the old Boost.Context/ucontext fiber model (one real OS thread hosts many
+// fibers, switching its own stack), but FALSE on Android now that every
+// Fiber is backed by its own real pthread (see FiberUnix.cpp): the lock is
+// routinely taken on one core's scheduler thread and released from whichever
+// different fiber thread was just switched into (e.g. __OSThreadCoreIdle
+// calls __OSUnlockScheduler() as literally its first action after being
+// woken up on its own separate thread). Unlocking a normal pthread_mutex_t
+// from a non-owning thread is undefined behavior, and a thread_local counter
+// desyncs permanently the moment lock/unlock cross a real thread boundary.
+// Since this is a single global (non-recursive) lock, there is at most one
+// holder process-wide at any time regardless of which real thread is asking,
+// so a plain atomic counter (not thread_local) already gives the right
+// answer for __OSHasSchedulerLock() no matter which thread checks it.
+std::atomic<sint32> s_schedulerLockCount{0};
 
 #if BOOST_OS_WINDOWS
 #include <synchapi.h>
-CRITICAL_SECTION s_csSchedulerLock;
+// Semaphore instead of CRITICAL_SECTION for the same cross-thread-release
+// reason as the Android path below - kept consistent across platforms even
+// though only Android currently exercises the cross-thread release pattern.
+HANDLE s_semSchedulerLock;
+struct SchedulerLockWinInit { SchedulerLockWinInit() { s_semSchedulerLock = CreateSemaphoreA(nullptr, 1, 1, nullptr); } } s_schedulerLockWinInit;
 #else
-#include <pthread.h>
-pthread_mutex_t s_ptmSchedulerLock;
+#include <semaphore.h>
+// Binary semaphore instead of pthread_mutex_t: semaphores have no concept of
+// thread ownership, so sem_post() from a different thread than the one that
+// called sem_wait() is well-defined (unlike pthread_mutex_unlock() from a
+// non-owning thread, which is UB). Initialized to 1 (unlocked).
+sem_t s_semSchedulerLock;
+struct SchedulerLockPosixInit { SchedulerLockPosixInit() { sem_init(&s_semSchedulerLock, 0, 1); } } s_schedulerLockPosixInit;
 #endif
 
 void __OSLockScheduler(void* obj)
 {
 #if BOOST_OS_WINDOWS
-	EnterCriticalSection(&s_csSchedulerLock);
+	WaitForSingleObject(s_semSchedulerLock, INFINITE);
 #else
-	pthread_mutex_lock(&s_ptmSchedulerLock);
+	sem_wait(&s_semSchedulerLock);
 #endif
-	s_schedulerLockCount++;
-	cemu_assert_debug(s_schedulerLockCount <= 1); // >= 2 should not happen. Scheduler lock does not allow recursion
+	sint32 newCount = s_schedulerLockCount.fetch_add(1, std::memory_order_acq_rel) + 1;
+	cemu_assert_debug(newCount <= 1); // >= 2 should not happen. Scheduler lock does not allow recursion
 }
 
 bool __OSHasSchedulerLock()
 {
-	return s_schedulerLockCount > 0;
+	return s_schedulerLockCount.load(std::memory_order_acquire) > 0;
 }
 
 bool __OSTryLockScheduler(void* obj)
 {
 	bool r;
 #if BOOST_OS_WINDOWS
-	r = TryEnterCriticalSection(&s_csSchedulerLock);
+	r = WaitForSingleObject(s_semSchedulerLock, 0) == WAIT_OBJECT_0;
 #else
-	r = pthread_mutex_trylock(&s_ptmSchedulerLock) == 0;
+	r = sem_trywait(&s_semSchedulerLock) == 0;
 #endif
 	if (r)
 	{
-		s_schedulerLockCount++;
+		s_schedulerLockCount.fetch_add(1, std::memory_order_acq_rel);
 		return true;
 	}
 	return false;
@@ -45,12 +72,12 @@ bool __OSTryLockScheduler(void* obj)
 
 void __OSUnlockScheduler(void* obj)
 {
-	s_schedulerLockCount--;
-	cemu_assert_debug(s_schedulerLockCount >= 0);
+	sint32 newCount = s_schedulerLockCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
+	cemu_assert_debug(newCount >= 0);
 #if BOOST_OS_WINDOWS
-	LeaveCriticalSection(&s_csSchedulerLock);
+	ReleaseSemaphore(s_semSchedulerLock, 1, nullptr);
 #else
-	pthread_mutex_unlock(&s_ptmSchedulerLock);
+	sem_post(&s_semSchedulerLock);
 #endif
 }
 
