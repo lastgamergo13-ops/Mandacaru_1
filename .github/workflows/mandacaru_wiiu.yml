@@ -100,13 +100,19 @@ jobs:
 
           ./gradlew assembleRelease
 
-      - name: Create release
+      - name: Prepare APK for release
         run: |
           VERSION=${{ env.CEMU_VERSION }}
           mkdir upload
           mv ./src/android/app/build/outputs/apk/*/*.apk upload/Cemu-$VERSION.apk
-          wget -O ghr.tar.gz https://github.com/tcnksm/ghr/releases/download/v0.15.0/ghr_v0.15.0_linux_amd64.tar.gz
-          tar xvzf ghr.tar.gz; rm ghr.tar.gz
-          echo "[INFO] Release tag: v${{ env.CEMU_VERSION }}"
-          RELEASE_BODY=$(printf "Experimental release %s" "${{ env.CEMU_VERSION }}")
-          ghr_v0.15.0_linux_amd64/ghr -b "$RELEASE_BODY" -t ${{ secrets.GITHUB_TOKEN }} -n "Cemu ${{ env.CEMU_VERSION }}" "${{ env.CEMU_VERSION }}" ./upload
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ env.CEMU_VERSION }}
+          name: "Cemu ${{ env.CEMU_VERSION }}"
+          body: "Experimental release ${{ env.CEMU_VERSION }}"
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: upload/Cemu-${{ env.CEMU_VERSION }}.apk
