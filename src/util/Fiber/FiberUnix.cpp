@@ -8,33 +8,50 @@
 
 #ifdef __ANDROID__
 // Bionic (a libc do Android) nunca implementou ucontext.h (getcontext/makecontext/
-// swapcontext) - e uma limitacao conhecida e antiga do NDK. Por isso usamos
-// Boost.Context (biblioteca ja usada em outras partes do projeto) como
-// implementacao alternativa de troca de stack no Android.
-#include <boost/context/detail/fcontext.hpp>
-
-using namespace boost::context::detail;
+// swapcontext) - e uma limitacao conhecida e antiga do NDK. Uma primeira tentativa
+// usou Boost.Context (troca de stack manual via assembly) como alternativa, mas
+// apos uma extensa investigacao de crashes intermitentes (registradores dedicados
+// do JIT - x27/x28 - perdendo o valor correto de forma esporadica, sem causa raiz
+// isolavel apesar de varias correcoes reais em codigo ao redor), trocamos pra uma
+// abordagem mais pesada porem muito mais confiavel: cada "fiber" agora e uma
+// THREAD REAL do sistema operacional (pthread), e a troca entre fibers e feita
+// deixando so uma thread por vez acordada, via um semaforo dedicado por fiber.
+// Isso delega a preservacao de registradores inteiramente ao escalonador/kernel
+// do Linux (via troca de contexto real de thread), que e uma garantia muito mais
+// testada/confiavel nesse quesito do que uma biblioteca de troca de stack manual.
+#include <pthread.h>
+#include <semaphore.h>
 
 thread_local Fiber* sCurrentFiber{};
 
 namespace
 {
-	void FiberTrampoline(transfer_t t)
+	// Estado interno de cada fiber Android. Alocado no heap e guardado (como
+	// void*) em Fiber::m_implData, acessado via AndroidGetContextSlot().
+	struct AndroidFiberImpl
 	{
-		// So executado na primeira vez que se troca para esse fiber.
-		// 't.data' e um ponteiro para o Fiber que fez a troca para nos (ver
-		// Switch() abaixo) - atualiza o slot de contexto DELE com o continuation
-		// que o Boost.Context acabou de criar pra ele, exatamente como toda
-		// retomada normal faz. sCurrentFiber ja aponta pra nos mesmos (Switch()
-		// seta isso antes do jump), entao usamos ele pra saber "quem somos".
-		Fiber* switchedFrom = static_cast<Fiber*>(t.data);
-		*static_cast<fcontext_t*>(switchedFrom->AndroidGetContextSlot()) = t.fctx;
+		sem_t resumeSem{};
+		pthread_t thread{};
+		bool hasOwnThread = false;
+	};
 
-		Fiber* self = sCurrentFiber;
+	// Ponto de entrada da pthread real por tras de cada fiber "criado" (nao o
+	// que envolve a thread atual - esse nunca passa por aqui). Fica bloqueada
+	// esperando sua vez ANTES de rodar qualquer coisa do FiberEntryPoint real,
+	// exatamente como um fiber recem-criado via ucontext/Boost.Context so
+	// comecava a executar no primeiro Switch() pra ele, nunca antes.
+	void* AndroidFiberThreadEntry(void* param)
+	{
+		Fiber* self = static_cast<Fiber*>(param);
+		auto* impl = static_cast<AndroidFiberImpl*>(self->AndroidGetContextSlot());
+
+		sem_wait(&impl->resumeSem);
+		sCurrentFiber = self;
 		self->AndroidRunEntryPoint();
-		// FiberEntryPoint nao deveria retornar (mesma premissa do resto do projeto
-		// pras outras plataformas). Se retornar, nao ha um destino valido pra saltar.
+		// FiberEntryPoint nao deveria retornar (mesma premissa do resto do
+		// projeto pras outras plataformas). Se retornar, nao ha destino valido.
 		std::abort();
+		return nullptr;
 	}
 } // namespace
 
@@ -43,58 +60,58 @@ Fiber::Fiber(void(*FiberEntryPoint)(void* userParam), void* userParam, void* pri
 	if (!FiberEntryPoint)
 		cemuLog_log(LogType::Force, "Fiber: constructed with a null FiberEntryPoint (userParam={})", userParam);
 
-	const size_t stackSize = 2 * 1024 * 1024;
-	const size_t guardSize = (size_t)sysconf(_SC_PAGESIZE);
-	const size_t totalSize = guardSize + stackSize;
-
-	// mmap em vez de malloc(): a pilha de cada fiber fica numa regiao propria,
-	// com uma pagina extra no INICIO (endereco mais baixo, pra onde a pilha
-	// cresce) marcada como PROT_NONE. Se a pilha estourar, o acesso a essa
-	// pagina de guarda causa um SIGSEGV imediato e claro, apontando pra pilha
-	// que de fato estourou - em vez de corromper silenciosamente memoria
-	// vizinha (o que antes, com malloc(), podia se manifestar bem mais tarde
-	// como corrupcao "aleatoria" de registradores em outro lugar qualquer).
-	void* base = mmap(nullptr, totalSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (base == MAP_FAILED)
-	{
-		cemuLog_log(LogType::Force, "Fiber: mmap({}) for the fiber stack failed, errno={}", totalSize, errno);
-		base = nullptr;
-	}
-	else if (mprotect(base, guardSize, PROT_NONE) != 0)
-	{
-		cemuLog_log(LogType::Force, "Fiber: mprotect(PROT_NONE) for the fiber stack guard page failed, errno={}", errno);
-	}
-	m_stackPtr = base;
-	m_stackMapSize = base ? totalSize : 0;
-
-	// Boost.Context espera o ponteiro para o topo (endereco mais alto) da stack.
-	void* stackTop = static_cast<char*>(m_stackPtr) + totalSize;
-	fcontext_t ctx = make_fcontext(stackTop, stackSize, &FiberTrampoline);
-	if (!ctx)
-		cemuLog_log(LogType::Force, "Fiber: make_fcontext() returned null (stackPtr={}, stackTop={}, size={}) - Boost.Context may be broken for this build/ABI", m_stackPtr, stackTop, stackSize);
-
-	m_implData = new fcontext_t(ctx);
+	auto* impl = new AndroidFiberImpl();
+	sem_init(&impl->resumeSem, 0, 0);
+	m_implData = impl;
 	m_androidEntryPoint = FiberEntryPoint;
 	m_androidUserParam = userParam;
+	m_stackPtr = nullptr; // a pthread gerencia a propria pilha internamente
+
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	// Mesmo tamanho de pilha que a implementacao anterior usava (o padrao do
+	// pthread no Android costuma ser menor, 1MB) - preserva a mesma margem.
+	pthread_attr_setstacksize(&attr, 2 * 1024 * 1024);
+
+	int rc = pthread_create(&impl->thread, &attr, &AndroidFiberThreadEntry, this);
+	pthread_attr_destroy(&attr);
+	if (rc != 0)
+	{
+		cemuLog_log(LogType::Force, "Fiber: pthread_create() failed, rc={}", rc);
+	}
+	else
+	{
+		impl->hasOwnThread = true;
+		// Ninguem precisa dar join nessas threads (elas vivem pelo tempo de
+		// vida do fiber, que por sua vez normalmente vive ate o processo
+		// terminar - o mesmo valia pras stacks da implementacao anterior,
+		// que tambem nunca eram "encerradas" de forma limpa).
+		pthread_detach(impl->thread);
+	}
 }
 
 Fiber::Fiber(void* privateData) : m_privateData(privateData)
 {
-	// Fiber representando a thread atual (ex: a thread principal). O contexto
-	// so passa a ser valido depois que essa fiber ceder o controle pela primeira
-	// vez via Switch() - antes disso nunca sera usado como alvo de um jump_fcontext.
-	m_implData = new fcontext_t();
+	// Fiber representando a thread atual (ex: a thread principal, ou a propria
+	// thread real de um core ja rodando). Nao cria pthread nova - so precisa
+	// do proprio semaforo, usado quando ESSA fiber for trocada de volta pra
+	// depois de ceder o controle pela primeira vez via Switch().
+	auto* impl = new AndroidFiberImpl();
+	sem_init(&impl->resumeSem, 0, 0);
+	m_implData = impl;
 	m_stackPtr = nullptr;
-	m_stackMapSize = 0;
 	m_androidEntryPoint = nullptr;
 	m_androidUserParam = nullptr;
 }
 
 Fiber::~Fiber()
 {
-	if (m_stackPtr)
-		munmap(m_stackPtr, m_stackMapSize);
-	delete static_cast<fcontext_t*>(m_implData);
+	auto* impl = static_cast<AndroidFiberImpl*>(m_implData);
+	if (impl)
+	{
+		sem_destroy(&impl->resumeSem);
+		delete impl;
+	}
 }
 
 Fiber* Fiber::PrepareCurrentThread(void* privateData)
@@ -106,30 +123,20 @@ Fiber* Fiber::PrepareCurrentThread(void* privateData)
 
 void Fiber::Switch(Fiber& targetFiber)
 {
+	// Cada fiber agora E uma thread real, entao "sCurrentFiber" (thread_local)
+	// e fixo pra sempre em cada thread do SO, setado uma unica vez (aqui em
+	// baixo, ou em AndroidFiberThreadEntry/PrepareCurrentThread) - nao precisa
+	// ser reatribuido a cada troca, ao contrario da versao anterior baseada em
+	// Boost.Context (onde uma unica thread real "era" varios fibers diferentes
+	// ao longo do tempo).
 	Fiber* leavingFiber = sCurrentFiber;
-	sCurrentFiber = &targetFiber;
-	std::atomic_thread_fence(std::memory_order_seq_cst);
+	auto* leavingImpl = static_cast<AndroidFiberImpl*>(leavingFiber->AndroidGetContextSlot());
+	auto* targetImpl = static_cast<AndroidFiberImpl*>(targetFiber.AndroidGetContextSlot());
 
-	fcontext_t* targetCtx = static_cast<fcontext_t*>(targetFiber.m_implData);
-
-	if (!targetCtx || !*targetCtx)
-	{
-		// this would otherwise crash inside jump_fcontext() with pc=0 and no useful backtrace.
-		// logging it here first pinpoints it precisely to a bad/uninitialized fcontext_t instead.
-		cemuLog_log(LogType::Force, "Fiber::Switch: about to jump into a null/invalid fcontext_t (target entryPoint={}, userParam={}, stackPtr={}) - this will crash",
-			(void*)targetFiber.m_androidEntryPoint, targetFiber.m_androidUserParam, targetFiber.m_stackPtr);
-	}
-
-	// Passa 'leavingFiber' (nos mesmos) como data - assim, quando alguem trocar
-	// de volta pra ca (nesse mesmo ponto do codigo, mais tarde), sabemos - via
-	// result.data - qual fiber acabou de entrar e cujo continuation precisa ser
-	// atualizado. Nunca atualizamos nosso proprio slot aqui.
-	transfer_t result = jump_fcontext(*targetCtx, leavingFiber);
-
-	Fiber* switchedFrom = static_cast<Fiber*>(result.data);
-	*static_cast<fcontext_t*>(switchedFrom->m_implData) = result.fctx;
-
-	std::atomic_thread_fence(std::memory_order_seq_cst);
+	// Acorda a thread real por tras do fiber alvo...
+	sem_post(&targetImpl->resumeSem);
+	// ...e dorme na propria, esperando alguem trocar de volta pra ca.
+	sem_wait(&leavingImpl->resumeSem);
 }
 
 void* Fiber::GetFiberPrivateData()

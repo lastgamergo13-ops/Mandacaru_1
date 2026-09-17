@@ -15,12 +15,12 @@ public:
 	static void* GetFiberPrivateData();
 
 #ifdef __ANDROID__
-	// Usado internamente pela ponte (trampoline) do Boost.Context no Android -
-	// nao chame diretamente.
+	// Usado internamente pela troca de fiber baseada em pthread+semaforo no
+	// Android - nao chame diretamente.
 	void AndroidRunEntryPoint();
-	// Ponteiro pro slot interno de fcontext_t (na verdade um fcontext_t*) -
-	// usado só pela troca de fiber (Boost.Context) dentro de FiberUnix.cpp.
-	// Não mexa nisso fora dali.
+	// Ponteiro pro slot interno de implementacao (na verdade um AndroidFiberImpl*,
+	// struct privada definida dentro de FiberUnix.cpp) - usado só pela troca de
+	// fiber dentro de FiberUnix.cpp. Não mexa nisso fora dali.
 	void* AndroidGetContextSlot() const { return m_implData; }
 #endif
 
@@ -33,8 +33,5 @@ private:
 #ifdef __ANDROID__
 	void (*m_androidEntryPoint)(void* userParam){nullptr};
 	void* m_androidUserParam{nullptr};
-	// Tamanho TOTAL da regiao mapeada via mmap (pagina de guarda + pilha
-	// usavel) - necessario pro munmap() no destrutor liberar a coisa certa.
-	size_t m_stackMapSize{0};
 #endif
 };
