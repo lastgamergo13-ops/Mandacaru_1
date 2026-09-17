@@ -134,14 +134,11 @@ namespace coreinit
 
 	void InitializeSchedulerLock()
 	{
-#if BOOST_OS_WINDOWS
-		InitializeCriticalSection(&s_csSchedulerLock);
-#else
-		pthread_mutexattr_t ma;
-		pthread_mutexattr_init(&ma);
-		pthread_mutexattr_settype(&ma, PTHREAD_MUTEX_RECURSIVE);
-		pthread_mutex_init(&s_ptmSchedulerLock, &ma);
-#endif
+		// NOTE: the actual lock primitive (s_semSchedulerLock) is already
+		// initialized by the static constructors SchedulerLockWinInit /
+		// SchedulerLockPosixInit defined above, at static-init time, before
+		// this function ever runs. This function now only needs to register
+		// the exports below.
 		cafeExportRegister("coreinit", __OSLockScheduler, LogType::Placeholder);
 		cafeExportRegister("coreinit", __OSUnlockScheduler, LogType::Placeholder);
 
