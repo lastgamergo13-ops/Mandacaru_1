@@ -3,6 +3,8 @@
 
 #if defined(__ANDROID__)
 #include "Common/ExceptionHandler/ExceptionHandler.h"
+
+thread_local std::string g_watchdogWaitReasonOverride;
 #endif
 
 namespace coreinit
@@ -26,9 +28,22 @@ namespace coreinit
 		// loop - so it's cheap to always report here. If the process ever freezes again,
 		// this tells us exactly which emulated PPC thread got stuck and on which wait
 		// queue, instead of just seeing "running emulated OSThread" with no further detail.
+		// A caller can set g_watchdogWaitReasonOverride beforehand for a more specific
+		// message (e.g. naming the mutex + its current owner); it's consumed here.
 		const char* threadNamePtr = thread->threadName.GetPtr();
-		Watchdog_SetThreadStatus(fmt::format("blocked: PPC thread \"{}\" (0x{:08x}) waiting on queue 0x{:08x}",
-			threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(thread).GetMPTR(), MEMPTR<void>(this).GetMPTR()));
+		std::string statusMsg;
+		if (!g_watchdogWaitReasonOverride.empty())
+		{
+			statusMsg = fmt::format("blocked: PPC thread \"{}\" (0x{:08x}) {}",
+				threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(thread).GetMPTR(), g_watchdogWaitReasonOverride);
+			g_watchdogWaitReasonOverride.clear();
+		}
+		else
+		{
+			statusMsg = fmt::format("blocked: PPC thread \"{}\" (0x{:08x}) waiting on queue 0x{:08x}",
+				threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(thread).GetMPTR(), MEMPTR<void>(this).GetMPTR());
+		}
+		Watchdog_SetThreadStatus(statusMsg);
 #endif
 		PPCCore_switchToSchedulerWithLock();
 		cemu_assert_debug(thread->state == OSThread_t::THREAD_STATE::STATE_RUNNING);

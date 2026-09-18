@@ -43,6 +43,9 @@ namespace coreinit
 		}
 		else
 		{
+#if defined(__ANDROID__)
+			g_watchdogWaitReasonOverride = fmt::format("waiting on event 0x{:08x} (not signaled)", MEMPTR<OSEvent>(event).GetMPTR());
+#endif
 			// enter wait queue
 			event->threadQueue.queueAndWait(OSGetCurrentThread());
 		}
@@ -254,6 +257,16 @@ namespace coreinit
 				if (failedAttempts >= 0x800)
 					cemuLog_log(LogType::Force, "Detected long-term contested OSLockMutex");
 				currentThread->waitingForMutex = mutex;
+#if defined(__ANDROID__)
+				{
+					OSThread_t* ownerThread = mutex->owner.GetPtr();
+					const char* ownerNamePtr = ownerThread ? ownerThread->threadName.GetPtr() : nullptr;
+					g_watchdogWaitReasonOverride = fmt::format("waiting on mutex 0x{:08x}, held by \"{}\" (0x{:08x})",
+						MEMPTR<OSMutex>(mutex).GetMPTR(),
+						ownerThread ? (ownerNamePtr ? ownerNamePtr : "(unnamed)") : "(no owner?)",
+						ownerThread ? MEMPTR<OSThread_t>(ownerThread).GetMPTR() : 0);
+				}
+#endif
 				mutex->threadQueue.queueAndWait(currentThread);
 				currentThread->waitingForMutex = nullptr;
 				failedAttempts++;
@@ -364,6 +377,10 @@ namespace coreinit
 		if (!mutex->threadQueue.isEmpty())
 			mutex->threadQueue.wakeupEntireWaitQueue(false);
 		// wait on condition
+#if defined(__ANDROID__)
+		g_watchdogWaitReasonOverride = fmt::format("waiting on condition var 0x{:08x} (associated mutex 0x{:08x})",
+			MEMPTR<OSCond>(cond).GetMPTR(), MEMPTR<OSMutex>(mutex).GetMPTR());
+#endif
 		cond->threadQueue.queueAndWait(currentThread);
 		// reacquire mutex
 		OSLockMutexInternal(mutex);
@@ -400,6 +417,9 @@ namespace coreinit
 				semaphore->count = prevCount - 1;
 				return prevCount;
 			}
+#if defined(__ANDROID__)
+			g_watchdogWaitReasonOverride = fmt::format("waiting on semaphore 0x{:08x} (count=0)", MEMPTR<OSSemaphore>(semaphore).GetMPTR());
+#endif
 			semaphore->threadQueue.queueAndWait(OSGetCurrentThread());
 		}
 	}

@@ -1,6 +1,15 @@
 #pragma once
+#include <string>
 #include "Cafe/HW/Espresso/Const.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Scheduler.h"
+
+#if defined(__ANDROID__)
+// Set by a caller right before it puts the current PPC thread into a wait queue
+// (see OSThreadQueueInternal::queueAndWait) to give the watchdog a more specific
+// reason than just "waiting on queue <address>" - e.g. naming the mutex and its
+// current owner. queueAndWait consumes (clears) it after use.
+extern thread_local std::string g_watchdogWaitReasonOverride;
+#endif
 
 struct OSThread_t;
 
