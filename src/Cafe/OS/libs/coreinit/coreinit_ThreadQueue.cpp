@@ -1,6 +1,10 @@
 #include "Cafe/OS/common/OSCommon.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 namespace coreinit
 {
 
@@ -15,8 +19,23 @@ namespace coreinit
 		this->addThreadByPriority(thread, &thread->waitQueueLink);
 		cemu_assert_debug(thread->state == OSThread_t::THREAD_STATE::STATE_RUNNING);
 		thread->state = OSThread_t::THREAD_STATE::STATE_WAITING;
+#if defined(__ANDROID__)
+		// This is the single choke point every blocking wait in coreinit funnels through
+		// (mutex, semaphore, event, condition variable, message queue, thread join), and
+		// it's only hit when a real OS thread is about to go to sleep - never in a hot
+		// loop - so it's cheap to always report here. If the process ever freezes again,
+		// this tells us exactly which emulated PPC thread got stuck and on which wait
+		// queue, instead of just seeing "running emulated OSThread" with no further detail.
+		const char* threadNamePtr = thread->threadName.GetPtr();
+		Watchdog_SetThreadStatus(fmt::format("blocked: PPC thread \"{}\" (0x{:08x}) waiting on queue 0x{:08x}",
+			threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(thread).GetMPTR(), MEMPTR<void>(this).GetMPTR()));
+#endif
 		PPCCore_switchToSchedulerWithLock();
 		cemu_assert_debug(thread->state == OSThread_t::THREAD_STATE::STATE_RUNNING);
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus(fmt::format("running: PPC thread \"{}\" (0x{:08x}) resumed from wait",
+			threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(thread).GetMPTR()));
+#endif
 	}
 
 	void OSThreadQueueInternal::queueOnly(OSThread_t* thread)

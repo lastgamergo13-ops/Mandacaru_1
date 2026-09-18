@@ -581,6 +581,16 @@ namespace coreinit
 		PPCInterpreter_t* hCPU = PPCInterpreter_getCurrentInstance();
 		hCPU->gpr[3] = exitValue;
 		OSThread_t* currentThread = coreinit::OSGetCurrentThread();
+#if defined(__ANDROID__)
+		// rare event (once per thread lifetime) - safe to always log. If the game's boot
+		// thread exits before ever calling GX2Init(), this is how we'll know it was a
+		// deliberate exit rather than a hang.
+		{
+			const char* threadNamePtr = currentThread->threadName.GetPtr();
+			Watchdog_SetThreadStatus(fmt::format("exited: PPC thread \"{}\" (0x{:08x}) called OSExitThread({})",
+				threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(currentThread).GetMPTR(), exitValue));
+		}
+#endif
 
 		// thread cleanup callback
 		if (currentThread->cleanupCallback)
