@@ -16,6 +16,10 @@
 
 #include "Cafe/CafeSystem.h"
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 #include <boost/container/small_vector.hpp>
 
 void LatteCP_DebugPrintCmdBuffer(uint32be* bufferPtr, uint32 size);
@@ -936,6 +940,13 @@ LatteCMDPtr LatteCP_itHLERequestSwapBuffers(LatteCMDPtr cmd, uint32 nWords)
 	MPTR reserved1 = LatteReadCMD();
 	// request flip counter increase (will be increased on next flip)
 	LatteGPUState.flipRequestCount.fetch_add(1);
+#if defined(__ANDROID__)
+	// cheap, once-per-frame status update (NOT per draw call - that would flood the
+	// watchdog/log with thousands of updates per second). Lets us know exactly which
+	// frame the GPU thread was on if the process freezes.
+	static uint64 s_frameCounter = 0;
+	Watchdog_SetThreadStatus(fmt::format("GPU thread - processing frame {}", ++s_frameCounter));
+#endif
 	return cmd;
 }
 
@@ -1539,7 +1550,6 @@ void LatteCP_ProcessRingbuffer()
 			{
 				DrawPassContext drawPassCtx;
 				drawPassCtx.beginDrawPass();
-				cemuLog_log(LogType::Force, "[TopLevel] DrawIndex2");
 				LatteCP_itDrawIndex2(cmd, nWords, drawPassCtx);
 				drawPassCtx.endDrawPass();
 				timerRecheck += CP_TIMER_RECHECK / 64;
@@ -1549,7 +1559,6 @@ void LatteCP_ProcessRingbuffer()
 			{
 				DrawPassContext drawPassCtx;
 				drawPassCtx.beginDrawPass();
-				cemuLog_log(LogType::Force, "[TopLevel] DrawIndexAuto");
 				LatteCP_itDrawIndexAuto(cmd, nWords, drawPassCtx);
 				drawPassCtx.endDrawPass();
 				timerRecheck += CP_TIMER_RECHECK / 512;
@@ -1559,7 +1568,6 @@ void LatteCP_ProcessRingbuffer()
 			{
 				DrawPassContext drawPassCtx;
 				drawPassCtx.beginDrawPass();
-				cemuLog_log(LogType::Force, "[TopLevel] DrawIndexImm");
 				LatteCP_itDrawImmediate(cmd, nWords, drawPassCtx);
 				drawPassCtx.endDrawPass();
 				timerRecheck += CP_TIMER_RECHECK / 64;

@@ -8,6 +8,10 @@
 #pragma comment(lib, "ksuser.lib")
 #endif
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 
 static void state_cb(cubeb_stream* stream, void* user, cubeb_state state)
 {
@@ -34,6 +38,15 @@ long CubebAPI::data_cb(cubeb_stream* stream, void* user, const void* inputbuffer
 {
 	auto* thisptr = (CubebAPI*)user;
 	//const auto size = (size_t)thisptr->m_bytesPerBlock; // (size_t)nframes* thisptr->m_channels;
+
+#if defined(__ANDROID__)
+	// this callback runs on cubeb's own real-time audio thread and fires often (every
+	// ~10-20ms), so we only touch the watchdog roughly once a second to avoid adding
+	// mutex contention to a real-time-sensitive callback.
+	static thread_local uint32 s_callbackCounter = 0;
+	if ((++s_callbackCounter % 64) == 0)
+		Watchdog_SetThreadStatus("audio thread - cubeb data callback running");
+#endif
 
 	// m_bytesPerBlock = samples_per_block * channels * (bits_per_sample / 8);
 	const auto size = (size_t)nframes * thisptr->m_channels * (thisptr->m_bitsPerSample/8);

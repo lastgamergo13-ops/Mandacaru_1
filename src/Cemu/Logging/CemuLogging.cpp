@@ -175,7 +175,26 @@ void cemuLog_createLogFile(bool triggeredByCrash)
 
 void cemuLog_writeLineToLog(std::string_view text, bool date, bool new_line)
 {
+	// Safety cap: if whatever is producing log lines outpaces the writer thread
+	// (e.g. a runaway logging call sitting in a hot path, or slow storage), the
+	// queue below would otherwise grow without limit until the process is killed
+	// for using too much memory - silently, with no crash trace. Once the queue
+	// gets this full we start dropping new lines instead, and note how many were
+	// dropped once things catch up.
+	constexpr size_t kMaxQueuedLogLines = 20000;
+	static std::atomic<uint64> s_droppedLines = 0;
+
 	std::unique_lock lock(LogContext.log_mutex);
+
+	if (LogContext.text_cache.size() >= kMaxQueuedLogLines)
+	{
+		s_droppedLines.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+
+	uint64 droppedSinceLast = s_droppedLines.exchange(0, std::memory_order_relaxed);
+	if (droppedSinceLast > 0)
+		LogContext.text_cache.emplace_back(fmt::format("[Logging] {} log line(s) dropped because logging could not keep up\n", droppedSinceLast));
 
 	if (date)
 	{

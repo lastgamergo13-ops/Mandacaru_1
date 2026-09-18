@@ -19,6 +19,10 @@
 
 #include "Cafe/CafeSystem.h"
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 LatteGPUState_t LatteGPUState = {};
 
 std::atomic_bool sLatteThreadRunning = false;
@@ -115,13 +119,22 @@ void LatteThread_HandleOSScreen()
 int Latte_ThreadEntry()
 {
 	SetThreadName("LatteThread");
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - starting up");
+#endif
 	sint32 w,h;
 	WindowSystem::GetWindowPhysSize(w,h);
 
 	// renderer
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - initializing renderer");
+#endif
 	g_renderer->Initialize();
 	RendererOutputShader::InitializeStatic();
 
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - initializing texture/shader/buffer caches");
+#endif
 	LatteTiming_Init();
 	LatteTexture_init();
 	LatteTC_Init();
@@ -160,6 +173,9 @@ int Latte_ThreadEntry()
 		g_renderer->EnableDebugMode();
 
 	// wait till a game is started
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - waiting for title to start");
+#endif
 	while( true )
 	{
 		if( CafeSystem::IsTitleRunning() )
@@ -174,6 +190,9 @@ int Latte_ThreadEntry()
 	g_renderer->DrawEmptyFrame(true);
 
 	// before doing anything with game specific shaders, we need to wait for graphic packs to finish loading
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - waiting for graphic packs to finish loading");
+#endif
 	GraphicPack2::WaitUntilReady();
 	// if legacy packs are enabled we cannot use the colorbuffer resolution optimization
 	LatteGPUState.allowFramebufferSizeOptimization = true;
@@ -193,12 +212,18 @@ int Latte_ThreadEntry()
 		}
 	}
 	// load disk shader cache
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - loading disk shader cache");
+#endif
     LatteShaderCache_Load();
 	// init registers
 	Latte_LoadInitialRegisters();
 	// let CPU thread know the GPU is done initializing
 	g_isGPUInitFinished = true;
 	// wait until CPU has called GX2Init()
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - waiting for GX2Init()");
+#endif
 	while (LatteGPUState.gx2InitCalled == 0)
 	{
 		std::this_thread::yield();
@@ -207,6 +232,9 @@ int Latte_ThreadEntry()
 		if (Latte_GetStopSignal())
 			LatteThread_Exit();
 	}
+#if defined(__ANDROID__)
+	Watchdog_SetThreadStatus("GPU thread - processing command ringbuffer (main loop)");
+#endif
 	LatteCP_ProcessRingbuffer();
 	cemu_assert_debug(false); // should never reach
 	return 0;
