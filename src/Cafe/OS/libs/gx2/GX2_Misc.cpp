@@ -1,6 +1,10 @@
 #include "Cafe/HW/Latte/ISA/RegDefines.h"
 #include "Cafe/OS/common/OSCommon.h"
 #include "GX2.h"
+
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
 #include "config/CemuConfig.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Time.h"
 #include "config/ActiveSettings.h"
@@ -101,11 +105,22 @@ namespace GX2
 			cemuLog_logDebug(LogType::Force, "GX2Init() called while already initialized");
 			return;
 		}
+#if defined(__ANDROID__)
+		// GX2Init is only ever called once per title boot (or a handful of times at most),
+		// so it's safe to always trace every sub-step here. This is the CPU-side thread that
+		// eventually flips LatteGPUState.gx2InitCalled - if the process ever freezes again
+		// before that flag gets set, this tells us precisely which sub-step it got stuck in,
+		// instead of just seeing "running emulated OSThread" with no further detail.
+		Watchdog_SetThreadStatus("GX2Init: entry");
+#endif
 		// parse init params from the stream
 		MEMPTR<void> commandPoolBase = nullptr;
 		uint32 commandPoolSize = 0;
 		if (initArgStream)
 		{
+#if defined(__ANDROID__)
+			Watchdog_SetThreadStatus("GX2Init: parsing init args");
+#endif
 			while (true)
 			{
 				GX2InitArgId paramId = static_cast<GX2InitArgId>((GX2InitArg)*initArgStream);
@@ -142,11 +157,20 @@ namespace GX2
 		cemuLog_log(LogType::GX2, "GX2Init() on core {} by thread 0x{:08x}", coreIndex, MEMPTR<OSThread_t>(coreinit::OSGetCurrentThread()).GetMPTR());
 		sGX2MainCoreIndex = coreIndex;
 		// init submodules
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus("GX2Init: calling GX2Init_event()");
+#endif
 		GX2::GX2Init_event();
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus("GX2Init: calling GX2Init_commandBufferPool()");
+#endif
 		GX2::GX2Init_commandBufferPool(commandPoolBase, commandPoolSize);
 		// init shared area
 		if (LatteGPUState.sharedAreaAddr == MPTR_NULL)
 		{
+#if defined(__ANDROID__)
+			Watchdog_SetThreadStatus("GX2Init: allocating GPU shared area");
+#endif
 			LatteGPUState.sharedAreaAddr = coreinit_allocFromSysArea(sizeof(gx2GPUSharedArea_t), 0x20);
 			LatteGPUState.sharedArea = (gx2GPUSharedArea_t*)memory_getPointerFromVirtualOffset(LatteGPUState.sharedAreaAddr);
 		}
@@ -155,11 +179,20 @@ namespace GX2
 		LatteGPUState.sharedArea->flipExecuteCountBE = _swapEndianU32(0);
 		LatteGPUState.sharedArea->swapInterval = 1;
 		// init memory handling
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus("GX2Init: calling GX2MEMAllocatorsInit()");
+#endif
 		GX2::GX2MEMAllocatorsInit();
 		// let GPU know that GX2 is initialized
 		LatteGPUState.gx2InitCalled++;
 		// run tests
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus("GX2Init: running _test_AddrLib()");
+#endif
 		_test_AddrLib();
+#if defined(__ANDROID__)
+		Watchdog_SetThreadStatus("GX2Init: completed successfully");
+#endif
 	}
 
 	void GX2Shutdown()
