@@ -63,8 +63,25 @@ LatteTextureVk::LatteTextureVk(class VulkanRenderer* vkRenderer, Latte::E_DIM di
 	}
 	else
 	{
-		if(Latte::IsCompressedFormat(format) == false && texFormatInfo.vkImageFormat != VK_FORMAT_R4G4_UNORM_PACK8) // Vulkan's R4G4 cant be used as a color attachment
-			imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		// Not every format that Cemu maps GX2 surface formats to is guaranteed by the Vulkan
+		// spec to support being used as a color attachment (VK_FORMAT_R4G4_UNORM_PACK8 is a
+		// known example) - and some formats that ARE spec-optional for this (like
+		// VK_FORMAT_R8_UNORM) are outright unsupported as attachments on some real-world
+		// Android GPU drivers (observed on some Adreno devices: the driver accepts the image
+		// but then fails/hangs trying to actually back it with memory). Rather than hardcode
+		// a per-format exception list, ask the driver directly and only request the
+		// attachment usage bit when it's actually supported - this keeps regular sampled-only
+		// textures with formats like R8_UNORM working even where they can't be render targets.
+		if (Latte::IsCompressedFormat(format) == false)
+		{
+			VkFormatProperties fmtProp{};
+			vkGetPhysicalDeviceFormatProperties(m_vkr->GetPhysicalDevice(), texFormatInfo.vkImageFormat, &fmtProp);
+			bool supportsColorAttachment = (fmtProp.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0;
+			if (supportsColorAttachment)
+				imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+			else
+				cemuLog_log(LogType::Force, "Texture format {} does not support being used as a color attachment on this GPU/driver - creating as sampled-only texture instead", (uint32)texFormatInfo.vkImageFormat);
+		}
 	}
 
 	if (m_vkr->UseAttachmentFeedbackLoop() && (imageInfo.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0)
