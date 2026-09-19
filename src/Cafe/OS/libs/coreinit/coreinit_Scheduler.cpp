@@ -52,7 +52,7 @@ void __OSLockScheduler(void* obj)
 	sint32 newCount = s_schedulerLockCount.fetch_add(1, std::memory_order_acq_rel) + 1;
 	cemu_assert_debug(newCount <= 1); // >= 2 should not happen. Scheduler lock does not allow recursion
 #if defined(__ANDROID__)
-	Watchdog_MarkSchedulerLockAcquired();
+	Watchdog_MarkSchedulerLockAcquired(__builtin_return_address(0));
 #endif
 }
 
@@ -73,7 +73,7 @@ bool __OSTryLockScheduler(void* obj)
 	{
 		s_schedulerLockCount.fetch_add(1, std::memory_order_acq_rel);
 #if defined(__ANDROID__)
-		Watchdog_MarkSchedulerLockAcquired();
+		Watchdog_MarkSchedulerLockAcquired(__builtin_return_address(0));
 #endif
 		return true;
 	}

@@ -40,6 +40,12 @@ void Watchdog_SetLastHleCall(const char* lib, const char* func);
 // __OSLockScheduler again blocks forever. Called only from __OSLockScheduler/
 // __OSUnlockScheduler themselves, so the call frequency matches the lock's own
 // (high, but nowhere near the volume of raw HLE calls) - cheap atomic store, no lock.
-void Watchdog_MarkSchedulerLockAcquired();
+// callerAddr should be __builtin_return_address(0) from the call site - this makes the
+// tracking fully general: ANY call site anywhere in the native code that ever acquires
+// this lock is automatically identifiable in the watchdog heartbeat (best-effort
+// resolved to a library+symbol name via dladdr, always with the raw address as a
+// guaranteed fallback even when symbols are stripped) - no per-file instrumentation
+// needed to catch a leak, including from code nobody has looked at yet.
+void Watchdog_MarkSchedulerLockAcquired(void* callerAddr);
 void Watchdog_MarkSchedulerLockReleased();
 #endif

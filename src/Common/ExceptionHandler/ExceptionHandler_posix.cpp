@@ -25,6 +25,7 @@
 #include <vector>
 #include <mutex>
 #include <unordered_set>
+#include <dlfcn.h>
 #include <unordered_map>
 #include <thread>
 #include <chrono>
@@ -68,8 +69,37 @@ namespace
 	LastHleCallSlot s_lastHleCallSlots[kMaxLastHleCallSlots];
 
 	// tid of the real thread currently holding coreinit's global scheduler lock, or 0
-	// if it's free. See Watchdog_MarkSchedulerLockAcquired/Released in the header.
+	// if it's free, plus the raw return address it was acquired from (resolved
+	// best-effort at report time - see Watchdog_MarkSchedulerLockAcquired/Released).
 	std::atomic<pid_t> s_schedulerLockHolderTid{0};
+	std::atomic<void*> s_schedulerLockHolderAddr{nullptr};
+
+	// Best-effort resolves a code address to "libname!symbol+offset" via dladdr (works
+	// off the dynamic symbol table, so it degrades gracefully rather than failing
+	// outright on a release build where local/static symbols have been stripped) and
+	// always appends the raw address too, since that alone is still enough to locate the
+	// call site with addr2line/objdump against the matching unstripped .so from the build.
+	std::string ResolveCodeAddress(void* addr)
+	{
+		if (!addr)
+			return "(unknown)";
+		Dl_info info{};
+		if (dladdr(addr, &info) && info.dli_fname)
+		{
+			const char* libName = info.dli_fname;
+			// keep just the filename, the full path adds noise
+			if (const char* lastSlash = strrchr(libName, '/'))
+				libName = lastSlash + 1;
+			if (info.dli_sname)
+			{
+				uintptr_t offset = (uintptr_t)addr - (uintptr_t)info.dli_saddr;
+				return fmt::format("{}!{}+0x{:x} (0x{:x})", libName, boost::core::demangle(info.dli_sname), offset, (uintptr_t)addr);
+			}
+			uintptr_t offsetInLib = (uintptr_t)addr - (uintptr_t)info.dli_fbase;
+			return fmt::format("{}+0x{:x} (0x{:x})", libName, offsetInLib, (uintptr_t)addr);
+		}
+		return fmt::format("0x{:x}", (uintptr_t)addr);
+	}
 
 	// returns current resident set size in KB, or -1 if it couldn't be read
 	long AndroidReadCurrentRSSKb()
@@ -147,8 +177,15 @@ namespace
 					const char* func = s_lastHleCallSlots[i].func.load(std::memory_order_relaxed);
 					statusDump += fmt::format("\n    tid={} \"(untracked thread)\": [last HLE call: {}.{}]", tid, lib ? lib : "?", func ? func : "?");
 				}
-				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - scheduler lock held by: tid={} - tracked threads:{}",
-					rssKb > 0 ? rssKb / 1024 : -1, s_schedulerLockHolderTid.load(std::memory_order_relaxed), statusDump);
+				pid_t lockHolderTid = s_schedulerLockHolderTid.load(std::memory_order_relaxed);
+				std::string lockHolderDesc = "not held";
+				if (lockHolderTid != 0)
+				{
+					void* lockHolderAddr = s_schedulerLockHolderAddr.load(std::memory_order_relaxed);
+					lockHolderDesc = fmt::format("tid={}, acquired at {}", lockHolderTid, ResolveCodeAddress(lockHolderAddr));
+				}
+				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - scheduler lock: {} - tracked threads:{}",
+					rssKb > 0 ? rssKb / 1024 : -1, lockHolderDesc, statusDump);
 			}
 		}
 	}
@@ -205,14 +242,16 @@ void Watchdog_SetLastHleCall(const char* lib, const char* func)
 	s_lastHleCallSlots[s_cachedSlot].func.store(func, std::memory_order_relaxed);
 }
 
-void Watchdog_MarkSchedulerLockAcquired()
+void Watchdog_MarkSchedulerLockAcquired(void* callerAddr)
 {
 	s_schedulerLockHolderTid.store(gettid(), std::memory_order_relaxed);
+	s_schedulerLockHolderAddr.store(callerAddr, std::memory_order_relaxed);
 }
 
 void Watchdog_MarkSchedulerLockReleased()
 {
 	s_schedulerLockHolderTid.store(0, std::memory_order_relaxed);
+	s_schedulerLockHolderAddr.store(nullptr, std::memory_order_relaxed);
 }
 
 void Watchdog_ClearThreadStatus()
