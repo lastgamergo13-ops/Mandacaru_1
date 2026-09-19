@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <vector>
 #include <mutex>
+#include <unordered_set>
 #include <unordered_map>
 #include <thread>
 #include <chrono>
@@ -112,10 +113,12 @@ namespace
 			if ((iteration % 5) == 0) // ~every 15s
 			{
 				std::string statusDump;
+				std::unordered_set<pid_t> dumpedTids;
 				{
 					std::lock_guard lock(s_watchdogMutex);
 					for (auto& [tid, entry] : s_watchdogEntries)
 					{
+						dumpedTids.insert(tid);
 						std::string lastHle;
 						for (int i = 0; i < kMaxLastHleCallSlots; i++)
 						{
@@ -130,6 +133,19 @@ namespace
 						}
 						statusDump += fmt::format("\n    tid={} \"{}\": {}{}", tid, entry.threadName, entry.status.empty() ? "(idle)" : entry.status, lastHle);
 					}
+				}
+				// Some real threads (e.g. background loader/worker threads) make HLE calls
+				// but never call Watchdog_SetThreadStatus, so they'd otherwise be invisible
+				// here even while holding critical locks (like the scheduler lock above).
+				// Show them too, using only the lock-free last-HLE-call tracker.
+				for (int i = 0; i < kMaxLastHleCallSlots; i++)
+				{
+					pid_t tid = s_lastHleCallSlots[i].tid.load(std::memory_order_relaxed);
+					if (tid == 0 || dumpedTids.count(tid))
+						continue;
+					const char* lib = s_lastHleCallSlots[i].lib.load(std::memory_order_relaxed);
+					const char* func = s_lastHleCallSlots[i].func.load(std::memory_order_relaxed);
+					statusDump += fmt::format("\n    tid={} \"(untracked thread)\": [last HLE call: {}.{}]", tid, lib ? lib : "?", func ? func : "?");
 				}
 				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - scheduler lock held by: tid={} - tracked threads:{}",
 					rssKb > 0 ? rssKb / 1024 : -1, s_schedulerLockHolderTid.load(std::memory_order_relaxed), statusDump);
