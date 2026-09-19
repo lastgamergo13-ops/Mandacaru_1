@@ -3,6 +3,10 @@
 #include "Cafe/HW/Espresso/PPCState.h"
 #include "Cafe/HW/MMU/MMU.h"
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 #include <fmt/ostream.h>
 #include <fmt/compile.h>
 #include <fmt/ranges.h>
@@ -168,6 +172,9 @@ static auto cafeExportBuildFormatTuple(PPCInterpreter_t* hCPU, R(fn)(Args...))
 template<auto fn, typename TNames, LogType TLogType>
 void cafeExportCallWrapper(PPCInterpreter_t* hCPU)
 {
+#if defined(__ANDROID__)
+	Watchdog_SetLastHleCall(TNames::GetLib(), TNames::GetFunc());
+#endif
 	auto tup = cafeExportBuildArgTuple(hCPU, fn);
 	bool shouldLog = false;
 	if (cemuLog_isLoggingEnabled(TLogType))

@@ -49,6 +49,23 @@ namespace
 	std::unordered_map<pid_t, WatchdogEntry> s_watchdogEntries;
 	std::atomic_bool s_watchdogThreadStarted{false};
 
+	// Lightweight, lock-free "last HLE call made by this thread" tracker.
+	// cafeExportCallWrapper (see OSUtil.h) funnels through here on EVERY single
+	// HLE-exported function call - which can be an extremely hot path (potentially
+	// millions of calls/sec) - so unlike Watchdog_SetThreadStatus, this must never take
+	// a lock or allocate. Slots are claimed once per real thread (cached in a
+	// thread_local index afterwards) and updated with plain relaxed atomic stores of
+	// static string-literal pointers (lib/func names are always literals from
+	// cafeExportRegister, never freed) - cheap enough to call unconditionally.
+	struct LastHleCallSlot
+	{
+		std::atomic<pid_t> tid{0};
+		std::atomic<const char*> lib{nullptr};
+		std::atomic<const char*> func{nullptr};
+	};
+	constexpr int kMaxLastHleCallSlots = 64;
+	LastHleCallSlot s_lastHleCallSlots[kMaxLastHleCallSlots];
+
 	// returns current resident set size in KB, or -1 if it couldn't be read
 	long AndroidReadCurrentRSSKb()
 	{
@@ -94,7 +111,21 @@ namespace
 				{
 					std::lock_guard lock(s_watchdogMutex);
 					for (auto& [tid, entry] : s_watchdogEntries)
-						statusDump += fmt::format("\n    tid={} \"{}\": {}", tid, entry.threadName, entry.status.empty() ? "(idle)" : entry.status);
+					{
+						std::string lastHle;
+						for (int i = 0; i < kMaxLastHleCallSlots; i++)
+						{
+							if (s_lastHleCallSlots[i].tid.load(std::memory_order_relaxed) == tid)
+							{
+								const char* lib = s_lastHleCallSlots[i].lib.load(std::memory_order_relaxed);
+								const char* func = s_lastHleCallSlots[i].func.load(std::memory_order_relaxed);
+								if (lib && func)
+									lastHle = fmt::format(" [last HLE call: {}.{}]", lib, func);
+								break;
+							}
+						}
+						statusDump += fmt::format("\n    tid={} \"{}\": {}{}", tid, entry.threadName, entry.status.empty() ? "(idle)" : entry.status, lastHle);
+					}
 				}
 				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - tracked threads:{}", rssKb > 0 ? rssKb / 1024 : -1, statusDump);
 			}
@@ -124,6 +155,33 @@ void Watchdog_SetThreadStatus(std::string_view status)
 		entry.threadName = threadName;
 	}
 	entry.status = std::string(status);
+}
+
+void Watchdog_SetLastHleCall(const char* lib, const char* func)
+{
+	thread_local int s_cachedSlot = -1;
+	if (s_cachedSlot < 0)
+	{
+		pid_t tid = gettid();
+		for (int i = 0; i < kMaxLastHleCallSlots; i++)
+		{
+			pid_t expected = 0;
+			if (s_lastHleCallSlots[i].tid.load(std::memory_order_relaxed) == tid)
+			{
+				s_cachedSlot = i;
+				break;
+			}
+			if (s_lastHleCallSlots[i].tid.compare_exchange_strong(expected, tid, std::memory_order_relaxed))
+			{
+				s_cachedSlot = i;
+				break;
+			}
+		}
+		if (s_cachedSlot < 0)
+			return; // ran out of slots (should never happen - far more than our real thread count)
+	}
+	s_lastHleCallSlots[s_cachedSlot].lib.store(lib, std::memory_order_relaxed);
+	s_lastHleCallSlots[s_cachedSlot].func.store(func, std::memory_order_relaxed);
 }
 
 void Watchdog_ClearThreadStatus()

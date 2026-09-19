@@ -23,4 +23,12 @@ void ExceptionHandler_InstallAltStackForCurrentThread();
 // process dies without the normal signal handler running (freeze, OOM-kill, ANR).
 void Watchdog_SetThreadStatus(std::string_view status);
 void Watchdog_ClearThreadStatus();
+
+// Records the (library, function) name of the most recent HLE-exported call made by the
+// calling thread, using lock-free relaxed atomics only - safe to call unconditionally from
+// cafeExportCallWrapper (OSUtil.h), which is the single choke point every HLE call funnels
+// through and can fire millions of times/sec. Shows up in the watchdog heartbeat next to a
+// thread's status, so a thread stuck "running" with no coreinit-level wait recorded can still
+// be pinned down to whichever native function it last entered.
+void Watchdog_SetLastHleCall(const char* lib, const char* func);
 #endif
