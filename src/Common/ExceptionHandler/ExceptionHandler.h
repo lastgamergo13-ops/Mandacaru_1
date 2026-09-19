@@ -31,4 +31,15 @@ void Watchdog_ClearThreadStatus();
 // thread's status, so a thread stuck "running" with no coreinit-level wait recorded can still
 // be pinned down to whichever native function it last entered.
 void Watchdog_SetLastHleCall(const char* lib, const char* func);
+
+// Tracks which real thread currently holds coreinit's single global scheduler lock
+// (see coreinit_Scheduler.cpp / __OSLockScheduler). That lock is taken and released
+// constantly by nearly every coreinit synchronization primitive, and it being leaked
+// (acquired but never released, e.g. by an unbalanced early-return somewhere) would
+// freeze the ENTIRE emulated OS permanently - every other thread that ever calls
+// __OSLockScheduler again blocks forever. Called only from __OSLockScheduler/
+// __OSUnlockScheduler themselves, so the call frequency matches the lock's own
+// (high, but nowhere near the volume of raw HLE calls) - cheap atomic store, no lock.
+void Watchdog_MarkSchedulerLockAcquired();
+void Watchdog_MarkSchedulerLockReleased();
 #endif

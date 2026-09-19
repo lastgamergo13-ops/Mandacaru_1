@@ -66,6 +66,10 @@ namespace
 	constexpr int kMaxLastHleCallSlots = 64;
 	LastHleCallSlot s_lastHleCallSlots[kMaxLastHleCallSlots];
 
+	// tid of the real thread currently holding coreinit's global scheduler lock, or 0
+	// if it's free. See Watchdog_MarkSchedulerLockAcquired/Released in the header.
+	std::atomic<pid_t> s_schedulerLockHolderTid{0};
+
 	// returns current resident set size in KB, or -1 if it couldn't be read
 	long AndroidReadCurrentRSSKb()
 	{
@@ -127,7 +131,8 @@ namespace
 						statusDump += fmt::format("\n    tid={} \"{}\": {}{}", tid, entry.threadName, entry.status.empty() ? "(idle)" : entry.status, lastHle);
 					}
 				}
-				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - tracked threads:{}", rssKb > 0 ? rssKb / 1024 : -1, statusDump);
+				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - scheduler lock held by: tid={} - tracked threads:{}",
+					rssKb > 0 ? rssKb / 1024 : -1, s_schedulerLockHolderTid.load(std::memory_order_relaxed), statusDump);
 			}
 		}
 	}
@@ -182,6 +187,16 @@ void Watchdog_SetLastHleCall(const char* lib, const char* func)
 	}
 	s_lastHleCallSlots[s_cachedSlot].lib.store(lib, std::memory_order_relaxed);
 	s_lastHleCallSlots[s_cachedSlot].func.store(func, std::memory_order_relaxed);
+}
+
+void Watchdog_MarkSchedulerLockAcquired()
+{
+	s_schedulerLockHolderTid.store(gettid(), std::memory_order_relaxed);
+}
+
+void Watchdog_MarkSchedulerLockReleased()
+{
+	s_schedulerLockHolderTid.store(0, std::memory_order_relaxed);
 }
 
 void Watchdog_ClearThreadStatus()

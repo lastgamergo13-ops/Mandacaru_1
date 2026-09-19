@@ -2,6 +2,10 @@
 #include "coreinit_Scheduler.h"
 #include <atomic>
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 // NOTE: this used to be `thread_local`, and on non-Android platforms the lock
 // primitive used to be a plain pthread_mutex_t / CRITICAL_SECTION. Both of
 // those choices silently assumed that __OSLockScheduler() and the matching
@@ -47,6 +51,9 @@ void __OSLockScheduler(void* obj)
 #endif
 	sint32 newCount = s_schedulerLockCount.fetch_add(1, std::memory_order_acq_rel) + 1;
 	cemu_assert_debug(newCount <= 1); // >= 2 should not happen. Scheduler lock does not allow recursion
+#if defined(__ANDROID__)
+	Watchdog_MarkSchedulerLockAcquired();
+#endif
 }
 
 bool __OSHasSchedulerLock()
@@ -65,6 +72,9 @@ bool __OSTryLockScheduler(void* obj)
 	if (r)
 	{
 		s_schedulerLockCount.fetch_add(1, std::memory_order_acq_rel);
+#if defined(__ANDROID__)
+		Watchdog_MarkSchedulerLockAcquired();
+#endif
 		return true;
 	}
 	return false;
@@ -74,6 +84,9 @@ void __OSUnlockScheduler(void* obj)
 {
 	sint32 newCount = s_schedulerLockCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
 	cemu_assert_debug(newCount >= 0);
+#if defined(__ANDROID__)
+	Watchdog_MarkSchedulerLockReleased();
+#endif
 #if BOOST_OS_WINDOWS
 	ReleaseSemaphore(s_semSchedulerLock, 1, nullptr);
 #else

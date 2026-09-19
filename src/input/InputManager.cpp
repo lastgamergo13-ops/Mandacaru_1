@@ -87,7 +87,21 @@ bool InputManager::load(size_t player_index, std::string_view filename)
 		migrate_config(old_file);
 
 	if (!fs::exists(file_path))
+	{
+		// No saved profile for this player yet (fresh install, or after switching
+		// builds/versions where the config folder didn't carry over). Without this,
+		// every player slot silently defaults to Disabled and has to be re-enabled by
+		// hand in the controller settings every single time. Player 1 is what almost
+		// everyone actually wants active out of the box, so default it to the Wii U
+		// GamePad (VPAD) instead of leaving it disabled - other player slots and named
+		// custom profiles are untouched.
+		if (filename.empty() && player_index == 0)
+		{
+			set_controller(player_index, EmulatedController::Type::VPAD);
+			return true;
+		}
 		return false;
+	}
 
 	try
 	{
