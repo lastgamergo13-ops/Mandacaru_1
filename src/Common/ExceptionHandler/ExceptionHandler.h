@@ -48,4 +48,11 @@ void Watchdog_SetLastHleCall(const char* lib, const char* func);
 // needed to catch a leak, including from code nobody has looked at yet.
 void Watchdog_MarkSchedulerLockAcquired(void* callerAddr);
 void Watchdog_MarkSchedulerLockReleased();
+
+// Forces an immediate diagnostic dump (same content as the periodic heartbeat: RSS,
+// scheduler lock holder, every tracked/untracked thread's status and last HLE call) to
+// the log right now, labeled with the given reason. Used when __OSLockScheduler detects
+// it's been waiting far longer than any legitimate contention could explain, right before
+// it forcibly recovers the lock - see the big comment on that in coreinit_Scheduler.cpp.
+void Watchdog_DumpDiagnosticsNow(std::string_view label);
 #endif

@@ -121,6 +121,59 @@ namespace
 		return rssKb;
 	}
 
+	// Builds and logs the same diagnostic dump used by the periodic heartbeat (RSS,
+	// scheduler lock holder, every tracked/untracked thread's status and last HLE call).
+	// label distinguishes what triggered this particular dump in the log (e.g. the
+	// regular 15s heartbeat vs. a forced scheduler-lock-timeout recovery).
+	void DumpWatchdogDiagnostics(std::string_view label)
+	{
+		long rssKb = AndroidReadCurrentRSSKb();
+		std::string statusDump;
+		std::unordered_set<pid_t> dumpedTids;
+		{
+			std::lock_guard lock(s_watchdogMutex);
+			for (auto& [tid, entry] : s_watchdogEntries)
+			{
+				dumpedTids.insert(tid);
+				std::string lastHle;
+				for (int i = 0; i < kMaxLastHleCallSlots; i++)
+				{
+					if (s_lastHleCallSlots[i].tid.load(std::memory_order_relaxed) == tid)
+					{
+						const char* lib = s_lastHleCallSlots[i].lib.load(std::memory_order_relaxed);
+						const char* func = s_lastHleCallSlots[i].func.load(std::memory_order_relaxed);
+						if (lib && func)
+							lastHle = fmt::format(" [last HLE call: {}.{}]", lib, func);
+						break;
+					}
+				}
+				statusDump += fmt::format("\n    tid={} \"{}\": {}{}", tid, entry.threadName, entry.status.empty() ? "(idle)" : entry.status, lastHle);
+			}
+		}
+		// Some real threads (e.g. background loader/worker threads) make HLE calls
+		// but never call Watchdog_SetThreadStatus, so they'd otherwise be invisible
+		// here even while holding critical locks (like the scheduler lock above).
+		// Show them too, using only the lock-free last-HLE-call tracker.
+		for (int i = 0; i < kMaxLastHleCallSlots; i++)
+		{
+			pid_t tid = s_lastHleCallSlots[i].tid.load(std::memory_order_relaxed);
+			if (tid == 0 || dumpedTids.count(tid))
+				continue;
+			const char* lib = s_lastHleCallSlots[i].lib.load(std::memory_order_relaxed);
+			const char* func = s_lastHleCallSlots[i].func.load(std::memory_order_relaxed);
+			statusDump += fmt::format("\n    tid={} \"(untracked thread)\": [last HLE call: {}.{}]", tid, lib ? lib : "?", func ? func : "?");
+		}
+		pid_t lockHolderTid = s_schedulerLockHolderTid.load(std::memory_order_relaxed);
+		std::string lockHolderDesc = "not held";
+		if (lockHolderTid != 0)
+		{
+			void* lockHolderAddr = s_schedulerLockHolderAddr.load(std::memory_order_relaxed);
+			lockHolderDesc = fmt::format("tid={}, acquired at {}", lockHolderTid, ResolveCodeAddress(lockHolderAddr));
+		}
+		cemuLog_log(LogType::Force, "[Watchdog] {} - RSS: {}MB - scheduler lock: {} - tracked threads:{}",
+			label, rssKb > 0 ? rssKb / 1024 : -1, lockHolderDesc, statusDump);
+	}
+
 	void WatchdogThreadFunc()
 	{
 		long lastRssKb = -1;
@@ -141,52 +194,7 @@ namespace
 
 			iteration++;
 			if ((iteration % 5) == 0) // ~every 15s
-			{
-				std::string statusDump;
-				std::unordered_set<pid_t> dumpedTids;
-				{
-					std::lock_guard lock(s_watchdogMutex);
-					for (auto& [tid, entry] : s_watchdogEntries)
-					{
-						dumpedTids.insert(tid);
-						std::string lastHle;
-						for (int i = 0; i < kMaxLastHleCallSlots; i++)
-						{
-							if (s_lastHleCallSlots[i].tid.load(std::memory_order_relaxed) == tid)
-							{
-								const char* lib = s_lastHleCallSlots[i].lib.load(std::memory_order_relaxed);
-								const char* func = s_lastHleCallSlots[i].func.load(std::memory_order_relaxed);
-								if (lib && func)
-									lastHle = fmt::format(" [last HLE call: {}.{}]", lib, func);
-								break;
-							}
-						}
-						statusDump += fmt::format("\n    tid={} \"{}\": {}{}", tid, entry.threadName, entry.status.empty() ? "(idle)" : entry.status, lastHle);
-					}
-				}
-				// Some real threads (e.g. background loader/worker threads) make HLE calls
-				// but never call Watchdog_SetThreadStatus, so they'd otherwise be invisible
-				// here even while holding critical locks (like the scheduler lock above).
-				// Show them too, using only the lock-free last-HLE-call tracker.
-				for (int i = 0; i < kMaxLastHleCallSlots; i++)
-				{
-					pid_t tid = s_lastHleCallSlots[i].tid.load(std::memory_order_relaxed);
-					if (tid == 0 || dumpedTids.count(tid))
-						continue;
-					const char* lib = s_lastHleCallSlots[i].lib.load(std::memory_order_relaxed);
-					const char* func = s_lastHleCallSlots[i].func.load(std::memory_order_relaxed);
-					statusDump += fmt::format("\n    tid={} \"(untracked thread)\": [last HLE call: {}.{}]", tid, lib ? lib : "?", func ? func : "?");
-				}
-				pid_t lockHolderTid = s_schedulerLockHolderTid.load(std::memory_order_relaxed);
-				std::string lockHolderDesc = "not held";
-				if (lockHolderTid != 0)
-				{
-					void* lockHolderAddr = s_schedulerLockHolderAddr.load(std::memory_order_relaxed);
-					lockHolderDesc = fmt::format("tid={}, acquired at {}", lockHolderTid, ResolveCodeAddress(lockHolderAddr));
-				}
-				cemuLog_log(LogType::Force, "[Watchdog] heartbeat - RSS: {}MB - scheduler lock: {} - tracked threads:{}",
-					rssKb > 0 ? rssKb / 1024 : -1, lockHolderDesc, statusDump);
-			}
+				DumpWatchdogDiagnostics("heartbeat");
 		}
 	}
 
@@ -252,6 +260,12 @@ void Watchdog_MarkSchedulerLockReleased()
 {
 	s_schedulerLockHolderTid.store(0, std::memory_order_relaxed);
 	s_schedulerLockHolderAddr.store(nullptr, std::memory_order_relaxed);
+}
+
+void Watchdog_DumpDiagnosticsNow(std::string_view label)
+{
+	EnsureWatchdogThreadStarted();
+	DumpWatchdogDiagnostics(label);
 }
 
 void Watchdog_ClearThreadStatus()

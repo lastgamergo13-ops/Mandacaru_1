@@ -34,6 +34,7 @@ HANDLE s_semSchedulerLock;
 struct SchedulerLockWinInit { SchedulerLockWinInit() { s_semSchedulerLock = CreateSemaphoreA(nullptr, 1, 1, nullptr); } } s_schedulerLockWinInit;
 #else
 #include <semaphore.h>
+#include <time.h>
 // Binary semaphore instead of pthread_mutex_t: semaphores have no concept of
 // thread ownership, so sem_post() from a different thread than the one that
 // called sem_wait() is well-defined (unlike pthread_mutex_unlock() from a
@@ -46,6 +47,44 @@ void __OSLockScheduler(void* obj)
 {
 #if BOOST_OS_WINDOWS
 	WaitForSingleObject(s_semSchedulerLock, INFINITE);
+#elif defined(__ANDROID__)
+	// See the big comment block above this file's includes, and the extensive
+	// investigation that led here: a real OS thread standing in for a Fiber can, in rare
+	// cases, become permanently orphaned by the scheduler while it holds this exact lock
+	// (inside __OSThreadSwitchToNext -> Fiber::Switch, if that thread's fiber is never
+	// scheduled again) - which freezes the entire emulated OS forever, since literally
+	// every other thread that ever needs this lock then blocks here indefinitely with no
+	// way to recover. This is a known, currently-unfixed limitation of the (very early
+	// alpha) Android fiber-as-real-thread implementation this codebase is derived from -
+	// we have not been able to identify why a specific thread's fiber sometimes never
+	// gets rescheduled again.
+	//
+	// Legitimate contention on this lock is measured in microseconds (it's only ever held
+	// for the duration of a scheduling decision), so waiting multiple seconds for it is
+	// already certain proof something has gone wrong - there is no legitimate scenario
+	// where a well-behaved caller holds it that long. Rather than hang forever in that
+	// case, wait with a generous timeout, and if we hit it: log full diagnostics (which
+	// thread holds it and from where, plus every other tracked thread's state) and then
+	// forcibly post the semaphore ourselves to break the deadlock, so the game can keep
+	// running instead of staying frozen forever and requiring a force-close.
+	//
+	// This does NOT fix the underlying bug, and forcing the semaphore back to available
+	// while the original orphaned thread still technically "holds" it is not fully safe:
+	// if that thread ever does wake up later and calls __OSUnlockScheduler() itself as it
+	// originally intended to, the semaphore gets posted an extra time, which briefly lets
+	// two threads both believe they hold the lock. That is a real but narrow risk being
+	// accepted deliberately here: a rare extra glitch or inconsistency is a far better
+	// outcome than a guaranteed, unrecoverable freeze.
+	timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 8;
+	while (sem_timedwait(&s_semSchedulerLock, &ts) != 0)
+	{
+		Watchdog_DumpDiagnosticsNow("scheduler lock wait timed out after 8s - forcing recovery");
+		sem_post(&s_semSchedulerLock);
+		clock_gettime(CLOCK_REALTIME, &ts);
+		ts.tv_sec += 8;
+	}
 #else
 	sem_wait(&s_semSchedulerLock);
 #endif
