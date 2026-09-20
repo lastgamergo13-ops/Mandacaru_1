@@ -834,10 +834,38 @@ namespace coreinit
 			thread->suspendCounter = 0;
 		if (thread->suspendCounter == 0)
 		{
-			__OSAddReadyThreadToRunQueue(thread);
-			// set awakened time if thread is ready
-			// todo - only set this once?
-			thread->wakeUpTime = PPCInterpreter_getMainCoreCycleCounter();
+			// __OSSuspendThreadInternal(), when called for a thread other than the caller
+			// (see its own comment - "todo: if thread is still running find a way to cancel
+			// it's timeslice immediately"), only marks the thread as suspended; it does NOT
+			// actually stop it if the thread happens to be the one CURRENTLY, ACTIVELY
+			// running right now on its own real pthread - that thread keeps running
+			// completely normally until it naturally reaches its own next reschedule point.
+			// This is used from the Android UI thread when the render surface is
+			// destroyed/recreated (see SuspendActiveThreads/ResumeActiveThreads in
+			// CafeSystem.cpp, triggered by opening/leaving a title), so a fast enough
+			// suspend+resume pair (a quick surface destroy immediately followed by a
+			// recreate) can land here for a thread that was suspended while running and
+			// has STILL not had a chance to naturally yield since - i.e. it's still
+			// STATE_RUNNING, was never actually removed from execution, and was never
+			// added to any run queue in the first place (__OSRemoveThreadFromRunQueues is a
+			// no-op for a thread that isn't currently queued).
+			// Calling __OSAddReadyThreadToRunQueue() on it here anyway would double-book
+			// it: it would still be genuinely, physically running on its own real pthread
+			// while SIMULTANEOUSLY sitting in the run queue as "ready to be scheduled" -
+			// and __OSGetNextRunableThread() picking it later would then try to
+			// Fiber::Switch() into a fiber that's already active, desynchronizing the
+			// per-fiber semaphore handoff (see FiberUnix.cpp) and permanently orphaning
+			// whichever real thread loses that race - the exact class of "some thread never
+			// gets scheduled again while holding the scheduler lock" freeze this whole
+			// investigation has been chasing. If the thread never actually stopped, there
+			// is nothing to add back to the run queue - it just keeps running.
+			if (thread->state != OSThread_t::THREAD_STATE::STATE_RUNNING)
+			{
+				__OSAddReadyThreadToRunQueue(thread);
+				// set awakened time if thread is ready
+				// todo - only set this once?
+				thread->wakeUpTime = PPCInterpreter_getMainCoreCycleCounter();
+			}
 			// reschedule if thread has higher priority
 			if (PPCInterpreter_getCurrentInstance() && __OSCoreShouldSwitchToThread(coreinit::OSGetCurrentThread(), thread, false))
 				PPCCore_switchToSchedulerWithLock();
