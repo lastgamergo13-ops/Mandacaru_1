@@ -2,6 +2,7 @@
 #include "Cafe/OS/libs/snd_core/ax_internal.h"
 #include "Cafe/HW/MMU/MMU.h"
 #include "config/ActiveSettings.h"
+#include "config/CemuConfig.h"
 
 void mic_updateOnAXFrame();
 
@@ -593,6 +594,15 @@ namespace snd_core
 	{
 		uint32 srcFilterMode = _swapEndianU16(internalShadowCopy->srcFilterMode);
 		uint16 format = _swapEndianU16(internalShadowCopy->internalOffsets.format);
+
+		// "Fast Audio Resampling" (Android: Experimental / Hackers). When enabled, every voice is
+		// decoded via nearest-neighbor sample fetching (AX_FILTER_MODE_NONE, the cheapest of the
+		// three decode paths below - no interpolation math per sample) instead of whatever mode the
+		// game actually requested, trading resampling fidelity for CPU headroom on the audio thread.
+		// This only changes which decode routine is picked for THIS call; internalShadowCopy->
+		// srcFilterMode itself (the value the game set and can rely on) is left untouched.
+		if (srcFilterMode != AX_FILTER_MODE_NONE && GetConfig().fast_audio_resampling.GetValue())
+			srcFilterMode = AX_FILTER_MODE_NONE;
 
 		if (srcFilterMode == AX_FILTER_MODE_TAP)
 		{

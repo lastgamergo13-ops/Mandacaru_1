@@ -8,6 +8,7 @@
 #endif
 #include "PPCFunctionBoundaryTracker.h"
 #include "PPCRecompiler.h"
+#include "PPCRecompilerCache.h"
 #include "PPCRecompilerIml.h"
 #include "util/containers/RangeStore.h"
 #include "Cafe/OS/libs/coreinit/coreinit_CodeGen.h"
@@ -499,9 +500,20 @@ void PPCRecompiler_recompileAtAddress(uint32 address)
 	s_ppcRecompilerState.recompilerSpinlock.unlock();
 
 	std::vector<std::pair<MPTR, uint32>> functionEntryPoints;
-	PPCRecFunction_t* func = PPCRecompiler_recompileFunction(range, entryAddresses, functionEntryPoints, funcBoundaries);
+
+	// try to reuse a previously compiled function from the on-disk AOT cache before paying
+	// for a full recompile (see PPCRecompilerCache.h for the safety details - relocations
+	// are always re-patched for this run before a cached function is ever used)
+	bool loadedFromCache = false;
+	PPCRecFunction_t* func = PPCRecompilerCache_TryLoad(range, functionEntryPoints);
+	if (func)
+		loadedFromCache = true;
+	else
+		func = PPCRecompiler_recompileFunction(range, entryAddresses, functionEntryPoints, funcBoundaries);
 	if (!func)
 		return; // recompilation failed
+	if (!loadedFromCache)
+		PPCRecompilerCache_Store(func, functionEntryPoints);
 	PPCRecompiler_makeRecompiledFunctionActive(address, range, func, functionEntryPoints);
 }
 

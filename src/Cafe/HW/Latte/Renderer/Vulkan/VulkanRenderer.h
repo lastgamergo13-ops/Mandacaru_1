@@ -20,6 +20,17 @@ struct VkSupportedFormatInfo_t
 	bool fmt_r5g6b5_unorm_pack{};
 	bool fmt_r4g4b4a4_unorm_pack{};
 	bool fmt_a1r5g5b5_unorm_pack{};
+	// Native BC1-BC5/S3TC support (common on desktop GPUs, often absent on Android) and
+	// ETC2/EAC support (the reverse: mandatory on Android since GLES 3.0-class GPUs,
+	// essentially never present on desktop) - used to pick between native BC passthrough,
+	// ETC2/EAC recompression (see LatteTextureETC1Encoder.h, opt-in per format), or
+	// falling back to fully uncompressed RGBA.
+	bool fmt_bc1{};
+	bool fmt_bc2{};
+	bool fmt_bc3{};
+	bool fmt_bc4{};
+	bool fmt_bc5{};
+	bool fmt_etc2{};
 };
 
 struct VkDescriptorSetInfo

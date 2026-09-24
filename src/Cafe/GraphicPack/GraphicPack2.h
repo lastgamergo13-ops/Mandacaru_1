@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_set>
+
 #include "util/helpers/helpers.h"
 #include "Cemu/ExpressionParser/ExpressionParser.h"
 #include "Cafe/TitleList/TitleInfo.h"
@@ -280,12 +282,22 @@ private:
 	bool ParseCemuPatchesTxtInternal(MemStreamReader& patchesStream);
 	void CancelParsingPatches();
 
-	void ApplyPatchGroups(std::vector<PatchGroup*>& groups, const RPLModule* rpl);
+	void ApplyPatchGroups(std::vector<PatchGroup*>& groups, const RPLModule* rpl, std::vector<std::string>* out_unresolvedSymbols = nullptr);
 	void UndoPatchGroups(std::vector<PatchGroup*>& groups, const RPLModule* rpl);
 
 	void AddPatchGroup(PatchGroup* group);
 	sint32 GetLengthWithoutComment(const char* str, size_t length);
 	void LogPatchesSyntaxError(sint32 lineNumber, std::string_view errorMsg);
+
+	// Finds the sibling PatchGroup (within this same pack) that defines symbolName, if
+	// any - used by ApplyPatchGroupWithDependencies to auto-include whatever a cheat
+	// needs from another group in the same pack.
+	PatchGroup* FindPatchGroupDefiningSymbol(const std::string& symbolName);
+
+	// Reverts a single patch group across every currently loaded module it applies to,
+	// without touching any other group. The public, dependency-aware entry points below
+	// are built on top of this.
+	bool RevertPatchGroup(PatchGroup* group);
 
 	std::vector<PatchGroup*> list_patchGroups;
 	
@@ -293,6 +305,14 @@ private:
 
 	static std::recursive_mutex mtx_patches;
 	static std::vector<const RPLModule*> list_modules;
+
+	// In-game Cheats manager bookkeeping (see ApplyPatchGroupWithDependencies /
+	// RevertPatchGroupAndOrphanedDependencies): which groups the user turned on
+	// directly, which groups were pulled in only as a dependency of some other group,
+	// and how many currently-on groups still need each dependency.
+	std::unordered_set<PatchGroup*> m_userRequestedGroups;
+	std::unordered_map<PatchGroup*, std::vector<PatchGroup*>> m_groupDependencies;
+	std::unordered_map<PatchGroup*, sint32> m_dependencyRefCount;
 
 public:
 	static std::vector<std::pair<MPTR, MPTR>> GetActiveRAMMappings();
@@ -302,6 +322,23 @@ public:
 	const std::vector<PatchGroup*>& GetPatchGroups();
 	void ApplyPatchesForModule(const RPLModule* rpl);
 	void RevertPatchesForModule(const RPLModule* rpl);
+
+	// Applies a single cheat (patch group) independently of the rest of this pack,
+	// without needing to restart the game - used by the in-game Cheats manager.
+	// If the group references a symbol defined by a sibling group in the same pack that
+	// isn't currently applied, that sibling is automatically applied alongside it first
+	// (recorded as a dependency, not as something the user asked for directly - see
+	// RevertPatchGroupAndOrphanedDependencies). Returns false if the group - and its
+	// discoverable dependencies - still couldn't be resolved (e.g. a genuinely missing
+	// or cyclic reference); this is a clean, already-handled failure (the existing
+	// resolver's own error reporting), not a crash or silent corruption.
+	bool ApplyPatchGroupWithDependencies(PatchGroup* group);
+
+	// Reverts a cheat the user turned on via ApplyPatchGroupWithDependencies. Also
+	// releases any dependency group that was only auto-applied for this one's sake and
+	// that nothing else currently needs - but leaves a dependency alone if the user also
+	// separately turned it on directly, or if another still-active cheat still needs it.
+	bool RevertPatchGroupAndOrphanedDependencies(PatchGroup* group);
 
 	static void NotifyModuleLoaded(const RPLModule* rpl);
 	static void NotifyModuleUnloaded(const RPLModule* rpl);

@@ -1,9 +1,11 @@
+#include <algorithm>
 #include "Cafe/OS/common/OSCommon.h"
 #include "WindowSystem.h"
 #include "Cafe/OS/libs/gx2/GX2.h"
 #include "Cafe/GameProfile/GameProfile.h"
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
+#include "Cafe/HW/Espresso/Recompiler/PPCRecompilerCache.h"
 #include "Cafe/HW/Espresso/Debugger/Debugger.h"
 #include "Cafe/OS/RPL/rpl_symbol_storage.h"
 #include "audio/IAudioAPI.h"
@@ -376,9 +378,27 @@ void cemu_initForGame()
 	// input manager apply game profile
 	InputManager::instance().apply_game_profile();
 	// determine cycle offset since 1.1.2000
-	uint64 secondsSince2000_UTC = (uint64)(time(NULL) - 946684800);
+	// See CemuConfig::rtc_use_system_time/rtc_custom_timestamp. "wallClockNow" replaces the
+	// direct time(NULL) calls this used to have - it's either the real current time (default,
+	// exactly as before) or the user's chosen custom time. Everything below is unchanged: this
+	// is read once, here, at the start of the game - the in-game clock then advances normally
+	// from this starting point via the CPU cycle counter (PPCTimer_start()), the same way it
+	// already did when this always came from time(NULL).
+	time_t wallClockNow = time(NULL);
+	if (!GetConfig().rtc_use_system_time.GetValue())
+	{
+		// Clamp to the Wii U's valid range: its clock epoch is 2000-01-01 (946684800), so earlier
+		// dates aren't representable and would otherwise underflow the unsigned cycle counts
+		// below into a huge, bogus value. The upper bound avoids overflowing the uint64 cycle
+		// counters at the other end (irrelevant for any realistic date, but cheap to guard).
+		constexpr sint64 kWiiUEpoch = 946684800; // 2000-01-01 00:00:00 UTC
+		constexpr sint64 kMaxTimestamp = 4102444800; // 2100-01-01 00:00:00 UTC
+		sint64 customTimestamp = std::clamp(GetConfig().rtc_custom_timestamp.GetValue(), kWiiUEpoch, kMaxTimestamp);
+		wallClockNow = (time_t)customTimestamp;
+	}
+	uint64 secondsSince2000_UTC = (uint64)(wallClockNow - 946684800);
 	ppcCyclesSince2000_UTC = secondsSince2000_UTC * (uint64)ESPRESSO_CORE_CLOCK;
-	time_t theTime = (time(NULL) - 946684800);
+	time_t theTime = (time_t)(wallClockNow - 946684800);
 	{
 		tm* lt = localtime(&theTime);
 #if BOOST_OS_WINDOWS
@@ -837,6 +857,7 @@ namespace CafeSystem
 		// setup memory space and PPC recompiler
         SetupMemorySpace();
         PPCRecompiler_init();
+        PPCRecompilerCache_Load(titleId);
 		r = PrepareExecutable(); // load RPX
 		if (r != PREPARE_STATUS_CODE::SUCCESS)
 			return r;
@@ -881,6 +902,7 @@ namespace CafeSystem
 		// setup memory space and ppc recompiler
         SetupMemorySpace();
         PPCRecompiler_init();
+        PPCRecompilerCache_Load(sForegroundTitleId);
         // load executable
         PrepareExecutable();
 		InitVirtualMlcStorage();
@@ -1072,6 +1094,7 @@ namespace CafeSystem
 		for(auto it = s_iosuModules.rbegin(); it != s_iosuModules.rend(); ++it)
 			(*it)->TitleStop();
         // reset Cemu subsystems
+        PPCRecompilerCache_Unload();
         PPCRecompiler_Shutdown();
         GraphicPack2::Reset();
         UnmountCurrentTitle();

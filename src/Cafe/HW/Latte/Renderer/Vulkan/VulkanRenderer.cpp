@@ -2026,6 +2026,35 @@ void VulkanRenderer::QueryAvailableFormats()
 	{
 		m_supportedFormatInfo.fmt_a1r5g5b5_unorm_pack = true;
 	}
+	// BC1-BC5 (S3TC/RGTC) native support - common on desktop, often absent on Android
+	fmtProp = {};
+	vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, &fmtProp);
+	if (fmtProp.optimalTilingFeatures != 0)
+		m_supportedFormatInfo.fmt_bc1 = true;
+	fmtProp = {};
+	vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_BC2_UNORM_BLOCK, &fmtProp);
+	if (fmtProp.optimalTilingFeatures != 0)
+		m_supportedFormatInfo.fmt_bc2 = true;
+	fmtProp = {};
+	vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_BC3_UNORM_BLOCK, &fmtProp);
+	if (fmtProp.optimalTilingFeatures != 0)
+		m_supportedFormatInfo.fmt_bc3 = true;
+	fmtProp = {};
+	vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_BC4_UNORM_BLOCK, &fmtProp);
+	if (fmtProp.optimalTilingFeatures != 0)
+		m_supportedFormatInfo.fmt_bc4 = true;
+	fmtProp = {};
+	vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_BC5_UNORM_BLOCK, &fmtProp);
+	if (fmtProp.optimalTilingFeatures != 0)
+		m_supportedFormatInfo.fmt_bc5 = true;
+	// ETC2/EAC support - mandatory on Android since GLES 3.0-class GPUs, essentially
+	// never present on desktop. Used as the Android-friendly recompression target for
+	// BC1-BC5 when the option is enabled and native BC support is absent (see
+	// GetTextureFormatInfoVK and LatteTextureETC1Encoder.h).
+	fmtProp = {};
+	vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK, &fmtProp);
+	if (fmtProp.optimalTilingFeatures != 0)
+		m_supportedFormatInfo.fmt_etc2 = true;
 	// print info about unsupported formats to log
 	for (auto& it : requestedFormatList)
 	{
@@ -2728,44 +2757,194 @@ void VulkanRenderer::GetTextureFormatInfoVK(Latte::E_GX2SURFFMT format, bool isD
 			break;
 			// compressed formats
 		case Latte::E_GX2SURFFMT::BC1_SRGB:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC1_RGBA_SRGB_BLOCK; // todo - verify
-			formatInfoOut->decoder = TextureDecoder_BC1::getInstance();
+			if (m_supportedFormatInfo.fmt_bc1)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC1_RGBA_SRGB_BLOCK; // todo - verify
+				formatInfoOut->decoder = TextureDecoder_BC1::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc1 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC1_SRGB_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC1_UNORM:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; // todo - verify
-			formatInfoOut->decoder = TextureDecoder_BC1::getInstance();
+			if (m_supportedFormatInfo.fmt_bc1)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; // todo - verify
+				formatInfoOut->decoder = TextureDecoder_BC1::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc1 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC1_UNORM_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC2_UNORM:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC2_UNORM_BLOCK; // todo - verify
-			formatInfoOut->decoder = TextureDecoder_BC2::getInstance();
+			if (m_supportedFormatInfo.fmt_bc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC2_UNORM_BLOCK; // todo - verify
+				formatInfoOut->decoder = TextureDecoder_BC2::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc2 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC2_UNORM_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC2_SRGB:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC2_SRGB_BLOCK; // todo - verify
-			formatInfoOut->decoder = TextureDecoder_BC2::getInstance();
+			if (m_supportedFormatInfo.fmt_bc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC2_SRGB_BLOCK; // todo - verify
+				formatInfoOut->decoder = TextureDecoder_BC2::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc2 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC2_SRGB_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC3_UNORM:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC3_UNORM_BLOCK;
-			formatInfoOut->decoder = TextureDecoder_BC3::getInstance();
+			if (m_supportedFormatInfo.fmt_bc3)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC3_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC3::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc3 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC3_UNORM_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC3_SRGB:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC3_SRGB_BLOCK;
-			formatInfoOut->decoder = TextureDecoder_BC3::getInstance();
+			if (m_supportedFormatInfo.fmt_bc3)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC3_SRGB_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC3::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc3 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC3_SRGB_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC4_UNORM:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC4_UNORM_BLOCK;
-			formatInfoOut->decoder = TextureDecoder_BC4::getInstance();
+			if (m_supportedFormatInfo.fmt_bc4)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC4_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC4::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc4 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_EAC_R11_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC4_To_ETC2_R11EAC::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC4_SNORM:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC4_SNORM_BLOCK;
-			formatInfoOut->decoder = TextureDecoder_BC4::getInstance();
+			if (m_supportedFormatInfo.fmt_bc4)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC4_SNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC4::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc4 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_EAC_R11_SNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC4_To_ETC2_R11EAC_SNORM::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC5_UNORM:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC5_UNORM_BLOCK;
-			formatInfoOut->decoder = TextureDecoder_BC5::getInstance();
+			if (m_supportedFormatInfo.fmt_bc5)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC5_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC5::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc5 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_EAC_R11G11_UNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC5_To_ETC2_RG11EAC::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC5_UNORM_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::BC5_SNORM:
-			formatInfoOut->vkImageFormat = VK_FORMAT_BC5_SNORM_BLOCK;
-			formatInfoOut->decoder = TextureDecoder_BC5::getInstance();
+			if (m_supportedFormatInfo.fmt_bc5)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_BC5_SNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC5::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else if (GetConfig().texture_compression_bc5 && m_supportedFormatInfo.fmt_etc2)
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_EAC_R11G11_SNORM_BLOCK;
+				formatInfoOut->decoder = TextureDecoder_BC5_To_ETC2_RG11EAC_SNORM::getInstance();
+				formatInfoOut->isCompressed = true;
+			}
+			else
+			{
+				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+				formatInfoOut->decoder = TextureDecoder_BC5_SNORM_uncompress::getInstance();
+			}
 			break;
 		case Latte::E_GX2SURFFMT::R24_X8_UNORM:
 			formatInfoOut->vkImageFormat = VK_FORMAT_R32_SFLOAT;

@@ -1,6 +1,7 @@
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include "Cafe/HW/Espresso/Recompiler/IML/IML.h"
 #include "Cafe/HW/Espresso/Recompiler/IML/IMLInstruction.h"
+#include "config/CemuConfig.h"
 
 #include "../PPCRecompiler.h"
 #include "../PPCRecompilerIml.h"
@@ -566,7 +567,8 @@ void IMLOptimizer_DebugPrintSeg(ppcImlGenContext_t& ppcImlGenContext, IMLSegment
 	fflush(stdout);
 }
 
-void IMLOptimizer_RemoveDeadCodeFromSegment(IMLOptimizerRegIOAnalysis& regIoAnalysis, IMLSegment& seg)
+// returns true if at least one instruction was newly turned into a no-op
+bool IMLOptimizer_RemoveDeadCodeFromSegment(IMLOptimizerRegIOAnalysis& regIoAnalysis, IMLSegment& seg)
 {
 	// algorithm works like this:
 	// Calculate which registers need to be preserved at the end of each segment
@@ -574,7 +576,16 @@ void IMLOptimizer_RemoveDeadCodeFromSegment(IMLOptimizerRegIOAnalysis& regIoAnal
 	// - Iterate instructions backwards
 	// - Maintain a list of registers which are read at a later point (initially this is the list from the first step)
 	// - If an instruction only modifies registers which are not in the read list and has no side effects, then it is dead code and can be replaced with a no-op
+	//
+	// Because regsNeeded is built up while scanning backwards, removing an instruction can
+	// immediately expose an earlier instruction (whose only consumer was the one just removed)
+	// as dead too, within this same pass. This requires that a *removed* instruction's own
+	// register reads are never added to regsNeeded - it will never execute, so it can't actually
+	// need any register. Previously this function updated regsNeeded unconditionally before
+	// checking whether the instruction was dead, which fed a false "still needed" signal to
+	// earlier instructions and silently prevented this cascading elimination from happening.
 
+	bool madeProgress = false;
 	std::unordered_set<IMLRegID> regsNeeded = regIoAnalysis.GetRegistersNeededAtEndOfSegment(seg);
 
 	// start with suffix instruction
@@ -596,8 +607,6 @@ void IMLOptimizer_RemoveDeadCodeFromSegment(IMLOptimizerRegIOAnalysis& regIoAnal
 		IMLInstruction& imlInstruction = seg.imlList[i];
 		IMLUsedRegisters registersUsed;
 		imlInstruction.CheckRegisterUsage(&registersUsed);
-		// register read -> remove from overwritten list
-		// register written -> add to overwritten list
 
 		// check if this instruction only writes registers which will never be read
 		bool onlyWritesRedundantRegisters = true;
@@ -605,18 +614,28 @@ void IMLOptimizer_RemoveDeadCodeFromSegment(IMLOptimizerRegIOAnalysis& regIoAnal
 			if (regsNeeded.contains(reg.GetRegID()))
 				onlyWritesRedundantRegisters = false;
 		});
-		// check if any of the written registers are read after this point
+		if(!imlInstruction.HasSideEffects() && onlyWritesRedundantRegisters)
+		{
+			// dead instruction - none of its written registers are needed and it has no other
+			// effect, so it (and its reads) can be dropped entirely. Do NOT add its reads to
+			// regsNeeded here (see comment above) - that was the bug.
+			if (imlInstruction.type != PPCREC_IML_TYPE_NO_OP)
+			{
+				imlInstruction.make_no_op();
+				madeProgress = true;
+			}
+			continue;
+		}
+		// instruction is kept -> its written registers are satisfied before this point, and its
+		// read registers become needed for anything further up
 		registersUsed.ForEachWrittenGPR([&](IMLReg reg) {
 			regsNeeded.erase(reg.GetRegID());
 		});
 		registersUsed.ForEachReadGPR([&](IMLReg reg) {
 			regsNeeded.insert(reg.GetRegID());
 		});
-		if(!imlInstruction.HasSideEffects() && onlyWritesRedundantRegisters)
-		{
-			imlInstruction.make_no_op();
-		}
 	}
+	return madeProgress;
 }
 
 void IMLOptimizerX86_SubstituteCJumpForEflagsJump(IMLOptimizerRegIOAnalysis& regIoAnalysis, IMLSegment& seg)
@@ -699,22 +718,143 @@ void IMLOptimizerX86_SubstituteCJumpForEflagsJump(IMLOptimizerRegIOAnalysis& reg
 
 }
 
-void IMLOptimizer_StandardOptimizationPassForSegment(IMLOptimizerRegIOAnalysis& regIoAnalysis, IMLSegment& seg)
+// Attempts to fold imlSegment's sole fallthrough successor directly into it, eliminating the
+// control-flow edge between them entirely.
+//
+// This is the closest safe equivalent of "inlining a short, repeatedly-called function" for this
+// IR: real PPC calls (BL/BLR) target an address that is only known at runtime (the link register),
+// so they can't be inlined by a static pass - there is no fixed callee to substitute. What *can* be
+// flattened statically are the short, single-entry/single-exit basic blocks the IR is already split
+// into; when one of them is only ever reached from exactly one place, merging it into that one
+// place removes a jump/segment boundary with the same effect the request described (fewer
+// unnecessary branches to fall through at runtime) without guessing at a dynamic call target.
+//
+// Merge is only applied when ALL of the following hold, to guarantee it can't change behavior:
+// - imlSegment falls through unconditionally (no branch-taken edge, not an uncertain/external exit)
+// - imlSegment itself has no explicit trailing control-flow instruction (pure fallthrough), so
+//   there is no jump instruction that would need to be rewritten/removed as part of the merge
+// - the successor has exactly one predecessor (imlSegment) - so nothing else depends on reaching
+//   it as a separate, addressable block
+// - the successor is not independently enterable from outside the recompiled function
+// (these are the same safety conditions IMLRA_ReshapeForRegisterAllocation already relies on
+// elsewhere in the recompiler to identify a "private" single-predecessor segment)
+bool IMLOptimizer_TryMergeSegmentPair(IMLSegment* segA)
 {
-	IMLOptimizer_RemoveDeadCodeFromSegment(regIoAnalysis, seg);
+	if (segA->nextSegmentIsUncertain)
+		return false;
+	if (segA->nextSegmentBranchTaken != nullptr)
+		return false; // conditional branch - not a plain fallthrough segment
+	IMLSegment* segB = segA->nextSegmentBranchNotTaken;
+	if (segB == nullptr || segB == segA)
+		return false;
+	if (segA->HasSuffixInstruction())
+		return false; // segA already ends on an explicit jump/branch, leave it alone (conservative)
+	if (segB->list_prevSegments.size() != 1)
+		return false; // segB is reachable from elsewhere, can't safely absorb it
+	if (segB->isEnterable)
+		return false; // segB can be entered from outside the recompiled function
 
-#ifdef ARCH_X86_64
-	// x86 specific optimizations
-	IMLOptimizerX86_SubstituteCJumpForEflagsJump(regIoAnalysis, seg); // this pass should be applied late since it creates invisible eflags dependencies (which would break further register dependency analysis)
-#endif
+	// move segB's instructions to the end of segA
+	segA->imlList.insert(segA->imlList.end(), segB->imlList.begin(), segB->imlList.end());
+
+	// segA inherits segB's outgoing edges
+	IMLSegment* newBranchNotTaken = segB->nextSegmentBranchNotTaken;
+	IMLSegment* newBranchTaken = segB->nextSegmentBranchTaken;
+	IMLSegment* newHintSeg = segB->deadCodeEliminationHintSeg;
+
+	IMLSegment_RemoveLink(segA, segB);
+	if (newBranchNotTaken)
+	{
+		IMLSegment_RemoveLink(segB, newBranchNotTaken);
+		IMLSegment_SetLinkBranchNotTaken(segA, newBranchNotTaken);
+	}
+	if (newBranchTaken)
+	{
+		IMLSegment_RemoveLink(segB, newBranchTaken);
+		IMLSegment_SetLinkBranchTaken(segA, newBranchTaken);
+	}
+	segA->nextSegmentIsUncertain = segB->nextSegmentIsUncertain;
+	if (newHintSeg && !segA->deadCodeEliminationHintSeg)
+	{
+		segA->deadCodeEliminationHintSeg = newHintSeg;
+		newHintSeg->list_deadCodeHintBy.push_back(segA);
+	}
+	// anything that only pointed at segB as a dead-code-elimination hint now points at segA instead
+	for (IMLSegment* hintSrc : segB->list_deadCodeHintBy)
+		hintSrc->deadCodeEliminationHintSeg = segA;
+
+	// segB has been fully absorbed and is no longer referenced by anything; drop it from the list
+	segB->imlList.clear();
+	segB->list_prevSegments.clear();
+	return true;
+}
+
+// scans all segments and merges as many single-predecessor fallthrough pairs as possible.
+// Runs before dead code elimination so that DCE (and later, register allocation) sees the merged,
+// simplified control flow graph rather than the original number of small segments.
+void IMLOptimizer_MergeRedundantSegments(ppcImlGenContext_t& ppcImlGenContext)
+{
+	auto& segList = ppcImlGenContext.segmentList2;
+	bool anyMerged = false;
+	for (IMLSegment* segIt : segList)
+	{
+		// keep merging forward as long as segIt keeps absorbing new fallthrough successors
+		while (IMLOptimizer_TryMergeSegmentPair(segIt))
+			anyMerged = true;
+	}
+	if (!anyMerged)
+		return;
+	// drop the now-empty, unreferenced segments from the segment list. They were left with an
+	// empty imlList and no predecessors by IMLOptimizer_TryMergeSegmentPair.
+	segList.erase(std::remove_if(segList.begin(), segList.end(), [](IMLSegment* seg) {
+		return seg->imlList.empty() && seg->list_prevSegments.empty() && !seg->isEnterable;
+	}), segList.end());
+}
+
+bool IMLOptimizer_StandardOptimizationPassForSegment(IMLOptimizerRegIOAnalysis& regIoAnalysis, IMLSegment& seg)
+{
+	return IMLOptimizer_RemoveDeadCodeFromSegment(regIoAnalysis, seg);
 }
 
 void IMLOptimizer_StandardOptimizationPass(ppcImlGenContext_t& ppcImlGenContext)
 {
-	IMLOptimizerRegIOAnalysis regIoAnalysis(ppcImlGenContext.segmentList2, ppcImlGenContext.GetMaxRegId());
-	regIoAnalysis.ComputeDepedencies();
-	for (IMLSegment* segIt : ppcImlGenContext.segmentList2)
+	// "Deep IR optimizations" toggle (Android: Experimental / Hackers -> Deep IR Optimizations).
+	// Off -> behave exactly like the original single-pass pipeline (one DCE pass, no segment
+	// merging), which is the safe fallback if a specific title misbehaves with the passes below.
+	const bool enableAdvancedPasses = GetConfig().advanced_iml_optimizations.GetValue();
+
+	if (enableAdvancedPasses)
+		IMLOptimizer_MergeRedundantSegments(ppcImlGenContext);
+
+	// Dead code elimination is a fixpoint problem across the whole function: merging segments
+	// above, or a segment's instructions all being eliminated, can shrink the "registers imported
+	// by a later segment" information that IMLOptimizerRegIOAnalysis computes, which in turn can
+	// only be discovered by recomputing that analysis and running DCE again. We repeat this in a
+	// closed loop until a full sweep makes no further changes.
+	// kMaxDCEIterations bounds the loop as a safety net (and to control compile-time cost) - it is
+	// not expected to be the reason the loop stops for any real recompiled function.
+	constexpr int kMaxDCEIterations = 8;
+	const int maxIterations = enableAdvancedPasses ? kMaxDCEIterations : 1;
+	for (int iteration = 0; iteration < maxIterations; iteration++)
 	{
-		IMLOptimizer_StandardOptimizationPassForSegment(regIoAnalysis, *segIt);
+		IMLOptimizerRegIOAnalysis regIoAnalysis(ppcImlGenContext.segmentList2, ppcImlGenContext.GetMaxRegId());
+		regIoAnalysis.ComputeDepedencies();
+		bool anyChange = false;
+		for (IMLSegment* segIt : ppcImlGenContext.segmentList2)
+			anyChange |= IMLOptimizer_RemoveDeadCodeFromSegment(regIoAnalysis, *segIt);
+		if (!anyChange)
+			break;
 	}
+
+#ifdef ARCH_X86_64
+	// x86 specific optimizations. Applied once, after DCE has converged, using a fresh analysis of
+	// the final instruction stream - this pass should run late since it creates invisible eflags
+	// dependencies that would break further register dependency analysis if DCE ran again after it.
+	{
+		IMLOptimizerRegIOAnalysis regIoAnalysis(ppcImlGenContext.segmentList2, ppcImlGenContext.GetMaxRegId());
+		regIoAnalysis.ComputeDepedencies();
+		for (IMLSegment* segIt : ppcImlGenContext.segmentList2)
+			IMLOptimizerX86_SubstituteCJumpForEflagsJump(regIoAnalysis, *segIt);
+	}
+#endif
 }

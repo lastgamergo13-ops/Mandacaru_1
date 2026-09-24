@@ -1,5 +1,6 @@
 #include "AndroidFilesystemCallbacks.h"
 #include "AndroidInputHelpers.h"
+#include "AndroidMemoryManager.h"
 #include "Cafe/CafeSystem.h"
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
@@ -243,7 +244,15 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_initializeEmulation([[maybe_
 	NetworkConfig::LoadOnce();
 	ActiveSettings::Init();
 	LatteOverlay_init();
-	CemuCommonInit();
+	CemuCommonInit(); // loads settings.xml into GetConfig() (see CemuCommonInit() in main.cpp)
+
+	// AndroidMemoryManager's monitor thread is already running by this point (started from
+	// JNI_OnLoad, before settings.xml exists to be read) with the "Memory Usage Brake" ceiling
+	// off. Now that the persisted config has actually been loaded, push the user's saved choice
+	// into it once. After this, the Experimental settings screen keeps it in sync live via its
+	// own JNI setter whenever the user changes it.
+	AndroidMemoryManager::SetMemoryCeilingMB(
+		GetConfig().memory_usage_brake.GetValue() ? (uint64_t)GetConfig().memory_ceiling_mb.GetValue() : 0);
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
@@ -410,4 +419,10 @@ extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeEmulation_resumeTitle([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
 	CafeSystem::ResumeTitle();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeEmulation_updateThermalStatus([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint status)
+{
+	LatteOverlay_updateThermalStatus(static_cast<sint32>(status));
 }

@@ -6,6 +6,7 @@
 #include "Cafe/HW/Latte/Core/LattePerformanceMonitor.h"
 #include "Cafe/OS/libs/gx2/GX2.h"
 #include "config/ActiveSettings.h"
+#include "config/CemuConfig.h"
 #include "util/helpers/helpers.h"
 #include "util/helpers/Serializer.h"
 #include "Cafe/HW/Latte/Common/RegisterSerializer.h"
@@ -1109,6 +1110,15 @@ void PipelineCompiler::CompileThreadPool_Start()
 		numCompileThreads = 2 + (cpuCoreCount - 3); // 2 plus one additionally for every extra core above 3
 
 	numCompileThreads = std::min(numCompileThreads, 8u); // cap at 8
+
+	// Limitar threads do compilador de shaders: each compile thread can use a significant
+	// amount of temporary RAM while a shader/pipeline is being compiled. On memory constrained
+	// systems (mainly Android devices with many logical cores but comparatively little RAM),
+	// running many of these at once can be enough to trigger an OOM kill of the whole app. This
+	// is a further reduction only - it can never increase the thread count decided above, only
+	// cap it lower.
+	if (GetConfig().limit_shader_compiler_threads)
+		numCompileThreads = std::min(numCompileThreads, 2u);
 
 	for (uint32_t i = 0; i < numCompileThreads; i++)
 	{

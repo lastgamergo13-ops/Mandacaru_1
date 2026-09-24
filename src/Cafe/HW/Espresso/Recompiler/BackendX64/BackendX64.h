@@ -267,3 +267,12 @@ void x64Gen_sarx_reg64_reg64_reg64(x64GenContext_t* x64GenContext, sint32 regist
 void x64Gen_sarx_reg32_reg32_reg32(x64GenContext_t* x64GenContext, sint32 registerDst, sint32 registerA, sint32 registerB);
 void x64Gen_shlx_reg64_reg64_reg64(x64GenContext_t* x64GenContext, sint32 registerDst, sint32 registerA, sint32 registerB);
 void x64Gen_shlx_reg32_reg32_reg32(x64GenContext_t* x64GenContext, sint32 registerDst, sint32 registerA, sint32 registerB);
+
+// AOT cache support: re-emits a previously generated (and persisted) function's raw
+// machine code into fresh executable memory, patching in this run's actual absolute
+// addresses at the locations PPCRecFunction_t::relocations recorded when it was first
+// compiled (see the big comment on PPCRecRelocEntry in PPCRecompiler.h for why that's
+// necessary). Returns nullptr on any sanity-check failure (never crashes/asserts in
+// release builds on a corrupt cache entry - callers must gracefully fall back to a
+// normal recompile in that case).
+void* PPCRecompiler_injectX64CachedCode(const uint8* code, size_t codeSize, const std::vector<struct PPCRecRelocEntry>& relocations);

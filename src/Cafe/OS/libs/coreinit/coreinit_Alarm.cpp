@@ -6,6 +6,10 @@
 #include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
 #include "Cafe/OS/RPL/rpl.h"
 
+#if defined(__ANDROID__)
+#include "Common/ExceptionHandler/ExceptionHandler.h"
+#endif
+
 // #define ALARM_LOGGING
 
 namespace coreinit
@@ -307,15 +311,34 @@ namespace coreinit
 
 	void _OSAlarmThread(PPCInterpreter_t* hCPU)
 	{
+#if defined(__ANDROID__)
+		// This thread has never once shown up in the watchdog's normal thread tracking
+		// despite every other instrumented path (fiber entry, queueAndWait, ...) - meaning
+		// it very likely takes a different creation/scheduling path than regular game
+		// threads (created via OSCreateThreadType rather than the usual OSCreateThread).
+		// Instrument it directly, unconditionally, so there is no ambiguity left about
+		// exactly which line it gets stuck on - this thread only ever loops a handful of
+		// times per second under normal conditions, so there's no hot-path cost concern.
+		Watchdog_SetThreadStatus("AlarmThread: entry, about to wait on g_alarmEvent");
+#endif
 		while( true )
 		{
 			OSWaitEvent(g_alarmEvent.GetPtr());
+#if defined(__ANDROID__)
+			Watchdog_SetThreadStatus("AlarmThread: woke up from g_alarmEvent, scanning active alarms");
+#endif
 			uint64 currentTick = OSGetTime();
 			while (true)
 			{
 				// get alarm to fire
 				OSAlarm_t* alarm = nullptr;
+#if defined(__ANDROID__)
+				Watchdog_SetThreadStatus("AlarmThread: calling __OSLockScheduler() to scan g_activeAlarms");
+#endif
 				__OSLockScheduler();
+#if defined(__ANDROID__)
+				Watchdog_SetThreadStatus("AlarmThread: holding scheduler lock, scanning g_activeAlarms");
+#endif
 				auto itr = g_activeAlarms.begin();
 				while(itr != g_activeAlarms.end())
 				{
@@ -336,15 +359,39 @@ namespace coreinit
 					}
 					++itr;
 				}
+#if defined(__ANDROID__)
+				Watchdog_SetThreadStatus("AlarmThread: done scanning, calling __OSUnlockScheduler()");
+#endif
 				__OSUnlockScheduler();
 				if (!alarm)
+				{
+#if defined(__ANDROID__)
+					Watchdog_SetThreadStatus("AlarmThread: no alarm due, looping back to wait on g_alarmEvent");
+#endif
 					break;
+				}
 				// do callback for alarm
 #ifdef ALARM_LOGGING
 				double periodInMS = (double)_swapEndianU64(alarm->period) * 1000.0 / (double)EspressoTime::GetTimerClock();
 				cemuLog_log(LogType::Force, "[Alarm] Callback 0x{:08x} for alarm 0x{:08x}. Current tick: {}. Period: {}ms", _swapEndianU32(alarm->handler), MEMPTR(alarm).GetMPTR(), currentTick, periodInMS);
 #endif
+#if defined(__ANDROID__)
+				// This calls into the GAME'S OWN registered alarm callback (arbitrary PPC
+				// code, via OSCreateAlarm/OSSetAlarm) - which runs on this exact same real
+				// thread and is subject to the normal instruction-count timeslice scheduler
+				// (PPCCore_switchToScheduler) just like any other PPC code. If the freeze is
+				// actually happening deep inside a game's alarm callback rather than in this
+				// function's own logic, this status line - immediately overwritten by
+				// PPCCore_switchToScheduler's own status if THAT'S what triggers - will make
+				// that distinction unambiguous instead of both cases showing the same
+				// "_OSAlarmThread+0x90" address.
+				Watchdog_SetThreadStatus(fmt::format("AlarmThread: about to run game's alarm callback 0x{:08x} (alarm 0x{:08x})",
+					_swapEndianU32(alarm->handler), MEMPTR<OSAlarm_t>(alarm).GetMPTR()));
+#endif
 				PPCCoreCallback(_swapEndianU32(alarm->handler), alarm, &(g_alarmThread.GetPtr()->context));
+#if defined(__ANDROID__)
+				Watchdog_SetThreadStatus("AlarmThread: returned from game's alarm callback");
+#endif
 			}
 		}
 	}

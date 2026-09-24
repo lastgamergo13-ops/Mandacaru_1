@@ -68,6 +68,13 @@ public:
 	uint32 GetAudioDelay() const;
 	static void SetAudioDelay(uint32 delay);
 
+	// Buffer fill-level monitor: true when the backend's queued audio is close to running out
+	// (stricter than NeedAdditionalBlocks()). Default implementation is conservative (always
+	// false) so backends that don't override it keep their exact previous behavior. See
+	// AXOut_update() in ax_out.cpp and the comment above g_enableAudioBufferSync below for how
+	// this is used.
+	virtual bool IsBufferCriticallyLow() const { return false; }
+
 	static void PrintLogging();
 	static void InitializeStatic();
 	static bool IsAudioAPIAvailable(AudioAPI api);
@@ -108,3 +115,14 @@ extern AudioAPIPtr g_padAudio;
 extern std::atomic_int32_t g_padVolume;
 
 extern AudioAPIPtr g_portalAudio;
+
+// Limitar o processamento de áudio assíncrono: when enabled, AXOut_update() polls the audio
+// backend more aggressively while its buffer is critically low (IsBufferCriticallyLow()),
+// giving the feeder side more chances to top it up before the platform audio callback runs it
+// dry. This does NOT add any blocking wait between the audio callback thread and the emulation
+// thread - a real blocking sync was deliberately not implemented (see the comment in
+// ax_out.cpp for why: the platform audio callback runs on a real-time OS thread, and forcing
+// it to block on the emulation thread would risk priority inversion and audible glitches, the
+// opposite of what this is meant to fix). Off by default: still an experimental option.
+extern bool g_enableAudioBufferSync;
+void IAudioAPI_SetBufferSyncEnabled(bool enabled);

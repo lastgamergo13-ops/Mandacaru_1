@@ -33,6 +33,36 @@ struct OverlayStats
 	int vramUsage{}, vramTotal{}; // vram usage in mb
 } g_state{};
 
+// Android's device thermal status (PowerManager thermal levels, -1 = not yet reported / API < 29).
+// Unlike the rest of g_state above (only ever written by this same render/stats thread, so a
+// benign data race is acceptable there), this is written from a separate Android/JNI thread via
+// LatteOverlay_updateThermalStatus() and read from the render thread, so it needs to be a real
+// atomic.
+std::atomic<sint32> g_thermalStatus{ -1 };
+
+void LatteOverlay_updateThermalStatus(sint32 thermalStatus)
+{
+	g_thermalStatus.store(thermalStatus, std::memory_order_relaxed);
+}
+
+// Maps Android's PowerManager thermal status levels (THERMAL_STATUS_*) to display text. There is
+// no public API for a real, precise temperature reading (in degrees) on a normal, non-rooted app -
+// this coarse level is genuinely the most specific thing available.
+const char* LatteOverlay_ThermalStatusToString(sint32 thermalStatus)
+{
+	switch (thermalStatus)
+	{
+	case 0: return "Nominal";
+	case 1: return "Light";
+	case 2: return "Moderate";
+	case 3: return "Severe";
+	case 4: return "Critical";
+	case 5: return "Emergency";
+	case 6: return "Shutdown";
+	default: return nullptr; // not yet reported (API < 29, or no update received yet)
+	}
+}
+
 extern std::atomic_int g_compiled_shaders_total;
 extern std::atomic_int g_compiled_shaders_async;
 extern std::atomic_int g_shaderStateCacheSetCount;
@@ -67,7 +97,6 @@ struct OverlayList
 
 const auto kPopupFlags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
 
-const float kBackgroundAlpha = 0.65f;
 void LatteOverlay_renderOverlay(ImVec2& position, ImVec2& pivot, sint32 direction, float fontSize, bool pad)
 {
 	auto& config = GetConfig();
@@ -78,34 +107,82 @@ void LatteOverlay_renderOverlay(ImVec2& position, ImVec2& pivot, sint32 directio
 	const ImVec4 color = ImGui::ColorConvertU32ToFloat4(config.overlay.text_color);
 	ImGui::PushStyleColor(ImGuiCol_Text, color);
 	// stats overlay
-	if (config.overlay.fps || config.overlay.drawcalls || config.overlay.cpu_usage || config.overlay.cpu_per_core_usage || config.overlay.ram_usage)
+	if (config.overlay.fps || config.overlay.drawcalls || config.overlay.cpu_usage || config.overlay.cpu_per_core_usage || config.overlay.ram_usage || config.overlay.vram_usage || config.overlay.frame_time || config.overlay.device_thermal_status)
 	{
 		ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-		ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+		ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 		if (ImGui::Begin("Stats overlay", nullptr, kPopupFlags))
 		{
+			// When horizontal_layout is on, every stat line below goes on the same row instead of
+			// stacking vertically (ImGui::SameLine() before each one after the first). Does not
+			// apply to the debug block further down - that can have several lines of arbitrary
+			// backend text, and forcing it onto one row would just stretch the box oddly.
+			bool statPrinted = false;
+			auto nextStatLine = [&]() {
+				if (config.overlay.horizontal_layout && statPrinted)
+					ImGui::SameLine();
+				statPrinted = true;
+			};
+
 			if (config.overlay.fps)
+			{
+				nextStatLine();
 				ImGui::Text("FPS: %.2lf", g_state.fps);
+			}
+
+			if (config.overlay.frame_time && g_state.fps > 0.0)
+			{
+				// Same 5-second-average FPS the line above uses, not an instantaneous per-frame
+				// reading - see LatteOverlay_updateStats().
+				nextStatLine();
+				ImGui::Text("Frame time: %.2lfms", 1000.0 / g_state.fps);
+			}
 
 			if (config.overlay.drawcalls)
+			{
+				nextStatLine();
 				ImGui::Text("Draws/f: %d (fast: %d)", g_state.draw_calls_per_frame, g_state.fast_draw_calls_per_frame);
+			}
 
 			if (config.overlay.cpu_usage)
+			{
+				nextStatLine();
 				ImGui::Text("CPU: %.2lf%%", g_state.cpu_usage);
+			}
 
 			if (config.overlay.cpu_per_core_usage)
 			{
 				for (sint32 i = 0; i < g_state.processor_count; ++i)
 				{
+					nextStatLine();
 					ImGui::Text("CPU #%d: %.2lf%%", i + 1, g_state.cpu_per_core[i]);
 				}
 			}
 
 			if (config.overlay.ram_usage)
+			{
+				nextStatLine();
 				ImGui::Text("RAM: %dMB", g_state.ram_usage);
+			}
 
 			if(config.overlay.vram_usage && g_state.vramUsage != -1 && g_state.vramTotal != -1)
+			{
+				nextStatLine();
 				ImGui::Text("VRAM: %dMB / %dMB", g_state.vramUsage, g_state.vramTotal);
+			}
+
+			if (config.overlay.device_thermal_status)
+			{
+				// Only a coarse level, not a real number in degrees - see
+				// LatteOverlay_ThermalStatusToString() for why. nullptr (API < 29, or no update
+				// received yet) means nothing is shown - safe no-op, not an error.
+				const char* thermalText = LatteOverlay_ThermalStatusToString(g_thermalStatus.load(std::memory_order_relaxed));
+				if (thermalText)
+				{
+					nextStatLine();
+					ImGui::Text("Thermal: %s", thermalText);
+				}
+			}
 
 			if (config.overlay.debug)
 			{
@@ -149,7 +226,7 @@ void LatteOverlay_RenderNotifications(ImVec2& position, ImVec2& pivot, sint32 di
 			{
 				// active account
 				ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-				ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+				ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 				if (ImGui::Begin("Active account", nullptr, kPopupFlags))
 				{
 					ImGui::TextUnformatted((const char*)ICON_FA_USER);
@@ -187,7 +264,7 @@ void LatteOverlay_RenderNotifications(ImVec2& position, ImVec2& pivot, sint32 di
 				if (!profiles.empty())
 				{
 					ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-					ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+					ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 					if (ImGui::Begin("Controller profile names", nullptr, kPopupFlags))
 					{
 						auto it = profiles.cbegin();
@@ -235,7 +312,7 @@ void LatteOverlay_RenderNotifications(ImVec2& position, ImVec2& pivot, sint32 di
 		if (!s_friend_list.empty())
 		{
 			ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-			ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+			ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 			if (ImGui::Begin("Friends overlay", nullptr, kPopupFlags))
 			{
 				const auto tick = tick_cached();
@@ -282,7 +359,7 @@ void LatteOverlay_RenderNotifications(ImVec2& position, ImVec2& pivot, sint32 di
 			}
 
 			ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-			ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+			ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 			if (ImGui::Begin("Low battery overlay", nullptr, kPopupFlags))
 			{
 				auto it = batteries.cbegin();
@@ -330,7 +407,7 @@ void LatteOverlay_RenderNotifications(ImVec2& position, ImVec2& pivot, sint32 di
 			if (s_shader_count > 0)
 			{
 				ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-				ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+				ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 				if (ImGui::Begin("Compiling shaders overlay", nullptr, kPopupFlags))
 				{
 					ImRotateStart();
@@ -385,7 +462,7 @@ void LatteOverlay_RenderNotifications(ImVec2& position, ImVec2& pivot, sint32 di
 			if (s_pipeline_count > 0)
 			{
 				ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-				ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+				ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 				if (ImGui::Begin("Compiling pipeline overlay", nullptr, kPopupFlags))
 				{
 					ImRotateStart();
@@ -454,7 +531,7 @@ void LatteOverlay_RenderNotifications(ImVec2& position, ImVec2& pivot, sint32 di
 	if (!s_misc_notifications.empty())
 	{
 		ImGui::SetNextWindowPos(position, ImGuiCond_Always, pivot);
-		ImGui::SetNextWindowBgAlpha(kBackgroundAlpha);
+		ImGui::SetNextWindowBgAlpha(config.overlay.background_opacity);
 		if (ImGui::Begin("Misc notifications", nullptr, kPopupFlags))
 		{
 			const auto tick = tick_cached();

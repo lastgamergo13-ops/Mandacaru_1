@@ -129,6 +129,15 @@ void LatteTC_MarkTextureStillInUse(LatteTexture* texture); // lets the texture g
 void LatteTC_CleanupUnusedTextures();
 
 std::vector<LatteTexture*> LatteTC_GetDeleteableTextures();
+// Requests that the next call to LatteTC_CleanupUnusedTextures() (which already runs every frame
+// on the GPU/render thread) skip its usual conservative throttling and immediately drop every
+// texture that's currently safe to delete (see LatteTC_GetDeleteableTextures() above). Safe to
+// call from ANY thread - it only sets an atomic flag; the actual deletion still only ever happens
+// on the render thread, exactly where it already normally happens. Intended for platform-level
+// memory pressure monitors (e.g. Android, see AndroidMemoryManager) that detect memory pressure
+// on a background thread and need a safe way to ask the render thread to reclaim memory soon,
+// without touching GPU objects from the wrong thread.
+void LatteTC_RequestAggressiveCleanup();
 
 void LatteTC_UnloadAllTextures();
 

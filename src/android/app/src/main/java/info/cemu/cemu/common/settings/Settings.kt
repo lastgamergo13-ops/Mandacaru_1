@@ -19,6 +19,13 @@ data class EmulationSettings(
 @Serializable
 data class GuiSettings(
     val language: String = DEFAULT_LANGUAGE,
+    // Quality of Life (Experimental/Hackers): locks the app's MENU screens (game list, settings)
+    // to whatever orientation they're in instead of following the sensor. Off by default, which
+    // matches this app's existing behavior (the menu already free-rotates; there was never a
+    // manifest-level orientation lock on it) - so leaving this off changes nothing. Gameplay
+    // (EmulationActivity) is untouched either way: it stays fixed to landscape via
+    // AndroidManifest.xml, since the Wii U itself has no portrait mode.
+    val lockMenuOrientation: Boolean = false,
 )
 
 @Serializable

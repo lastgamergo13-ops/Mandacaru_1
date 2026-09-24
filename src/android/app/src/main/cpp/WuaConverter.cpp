@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 #include "WuaConverter.h"
 
 WuaConverter::WuaConverter(const TitleInfo& titleInfo_base, const TitleInfo& titleInfo_update, const TitleInfo& titleInfo_aoc)
@@ -50,8 +52,25 @@ void WuaConverter::StartConversion(int fd, std::unique_ptr<CompressTitleCallback
 			static void WriteOutputData(const void* data, size_t length, void* _ctx)
 			{
 				ZArchiveWriterContext* ctx = (ZArchiveWriterContext*)_ctx;
-				auto written = write(ctx->fd, data, length);
-				int temp = 10;
+				if (ctx->writeFailed)
+					return; // already failed earlier - don't keep writing to a doomed file
+				// write() can legitimately write fewer bytes than requested in one call (not
+				// an error - e.g. with file descriptors handed out by Android's system file
+				// picker) - it must be looped until every byte is written or a real error
+				// occurs. Previously the return value was discarded entirely, so a failed or
+				// partial write silently produced a truncated, corrupt .wua with no warning.
+				const uint8* bytes = (const uint8*)data;
+				size_t totalWritten = 0;
+				while (totalWritten < length)
+				{
+					ssize_t written = write(ctx->fd, bytes + totalWritten, length - totalWritten);
+					if (written <= 0)
+					{
+						ctx->writeFailed = true;
+						return;
+					}
+					totalWritten += (size_t)written;
+				}
 			}
 
 			bool RecursivelyCountFiles(const std::string& fscPath)
@@ -176,6 +195,7 @@ void WuaConverter::StartConversion(int fd, std::unique_ptr<CompressTitleCallback
 			int fd;
 			ZArchiveWriter* zaWriter{};
 			bool isValid{false};
+			bool writeFailed{false};
 			std::vector<uint8> transferBuffer;
 			std::atomic_bool& cancelled;
 			// progress
@@ -211,6 +231,18 @@ void WuaConverter::StartConversion(int fd, std::unique_ptr<CompressTitleCallback
 			return;
 		}
 
+		if (writerContext.writeFailed)
+		{
+			// A write failed partway through (full disk, I/O error, etc.) - AddTitles() itself
+			// has no way to know that (WriteOutputData's failure doesn't propagate back through
+			// ZArchiveWriter's own return values), so this is checked separately right here.
+			// Truncate to 0 bytes rather than leaving a corrupt, partially-written .wua sitting
+			// at the destination looking like a real file.
+			ftruncate(fd, 0);
+			callbacks->OnError();
+			return;
+		}
+
 		m_stage = Stage::FINALIZING;
 
 		if (!result)
@@ -220,6 +252,15 @@ void WuaConverter::StartConversion(int fd, std::unique_ptr<CompressTitleCallback
 		}
 
 		writerContext.zaWriter->Finalize();
+
+		if (writerContext.writeFailed)
+		{
+			// Finalize() writes the archive's index/footer - same failure mode as above, checked
+			// again here since a write can fail during this final step too.
+			ftruncate(fd, 0);
+			callbacks->OnError();
+			return;
+		}
 
 		off_t newPos = lseek(fd, 0, SEEK_SET);
 		if (newPos == -1)

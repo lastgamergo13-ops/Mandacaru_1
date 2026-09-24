@@ -6,6 +6,7 @@
 #include "Cafe/HW/Latte/Core/LatteCachedFBO.h"
 #include "Cafe/OS/libs/gx2/GX2.h"
 #include "config/ActiveSettings.h"
+#include "config/CemuConfig.h"
 #include "util/helpers/Serializer.h"
 #include "Cafe/HW/Latte/Common/RegisterSerializer.h"
 #include "Cemu/FileCache/FileCache.h"
@@ -48,6 +49,16 @@ uint32 VulkanPipelineStableCache::BeginLoading(uint64 cacheTitleId)
 	// get core count
 	uint32 cpuCoreCount = GetPhysicalCoreCount();
 	m_numCompilationThreads = std::clamp(cpuCoreCount, 1u, 8u);
+
+	// Limitar threads do compilador de shaders: this pool is the more RAM-hungry of the two
+	// shader/pipeline compiler pools - it fires all of its threads at once, in a burst, right
+	// at game boot, to precompile the entire transferable pipeline cache. See the identical
+	// check in VulkanPipelineCompiler.cpp for why this matters. Applied before the Nvidia
+	// driver workaround below on purpose: that workaround exists to avoid a driver bug, so it
+	// must always have the final say (1 thread) regardless of what this option requests.
+	if (GetConfig().limit_shader_compiler_threads)
+		m_numCompilationThreads = std::min(m_numCompilationThreads, 2u);
+
 	if (VulkanRenderer::GetInstance()->GetDisableMultithreadedCompilation())
 		m_numCompilationThreads = 1;
 

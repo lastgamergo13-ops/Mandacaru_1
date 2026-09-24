@@ -10,6 +10,7 @@ import info.cemu.cemu.settings.audio.AudioSettingsScreen
 import info.cemu.cemu.settings.customdrivers.CustomDriversScreen
 import info.cemu.cemu.settings.emulatedusbdevices.EmulatedUSBDevicesSettingsScreen
 import info.cemu.cemu.settings.experimental.ExperimentalSettingsScreen
+import info.cemu.cemu.settings.experimental.qualityoflife.QualityOfLifeSettingsScreen
 import info.cemu.cemu.settings.gamespath.GamePathsScreen
 import info.cemu.cemu.settings.general.GeneralSettingsScreen
 import info.cemu.cemu.settings.graphics.GraphicsSettingsScreen
@@ -19,6 +20,7 @@ import info.cemu.cemu.settings.input.hotkeys.HotkeySettingsScreen
 import info.cemu.cemu.settings.input.InputSettingsScreen
 import info.cemu.cemu.settings.inputoverlay.InputOverlaySettingsScreen
 import info.cemu.cemu.settings.overlay.OverlaySettingsScreen
+import info.cemu.cemu.titlemanager.TitleManagerRoute
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -75,6 +77,9 @@ private object SettingsRoutes {
 
     @Serializable
     object ExperimentalSettingsScreenRoute
+
+    @Serializable
+    object QualityOfLifeSettingsScreenRoute
 }
 
 fun NavGraphBuilder.settingsNavigation(navController: NavHostController) {
@@ -95,6 +100,13 @@ fun NavGraphBuilder.settingsNavigation(navController: NavHostController) {
         composable<SettingsRoutes.ExperimentalSettingsScreenRoute> {
             ExperimentalSettingsScreen(
                 navigateBack = { navController.popBackStack() },
+                goToQualityOfLifeSettings = { navController.navigate(SettingsRoutes.QualityOfLifeSettingsScreenRoute) },
+            )
+        }
+        composable<SettingsRoutes.QualityOfLifeSettingsScreenRoute> {
+            QualityOfLifeSettingsScreen(
+                navigateBack = { navController.popBackStack() },
+                goToTitleManager = { navController.navigate(TitleManagerRoute) },
             )
         }
         composable<SettingsRoutes.AudioSettingsScreenRoute> {

@@ -2,6 +2,7 @@
 #include "Cafe/HW/Latte/Renderer/OpenGL/LatteTextureViewGL.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "Cafe/HW/Latte/Core/Latte.h"
+#include "config/CemuConfig.h"
 
 #include "config/LaunchSettings.h"
 
@@ -145,38 +146,61 @@ void LatteTextureGL::GetOpenGLFormatInfo(bool isDepth, Latte::E_GX2SURFFMT forma
 	else if (format == Latte::E_GX2SURFFMT::BC1_UNORM ||
 		format == Latte::E_GX2SURFFMT::BC1_SRGB)
 	{
-		if (format == Latte::E_GX2SURFFMT::BC1_SRGB)
-			formatInfoOut->setCompressed(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT, -1, -1);
+		bool isSrgb = format == Latte::E_GX2SURFFMT::BC1_SRGB;
+		if (OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_bc1)
+			formatInfoOut->setCompressed(isSrgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT : GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, -1, -1);
+		else if (GetConfig().texture_compression_bc1 && OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			formatInfoOut->setCompressed(isSrgb ? GL_COMPRESSED_SRGB8_ETC2 : GL_COMPRESSED_RGB8_ETC2, -1, -1);
 		else
-			formatInfoOut->setCompressed(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, -1, -1);
+		{
+			formatInfoOut->setFormat(GL_RGBA16F, GL_RGBA, GL_FLOAT);
+			formatInfoOut->markAsAlternativeFormat();
+		}
 		return;
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC2_UNORM || format == Latte::E_GX2SURFFMT::BC2_SRGB)
 	{
-		// todo - use OpenGL BC2 format if available
-		formatInfoOut->setFormat(GL_RGBA16F, GL_RGBA, GL_FLOAT);
-		formatInfoOut->markAsAlternativeFormat();
+		bool isSrgb = format == Latte::E_GX2SURFFMT::BC2_SRGB;
+		// todo - use OpenGL BC2 format if available (this GL backend has never had a
+		// native BC2/DXT3 path, unlike BC1/BC3/BC4/BC5 above/below - only the
+		// uncompressed and ETC2 options exist for it here)
+		if (GetConfig().texture_compression_bc2 && OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			formatInfoOut->setCompressed(isSrgb ? GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC : GL_COMPRESSED_RGBA8_ETC2_EAC, -1, -1);
+		else
+		{
+			formatInfoOut->setFormat(GL_RGBA16F, GL_RGBA, GL_FLOAT);
+			formatInfoOut->markAsAlternativeFormat();
+		}
 		return;
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC3_UNORM || format == Latte::E_GX2SURFFMT::BC3_SRGB)
 	{
-		if (format == Latte::E_GX2SURFFMT::BC3_SRGB)
-			formatInfoOut->setCompressed(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT, -1, -1);
+		bool isSrgb = format == Latte::E_GX2SURFFMT::BC3_SRGB;
+		if (OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_bc3)
+			formatInfoOut->setCompressed(isSrgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, -1, -1);
+		else if (GetConfig().texture_compression_bc3 && OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			formatInfoOut->setCompressed(isSrgb ? GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC : GL_COMPRESSED_RGBA8_ETC2_EAC, -1, -1);
 		else
-			formatInfoOut->setCompressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, -1, -1);
+		{
+			formatInfoOut->setFormat(GL_RGBA16F, GL_RGBA, GL_FLOAT);
+			formatInfoOut->markAsAlternativeFormat();
+		}
 		return;
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC4_UNORM || format == Latte::E_GX2SURFFMT::BC4_SNORM)
 	{
+		bool isSnorm = format == Latte::E_GX2SURFFMT::BC4_SNORM;
 		bool allowCompressed = true;
 		if (dim != Latte::E_DIM::DIM_2D && dim != Latte::E_DIM::DIM_2D_ARRAY)
-			allowCompressed = false; // RGTC1 does not support non-2D textures
-		if (allowCompressed)
+			allowCompressed = false; // RGTC1/EAC do not support non-2D textures here
+		if (allowCompressed && OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_bc4)
 		{
-			if (format == Latte::E_GX2SURFFMT::BC4_UNORM)
-				formatInfoOut->setCompressed(GL_COMPRESSED_RED_RGTC1, -1, -1);
-			else
-				formatInfoOut->setCompressed(GL_COMPRESSED_SIGNED_RED_RGTC1, -1, -1);
+			formatInfoOut->setCompressed(isSnorm ? GL_COMPRESSED_SIGNED_RED_RGTC1 : GL_COMPRESSED_RED_RGTC1, -1, -1);
+			return;
+		}
+		else if (allowCompressed && GetConfig().texture_compression_bc4 && OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		{
+			formatInfoOut->setCompressed(isSnorm ? GL_COMPRESSED_SIGNED_R11_EAC : GL_COMPRESSED_R11_EAC, -1, -1);
 			return;
 		}
 		else
@@ -188,10 +212,16 @@ void LatteTextureGL::GetOpenGLFormatInfo(bool isDepth, Latte::E_GX2SURFFMT forma
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC5_UNORM || format == Latte::E_GX2SURFFMT::BC5_SNORM)
 	{
-		if (format == Latte::E_GX2SURFFMT::BC5_SNORM)
-			formatInfoOut->setCompressed(GL_COMPRESSED_SIGNED_RG_RGTC2, -1, -1);
+		bool isSnorm = format == Latte::E_GX2SURFFMT::BC5_SNORM;
+		if (OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_bc5)
+			formatInfoOut->setCompressed(isSnorm ? GL_COMPRESSED_SIGNED_RG_RGTC2 : GL_COMPRESSED_RG_RGTC2, -1, -1);
+		else if (GetConfig().texture_compression_bc5 && OpenGLRenderer::GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			formatInfoOut->setCompressed(isSnorm ? GL_COMPRESSED_SIGNED_RG11_EAC : GL_COMPRESSED_RG11_EAC, -1, -1);
 		else
-			formatInfoOut->setCompressed(GL_COMPRESSED_RG_RGTC2, -1, -1);
+		{
+			formatInfoOut->setFormat(GL_RGBA16F, GL_RGBA, GL_FLOAT);
+			formatInfoOut->markAsAlternativeFormat();
+		}
 		return;
 	}
 	else if (format == Latte::E_GX2SURFFMT::R32_FLOAT)

@@ -306,4 +306,20 @@ object NativeInput {
 
     @JvmStatic
     external fun saveInputs()
+
+    // --- Quality of Life: quick controller profile switcher ---------------------------------
+    // Bridges to InputManager's existing, already-tested named-profile save/list/load - see
+    // NativeInput.cpp. Not gameplay-critical logic - only exposes a mechanism the emulator core
+    // already uses internally for per-title controller profiles.
+    @JvmStatic
+    external fun getControllerProfiles(): Array<String>
+
+    @JvmStatic
+    external fun isValidControllerProfileName(name: String): Boolean
+
+    @JvmStatic
+    external fun saveControllerProfile(index: Int, name: String): Boolean
+
+    @JvmStatic
+    external fun loadControllerProfile(index: Int, name: String): Boolean
 }

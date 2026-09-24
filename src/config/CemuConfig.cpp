@@ -21,6 +21,11 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	log_flag = parser.get("logflag", log_flag.GetInitValue());
 	cemuLog_setActiveLoggingFlags(GetConfig().log_flag.GetValue());
 	advanced_ppc_logging = parser.get("advanced_ppc_logging", advanced_ppc_logging.GetInitValue());
+	advanced_iml_optimizations = parser.get("advanced_iml_optimizations", advanced_iml_optimizations.GetInitValue());
+	memory_usage_brake = parser.get("memory_usage_brake", memory_usage_brake.GetInitValue());
+	memory_ceiling_mb = parser.get("memory_ceiling_mb", memory_ceiling_mb.GetInitValue());
+	enable_recompiler_aot_cache = parser.get("enable_recompiler_aot_cache", enable_recompiler_aot_cache.GetInitValue());
+	limit_shader_compiler_threads = parser.get("limit_shader_compiler_threads", limit_shader_compiler_threads.GetInitValue());
 
 	const char* mlc = parser.get("mlc_path", "");
 	mlc_path = mlc;
@@ -31,6 +36,11 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	custom_driver_path = parser.get("custom_driver_path", "");
 	disable_screensaver = parser.get("disable_screensaver", disable_screensaver);
 	play_boot_sound = parser.get("play_boot_sound", play_boot_sound);
+	rtc_use_system_time = parser.get("rtc_use_system_time", rtc_use_system_time);
+	rtc_custom_timestamp = parser.get("rtc_custom_timestamp", rtc_custom_timestamp);
+	qol_quick_screenshot_enabled = parser.get("qol_quick_screenshot_enabled", qol_quick_screenshot_enabled);
+	qol_quick_controller_profile_switcher_enabled = parser.get("qol_quick_controller_profile_switcher_enabled", qol_quick_controller_profile_switcher_enabled);
+	qol_in_game_cheats_enabled = parser.get("qol_in_game_cheats_enabled", qol_in_game_cheats_enabled);
 	console_language = parser.get("console_language", console_language.GetInitValue());
 
 	game_paths.clear();
@@ -145,6 +155,11 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	fullscreen_scaling = graphic.get("FullscreenScaling", kKeepAspectRatio);
 	async_compile = graphic.get("AsyncCompile", async_compile);
 	vk_accurate_barriers = graphic.get("vkAccurateBarriers", true); // this used to be "VulkanAccurateBarriers" but because we changed the default to true in 1.27.1 the option name had to be changed
+	texture_compression_bc1 = graphic.get("TextureCompressionBC1", false);
+	texture_compression_bc2 = graphic.get("TextureCompressionBC2", false);
+	texture_compression_bc3 = graphic.get("TextureCompressionBC3", false);
+	texture_compression_bc4 = graphic.get("TextureCompressionBC4", false);
+	texture_compression_bc5 = graphic.get("TextureCompressionBC5", false);
 #ifdef ENABLE_METAL
 	force_mesh_shaders = graphic.get("ForceMeshShaders", false);
 #endif
@@ -162,6 +177,10 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 		overlay.ram_usage = overlay_node.get("RAMUsage", false);
 		overlay.vram_usage = overlay_node.get("VRAMUsage", false);
 		overlay.debug = overlay_node.get("Debug", false);
+		overlay.frame_time = overlay_node.get("FrameTime", false);
+		overlay.device_thermal_status = overlay_node.get("DeviceThermalStatus", false);
+		overlay.horizontal_layout = overlay_node.get("HorizontalLayout", false);
+		overlay.background_opacity = overlay_node.get("BackgroundOpacity", 0.65f);
 
 		notification.controller_profiles = overlay_node.get("ControllerProfiles", true);
 		notification.controller_battery = overlay_node.get("ControllerBattery", true);
@@ -199,6 +218,7 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	auto audio = parser.get("Audio");
 	audio_api = audio.get("api", 0);
 	audio_delay = audio.get("delay", 2);
+	audio_video_sync = audio.get("AVSync", audio_video_sync.GetInitValue());
 	tv_channels = audio.get("TVChannels", kStereo);
 	pad_channels = audio.get("PadChannels", kStereo);
 	input_channels = audio.get("InputChannels", kMono);
@@ -206,6 +226,9 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	pad_volume = audio.get("PadVolume", 0);
 	input_volume = audio.get("InputVolume", 20);
 	portal_volume = audio.get("PortalVolume", 20);
+	fast_audio_resampling = audio.get("FastResampling", fast_audio_resampling.GetInitValue());
+	force_audio_downmix = audio.get("ForceAudioDownmix", force_audio_downmix.GetInitValue());
+	audio_buffer_sync = audio.get("BufferSync", audio_buffer_sync.GetInitValue());
 
 	const auto tv = audio.get("TVDevice", "");
 	try
@@ -300,11 +323,21 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	// general settings
 	config.set("logflag", log_flag.GetValue());
 	config.set("advanced_ppc_logging", advanced_ppc_logging.GetValue());
+	config.set("advanced_iml_optimizations", advanced_iml_optimizations.GetValue());
+	config.set("memory_usage_brake", memory_usage_brake.GetValue());
+	config.set("memory_ceiling_mb", memory_ceiling_mb.GetValue());
+	config.set("enable_recompiler_aot_cache", enable_recompiler_aot_cache.GetValue());
+	config.set("limit_shader_compiler_threads", limit_shader_compiler_threads.GetValue());
 	config.set("mlc_path", mlc_path.GetValue().c_str());
 	config.set<bool>("permanent_storage", permanent_storage);
 	config.set("proxy_server", proxy_server.GetValue().c_str());
 	config.set("custom_driver_path", custom_driver_path.GetValue().c_str());
 	config.set<bool>("play_boot_sound", play_boot_sound);
+	config.set<bool>("rtc_use_system_time", rtc_use_system_time);
+	config.set<sint64>("rtc_custom_timestamp", rtc_custom_timestamp);
+	config.set<bool>("qol_quick_screenshot_enabled", qol_quick_screenshot_enabled);
+	config.set<bool>("qol_quick_controller_profile_switcher_enabled", qol_quick_controller_profile_switcher_enabled);
+	config.set<bool>("qol_in_game_cheats_enabled", qol_in_game_cheats_enabled);
 
 	// config.set("cpu_mode", cpu_mode.GetValue());
 	//config.set("console_region", console_region.GetValue());
@@ -379,6 +412,11 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	graphic.set("FullscreenScaling", fullscreen_scaling);
 	graphic.set("AsyncCompile", async_compile.GetValue());
 	graphic.set("vkAccurateBarriers", vk_accurate_barriers);
+	graphic.set("TextureCompressionBC1", texture_compression_bc1);
+	graphic.set("TextureCompressionBC2", texture_compression_bc2);
+	graphic.set("TextureCompressionBC3", texture_compression_bc3);
+	graphic.set("TextureCompressionBC4", texture_compression_bc4);
+	graphic.set("TextureCompressionBC5", texture_compression_bc5);
 
 	auto overlay_node = graphic.set("Overlay");
 	overlay_node.set("Position", overlay.position);
@@ -391,6 +429,10 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	overlay_node.set("RAMUsage", overlay.ram_usage);
 	overlay_node.set("VRAMUsage", overlay.vram_usage);
 	overlay_node.set("Debug", overlay.debug);
+	overlay_node.set("FrameTime", overlay.frame_time);
+	overlay_node.set("DeviceThermalStatus", overlay.device_thermal_status);
+	overlay_node.set("HorizontalLayout", overlay.horizontal_layout);
+	overlay_node.set("BackgroundOpacity", overlay.background_opacity);
 
 	auto notification_node = graphic.set("Notification");
 	notification_node.set("Position", notification.position);
@@ -405,6 +447,7 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	auto audio = config.set("Audio");
 	audio.set("api", audio_api);
 	audio.set("delay", audio_delay);
+	audio.set("AVSync", audio_video_sync.GetValue());
 	audio.set("TVChannels", tv_channels);
 	audio.set("PadChannels", pad_channels);
 	audio.set("InputChannels", input_channels);
@@ -412,6 +455,9 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	audio.set("PadVolume", pad_volume);
 	audio.set("InputVolume", input_volume);
 	audio.set("PortalVolume", portal_volume);
+	audio.set("FastResampling", fast_audio_resampling.GetValue());
+	audio.set("ForceAudioDownmix", force_audio_downmix.GetValue());
+	audio.set("BufferSync", audio_buffer_sync.GetValue());
 	audio.set("TVDevice", boost::nowide::narrow(tv_device).c_str());
 	audio.set("PadDevice", boost::nowide::narrow(pad_device).c_str());
 	audio.set("InputDevice", boost::nowide::narrow(input_device).c_str());

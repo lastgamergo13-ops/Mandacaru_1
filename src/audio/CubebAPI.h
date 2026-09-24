@@ -30,6 +30,7 @@ public:
 
 	AudioAPI GetType() const override { return Cubeb; }
 	bool NeedAdditionalBlocks() const override;
+	bool IsBufferCriticallyLow() const override;
 	bool FeedBlock(sint16* data) override;
 	bool Play() override;
 	bool Stop() override;

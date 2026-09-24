@@ -2,6 +2,7 @@
 #include "util/helpers/ClassWrapper.h"
 #include "Cafe/HW/Latte/LatteAddrLib/LatteAddrLib.h"
 #include "util/ImageWriter/tga.h"
+#include "Cafe/HW/Latte/Core/LatteTextureETC1Encoder.h"
 
 struct LatteTextureLoaderCtx
 {
@@ -44,6 +45,7 @@ void decodeBC1Block(uint8* inputData, float* output4x4RGBA);
 void decodeBC2Block_UNORM(uint8* inputData, float* imageRGBA);
 void decodeBC3Block_UNORM(uint8* inputData, float* imageRGBA);
 void decodeBC4Block_UNORM(uint8* blockStorage, float* rOutput);
+void decodeBC4Block_SNORM(uint8* blockStorage, float* rOutput);
 void decodeBC5Block_UNORM(uint8* blockStorage, float* rgOutput);
 void decodeBC5Block_SNORM(uint8* blockStorage, float* rgOutput);
 
@@ -1684,6 +1686,63 @@ public:
 	}
 };
 
+// Transcodes BC1 (opaque diffuse) to ETC2 RGB8 - the Android-friendly target for GPUs
+// that support ETC2 but not BC/S3TC. See LatteTextureETC1Encoder.h for the real,
+// from-specification block encoder this calls into. Same 8 bytes/block rate as BC1
+// itself, so no size/allocation math elsewhere needed to change for this path.
+class TextureDecoder_BC1_To_ETC2_RGB8 : public TextureDecoder, public SingletonClass<TextureDecoder_BC1_To_ETC2_RGB8>
+{
+public:
+	sint32 getBytesPerTexel(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return 8; // one ETC1/ETC2 block = 8 bytes, same as BC1
+	}
+
+	sint32 getTexelCountX(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->width + 3) / 4;
+	}
+
+	sint32 getTexelCountY(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->height + 3) / 4;
+	}
+
+	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
+	{
+		const sint32 blockCountX = getTexelCountX(textureLoader);
+		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		{
+			const sint32 by = y / 4;
+			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			{
+				const sint32 bx = x / 4;
+				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+				// decode the source BC1 block to a plain 4x4 RGBA buffer using the
+				// existing, already battle-tested decoder - unchanged
+				float rgbaBlockFloat[4 * 4 * 4];
+				decodeBC1Block(blockData, rgbaBlockFloat);
+				uint8 rgbaBlock8[4 * 4 * 4];
+				for (sint32 i = 0; i < 16; i++)
+				{
+					rgbaBlock8[i * 4 + 0] = (uint8)(rgbaBlockFloat[i * 4 + 0] * 255.0f);
+					rgbaBlock8[i * 4 + 1] = (uint8)(rgbaBlockFloat[i * 4 + 1] * 255.0f);
+					rgbaBlock8[i * 4 + 2] = (uint8)(rgbaBlockFloat[i * 4 + 2] * 255.0f);
+					rgbaBlock8[i * 4 + 3] = 255;
+				}
+				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 8;
+				LatteETC1Encoder::EncodeBlock4x4RGB(rgbaBlock8, outBlock);
+			}
+		}
+	}
+
+	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
+	{
+		// texture dumping isn't supported for this transcoded format; the original
+		// BC1 decoders already handle dumping directly from the Wii U source data
+	}
+};
+
 class TextureDecoder_BC2 : public TextureDecoder, public SingletonClass<TextureDecoder_BC2>
 {
 public:
@@ -1720,6 +1779,67 @@ public:
 		*(outputPixel + 1) = (uint8)(green * 255.0f);
 		*(outputPixel + 2) = (uint8)(blue * 255.0f);
 		*(outputPixel + 3) = (uint8)(alpha * 255.0f);
+	}
+};
+
+// Transcodes BC2 (color + explicit 4-bit alpha) to RGBA8_ETC2_EAC: the same ETC2 color
+// block used for BC1 above, plus a separate EAC alpha block (see
+// LatteTextureETC1Encoder.h's LatteEACEncoder). Same overall bitrate as BC2 itself (16
+// bytes/block), so for BC2 specifically the VRAM win vs. this GPU's native support is
+// "only" avoiding the 32bpp uncompressed fallback, not a further reduction - see the
+// texture compression Experimental settings screen for the honest breakdown per format.
+class TextureDecoder_BC2_To_ETC2_RGBA8_EAC : public TextureDecoder, public SingletonClass<TextureDecoder_BC2_To_ETC2_RGBA8_EAC>
+{
+public:
+	sint32 getBytesPerTexel(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return 16; // RGBA8_ETC2_EAC = 8 bytes alpha (EAC) + 8 bytes color (ETC2), per block
+	}
+
+	sint32 getTexelCountX(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->width + 3) / 4;
+	}
+
+	sint32 getTexelCountY(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->height + 3) / 4;
+	}
+
+	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
+	{
+		const sint32 blockCountX = getTexelCountX(textureLoader);
+		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		{
+			const sint32 by = y / 4;
+			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			{
+				const sint32 bx = x / 4;
+				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+				float rgbaBlockFloat[4 * 4 * 4];
+				decodeBC2Block_UNORM(blockData, rgbaBlockFloat);
+				uint8 rgbBlock8[4 * 4 * 4];
+				uint8 alphaBlock8[16];
+				for (sint32 i = 0; i < 16; i++)
+				{
+					rgbBlock8[i * 4 + 0] = (uint8)(rgbaBlockFloat[i * 4 + 0] * 255.0f);
+					rgbBlock8[i * 4 + 1] = (uint8)(rgbaBlockFloat[i * 4 + 1] * 255.0f);
+					rgbBlock8[i * 4 + 2] = (uint8)(rgbaBlockFloat[i * 4 + 2] * 255.0f);
+					rgbBlock8[i * 4 + 3] = 255;
+					alphaBlock8[i] = (uint8)(rgbaBlockFloat[i * 4 + 3] * 255.0f);
+				}
+				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
+				// alpha (EAC) comes first, then color (ETC2) - per the format's spec layout
+				LatteEACEncoder::EncodeAlphaBlock8bit(alphaBlock8, outBlock);
+				LatteETC1Encoder::EncodeBlock4x4RGB(rgbBlock8, outBlock + 8);
+			}
+		}
+	}
+
+	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
+	{
+		// texture dumping isn't supported for this transcoded format; the other BC2
+		// decoders already handle dumping directly from the original Wii U data
 	}
 };
 
@@ -1942,6 +2062,64 @@ public:
 	}
 };
 
+// Transcodes BC3 (interpolated 8-bit alpha, more precise than BC2's explicit 4-bit
+// alpha) to the same RGBA8_ETC2_EAC target as BC2 above. Once decoded to plain RGBA,
+// BC2 and BC3 source data are indistinguishable, so this reuses the exact same pair of
+// encoders (ETC1 color + EAC alpha) - only the input decode function differs.
+class TextureDecoder_BC3_To_ETC2_RGBA8_EAC : public TextureDecoder, public SingletonClass<TextureDecoder_BC3_To_ETC2_RGBA8_EAC>
+{
+public:
+	sint32 getBytesPerTexel(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return 16;
+	}
+
+	sint32 getTexelCountX(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->width + 3) / 4;
+	}
+
+	sint32 getTexelCountY(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->height + 3) / 4;
+	}
+
+	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
+	{
+		const sint32 blockCountX = getTexelCountX(textureLoader);
+		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		{
+			const sint32 by = y / 4;
+			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			{
+				const sint32 bx = x / 4;
+				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+				float rgbaBlockFloat[4 * 4 * 4];
+				decodeBC3Block_UNORM(blockData, rgbaBlockFloat);
+				uint8 rgbBlock8[4 * 4 * 4];
+				uint8 alphaBlock8[16];
+				for (sint32 i = 0; i < 16; i++)
+				{
+					rgbBlock8[i * 4 + 0] = (uint8)(rgbaBlockFloat[i * 4 + 0] * 255.0f);
+					rgbBlock8[i * 4 + 1] = (uint8)(rgbaBlockFloat[i * 4 + 1] * 255.0f);
+					rgbBlock8[i * 4 + 2] = (uint8)(rgbaBlockFloat[i * 4 + 2] * 255.0f);
+					rgbBlock8[i * 4 + 3] = 255;
+					alphaBlock8[i] = (uint8)(rgbaBlockFloat[i * 4 + 3] * 255.0f);
+				}
+				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
+				LatteEACEncoder::EncodeAlphaBlock8bit(alphaBlock8, outBlock);
+				LatteETC1Encoder::EncodeBlock4x4RGB(rgbBlock8, outBlock + 8);
+			}
+		}
+	}
+
+	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
+	{
+		// texture dumping isn't supported for this transcoded format; the other BC3
+		// decoders already handle dumping directly from the original Wii U data
+	}
+};
+
 class TextureDecoder_BC4_UNORM_uncompress : public TextureDecoder, public SingletonClass<TextureDecoder_BC4_UNORM_uncompress>
 {
 public:
@@ -2024,6 +2202,104 @@ public:
 		*(outputPixel + 1) = 0;
 		*(outputPixel + 2) = 0;
 		*(outputPixel + 3) = 255;
+	}
+};
+
+// Transcodes BC4_UNORM (single channel, e.g. height maps/masks) to R11_EAC. Same block
+// "shell" as the EAC alpha encoder above but with 11-bit precision - see
+// LatteTextureETC1Encoder.h's EncodeR11BlockUNORM for the formula.
+class TextureDecoder_BC4_To_ETC2_R11EAC : public TextureDecoder, public SingletonClass<TextureDecoder_BC4_To_ETC2_R11EAC>
+{
+public:
+	sint32 getBytesPerTexel(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return 8; // R11_EAC = one 8-byte EAC block per 4x4 block
+	}
+
+	sint32 getTexelCountX(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->width + 3) / 4;
+	}
+
+	sint32 getTexelCountY(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->height + 3) / 4;
+	}
+
+	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
+	{
+		const sint32 blockCountX = getTexelCountX(textureLoader);
+		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		{
+			const sint32 by = y / 4;
+			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			{
+				const sint32 bx = x / 4;
+				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+				float rBlockFloat[4 * 4 * 1];
+				decodeBC4Block_UNORM(blockData, rBlockFloat);
+				uint8 rBlock8[16];
+				for (sint32 i = 0; i < 16; i++)
+					rBlock8[i] = (uint8)(rBlockFloat[i] * 255.0f);
+				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 8;
+				LatteEACEncoder::EncodeR11BlockUNORM(rBlock8, outBlock);
+			}
+		}
+	}
+
+	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
+	{
+		// texture dumping isn't supported for this transcoded format
+	}
+};
+
+// Signed counterpart for BC4_SNORM (the common case for actual normal map channels).
+// Transcodes to VK_FORMAT_EAC_R11_SNORM_BLOCK / GL_COMPRESSED_SIGNED_R11_EAC using
+// LatteEACEncoder::EncodeR11BlockSNORM - see that function's comment for the
+// production-source-verified formula (cross-checked against Mesa's
+// etc2_signed_r11_fetch_texel). Uses decodeBC4Block_SNORM (see LatteTextureLoader.cpp),
+// mirroring the already-shipped decodeBC5Block_SNORM's per-channel logic.
+class TextureDecoder_BC4_To_ETC2_R11EAC_SNORM : public TextureDecoder, public SingletonClass<TextureDecoder_BC4_To_ETC2_R11EAC_SNORM>
+{
+public:
+	sint32 getBytesPerTexel(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return 8;
+	}
+
+	sint32 getTexelCountX(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->width + 3) / 4;
+	}
+
+	sint32 getTexelCountY(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->height + 3) / 4;
+	}
+
+	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
+	{
+		const sint32 blockCountX = getTexelCountX(textureLoader);
+		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		{
+			const sint32 by = y / 4;
+			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			{
+				const sint32 bx = x / 4;
+				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+				float rBlockFloat[4 * 4 * 1]; // -1.0 .. 1.0 range
+				decodeBC4Block_SNORM(blockData, rBlockFloat);
+				sint8 rBlock8[16];
+				for (sint32 i = 0; i < 16; i++)
+					rBlock8[i] = (sint8)std::clamp((int)(rBlockFloat[i] * 127.0f + (rBlockFloat[i] >= 0.0f ? 0.5f : -0.5f)), -127, 127);
+				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 8;
+				LatteEACEncoder::EncodeR11BlockSNORM(rBlock8, outBlock);
+			}
+		}
+	}
+
+	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
+	{
 	}
 };
 
@@ -2164,5 +2440,111 @@ public:
 		*(outputPixel + 1) = (uint8)(green * 255.0f);
 		*(outputPixel + 2) = 0;
 		*(outputPixel + 3) = 255;
+	}
+};
+
+// Transcodes BC5_UNORM (two channels, e.g. a full normal map XY pair) to RG11_EAC -
+// just two independent R11_EAC blocks (see TextureDecoder_BC4_To_ETC2_R11EAC above)
+// placed one after another, exactly as the RG11_EAC format layout requires.
+class TextureDecoder_BC5_To_ETC2_RG11EAC : public TextureDecoder, public SingletonClass<TextureDecoder_BC5_To_ETC2_RG11EAC>
+{
+public:
+	sint32 getBytesPerTexel(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return 16; // RG11_EAC = two 8-byte EAC blocks (R, then G) per 4x4 block
+	}
+
+	sint32 getTexelCountX(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->width + 3) / 4;
+	}
+
+	sint32 getTexelCountY(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->height + 3) / 4;
+	}
+
+	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
+	{
+		const sint32 blockCountX = getTexelCountX(textureLoader);
+		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		{
+			const sint32 by = y / 4;
+			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			{
+				const sint32 bx = x / 4;
+				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+				float rgBlockFloat[4 * 4 * 2];
+				decodeBC5Block_UNORM(blockData, rgBlockFloat);
+				uint8 rBlock8[16];
+				uint8 gBlock8[16];
+				for (sint32 i = 0; i < 16; i++)
+				{
+					rBlock8[i] = (uint8)(rgBlockFloat[i * 2 + 0] * 255.0f);
+					gBlock8[i] = (uint8)(rgBlockFloat[i * 2 + 1] * 255.0f);
+				}
+				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
+				LatteEACEncoder::EncodeR11BlockUNORM(rBlock8, outBlock);
+				LatteEACEncoder::EncodeR11BlockUNORM(gBlock8, outBlock + 8);
+			}
+		}
+	}
+
+	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
+	{
+		// texture dumping isn't supported for this transcoded format
+	}
+};
+
+// Signed counterpart for BC5_SNORM - the common case for actual normal maps (X/Y in the
+// R/G channels). Reuses decodeBC5Block_SNORM, already shipped and correct.
+class TextureDecoder_BC5_To_ETC2_RG11EAC_SNORM : public TextureDecoder, public SingletonClass<TextureDecoder_BC5_To_ETC2_RG11EAC_SNORM>
+{
+public:
+	sint32 getBytesPerTexel(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return 16;
+	}
+
+	sint32 getTexelCountX(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->width + 3) / 4;
+	}
+
+	sint32 getTexelCountY(LatteTextureLoaderCtx* textureLoader) override
+	{
+		return (textureLoader->height + 3) / 4;
+	}
+
+	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
+	{
+		const sint32 blockCountX = getTexelCountX(textureLoader);
+		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		{
+			const sint32 by = y / 4;
+			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			{
+				const sint32 bx = x / 4;
+				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+				float rgBlockFloat[4 * 4 * 2]; // -1.0 .. 1.0 range per channel
+				decodeBC5Block_SNORM(blockData, rgBlockFloat);
+				sint8 rBlock8[16];
+				sint8 gBlock8[16];
+				for (sint32 i = 0; i < 16; i++)
+				{
+					float rf = rgBlockFloat[i * 2 + 0];
+					float gf = rgBlockFloat[i * 2 + 1];
+					rBlock8[i] = (sint8)std::clamp((int)(rf * 127.0f + (rf >= 0.0f ? 0.5f : -0.5f)), -127, 127);
+					gBlock8[i] = (sint8)std::clamp((int)(gf * 127.0f + (gf >= 0.0f ? 0.5f : -0.5f)), -127, 127);
+				}
+				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
+				LatteEACEncoder::EncodeR11BlockSNORM(rBlock8, outBlock);
+				LatteEACEncoder::EncodeR11BlockSNORM(gBlock8, outBlock + 8);
+			}
+		}
+	}
+
+	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
+	{
 	}
 };

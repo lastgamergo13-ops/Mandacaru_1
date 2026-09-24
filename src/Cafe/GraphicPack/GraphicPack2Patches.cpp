@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "Cafe/GraphicPack/GraphicPack2.h"
 #include "Cemu/Logging/CemuLogging.h"
 #include "Common/FileStream.h"
@@ -194,6 +196,144 @@ void GraphicPack2::RevertPatchesForModule(const RPLModule* rpl)
 	// undo all groups at once
 	if (!list_groups.empty())
 		UndoPatchGroups(list_groups, rpl);
+}
+
+PatchGroup* GraphicPack2::FindPatchGroupDefiningSymbol(const std::string& symbolName)
+{
+	for (auto candidate : list_patchGroups)
+	{
+		for (auto patch : candidate->list_patches)
+		{
+			if (auto label = dynamic_cast<PatchEntryLabel*>(patch); label && label->getSymbolName() == symbolName)
+				return candidate;
+			if (auto symbolValue = dynamic_cast<PatchEntryCemuhookSymbolValue*>(patch); symbolValue && symbolValue->getSymbolName() == symbolName)
+				return candidate;
+			if (auto variableValue = dynamic_cast<PatchEntryVariableValue*>(patch); variableValue && variableValue->getSymbolName() == symbolName)
+				return candidate;
+		}
+	}
+	return nullptr;
+}
+
+bool GraphicPack2::RevertPatchGroup(PatchGroup* group)
+{
+	std::lock_guard<std::recursive_mutex> lock(mtx_patches);
+	if (!group->isApplied())
+		return true;
+	for (auto rpl : list_modules)
+	{
+		if (group->matchesCRC(rpl->patchCRC) || (group->m_isRpxOnlyTarget && rpl->IsRPX()))
+		{
+			std::vector<PatchGroup*> single{ group };
+			UndoPatchGroups(single, rpl);
+		}
+	}
+	return !group->isApplied();
+}
+
+bool GraphicPack2::ApplyPatchGroupWithDependencies(PatchGroup* group)
+{
+	std::lock_guard<std::recursive_mutex> lock(mtx_patches);
+	if (group->isApplied())
+		return true;
+
+	std::vector<PatchGroup*> batch{ group };
+	std::vector<PatchGroup*> autoIncluded;
+
+	// Try applying the group (plus, on each retry, whatever dependency groups the
+	// previous attempt's unresolved-symbol errors pointed us to). Bounded to a handful
+	// of rounds so a genuinely unsatisfiable or cyclic dependency can't loop forever -
+	// in practice a single round covers the common "this cheat needs a helper value
+	// defined by another cheat in the same pack" case.
+	for (sint32 round = 0; round < 5; round++)
+	{
+		std::vector<std::string> unresolvedSymbols;
+		bool triedAnyModule = false;
+		for (auto rpl : list_modules)
+		{
+			bool matches = false;
+			for (auto g : batch)
+			{
+				if (g->matchesCRC(rpl->patchCRC) || (g->m_isRpxOnlyTarget && rpl->IsRPX()))
+				{
+					matches = true;
+					break;
+				}
+			}
+			if (!matches)
+				continue;
+			triedAnyModule = true;
+			std::vector<PatchGroup*> notYetApplied;
+			for (auto g : batch)
+				if (!g->isApplied())
+					notYetApplied.push_back(g);
+			if (!notYetApplied.empty())
+				ApplyPatchGroups(notYetApplied, rpl, &unresolvedSymbols);
+		}
+		if (!triedAnyModule || group->isApplied())
+			break;
+
+		bool addedNewDependency = false;
+		for (auto& symbolName : unresolvedSymbols)
+		{
+			PatchGroup* dependency = FindPatchGroupDefiningSymbol(symbolName);
+			if (dependency && dependency != group && std::find(batch.begin(), batch.end(), dependency) == batch.end())
+			{
+				batch.push_back(dependency);
+				autoIncluded.push_back(dependency);
+				addedNewDependency = true;
+			}
+		}
+		if (!addedNewDependency)
+			break; // nothing more we can discover - give up cleanly
+	}
+
+	if (!group->isApplied())
+	{
+		// didn't work out - revert any dependency groups we ended up turning on along
+		// the way too, so a cheat that ultimately failed doesn't silently leave
+		// unrelated ones active behind it
+		for (auto dep : autoIncluded)
+			RevertPatchGroup(dep);
+		return false;
+	}
+
+	m_userRequestedGroups.insert(group);
+	if (!autoIncluded.empty())
+	{
+		m_groupDependencies[group] = autoIncluded;
+		for (auto dep : autoIncluded)
+			m_dependencyRefCount[dep]++;
+	}
+	return true;
+}
+
+bool GraphicPack2::RevertPatchGroupAndOrphanedDependencies(PatchGroup* group)
+{
+	std::lock_guard<std::recursive_mutex> lock(mtx_patches);
+	bool ok = RevertPatchGroup(group);
+	m_userRequestedGroups.erase(group);
+
+	auto it = m_groupDependencies.find(group);
+	if (it != m_groupDependencies.end())
+	{
+		for (auto dependency : it->second)
+		{
+			auto refCountIt = m_dependencyRefCount.find(dependency);
+			if (refCountIt == m_dependencyRefCount.end())
+				continue;
+			refCountIt->second--;
+			if (refCountIt->second <= 0 && !m_userRequestedGroups.contains(dependency))
+			{
+				// nobody else needs this dependency active anymore, and the user never
+				// asked for it directly either - safe to turn it back off too
+				RevertPatchGroup(dependency);
+				m_dependencyRefCount.erase(refCountIt);
+			}
+		}
+		m_groupDependencies.erase(it);
+	}
+	return ok;
 }
 
 std::recursive_mutex GraphicPack2::mtx_patches;

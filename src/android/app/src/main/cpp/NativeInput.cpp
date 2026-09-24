@@ -516,3 +516,38 @@ Java_info_cemu_cemu_nativeinterface_NativeInput_saveInputs([[maybe_unused]] JNIE
 {
 	InputManager::instance().save();
 }
+
+// --- Quality of Life: quick controller profile switcher --------------------------------------
+// Named-profile save/list/load already existed, tested, in the emulator core (InputManager::
+// save/load/get_profiles/is_valid_profilename in InputManager.h/.cpp) - used internally for
+// per-title controller profiles - but had no JNI bridge at all on Android. These four functions
+// are only that missing bridge; no new low-level controller logic here.
+
+extern "C" [[maybe_unused]] JNIEXPORT jobjectArray JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeInput_getControllerProfiles([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return JNIUtils::CreateStringObjectArray(env, InputManager::get_profiles());
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeInput_isValidControllerProfileName(JNIEnv* env, [[maybe_unused]] jclass clazz, jstring name)
+{
+	return InputManager::is_valid_profilename(JNIUtils::FromJString(env, name));
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeInput_saveControllerProfile(JNIEnv* env, [[maybe_unused]] jclass clazz, jint index, jstring name)
+{
+	return InputManager::instance().save(static_cast<size_t>(index), JNIUtils::FromJString(env, name));
+}
+
+// Applies a saved profile to a controller slot live, while the game is already running - the
+// same InputManager::load() the emulator already calls on startup (default mapping) and when
+// launching a title with a per-game profile assigned, both guarded by the same std::scoped_lock
+// as this call, so it's already safe to call while the game is reading input concurrently.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeInput_loadControllerProfile(JNIEnv* env, [[maybe_unused]] jclass clazz, jint index, jstring name)
+{
+	return InputManager::instance().load(static_cast<size_t>(index), JNIUtils::FromJString(env, name));
+}
+

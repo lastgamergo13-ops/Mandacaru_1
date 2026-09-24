@@ -13,6 +13,7 @@ import info.cemu.cemu.nativeinterface.NativeEmulation.setDPI
 import info.cemu.cemu.nativeinterface.NativeFiles
 import info.cemu.cemu.nativeinterface.NativeGraphicPacks.refreshGraphicPacks
 import info.cemu.cemu.nativeinterface.NativeLogging.crashLog
+import info.cemu.cemu.nativeinterface.NativeRenderer
 import info.cemu.cemu.nativeinterface.NativeSwkbd.initializeSwkbd
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -32,6 +33,10 @@ class CemuApplication : Application() {
         AppSettingsStore.init(this)
 
         NativeFiles.initialize(contentResolver)
+
+        // Quality of Life: gives the screenshot save-callback (NativeRenderer.cpp ->
+        // NativeRenderer.kt) access to a Context, the same pattern NativeFiles above already uses.
+        NativeRenderer.initialize(this)
 
         initializeTranslations()
 

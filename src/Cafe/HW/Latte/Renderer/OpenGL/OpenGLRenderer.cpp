@@ -309,6 +309,7 @@ void OpenGLRenderer::Initialize()
 	GLCanvas_MakeCurrent(false);
 	LoadOpenGLImports();
 	GetVendorInformation();	
+	QuerySupportedFormats();
 
 #if BOOST_OS_WINDOWS
 	if (wglSwapIntervalEXT)
@@ -455,6 +456,72 @@ void OpenGLRenderer::GetVendorInformation()
 	}
 
 	m_vendor = GfxVendor::Generic;
+}
+
+bool OpenGLRenderer::IsGLExtensionSupported(std::string_view extensionName)
+{
+	// Modern (GL 3.0+ / GLES 3.0+) indexed extension query. This project already assumes
+	// at least that baseline elsewhere, and the legacy single-string glGetString(GL_EXTENSIONS)
+	// is disallowed (returns null) on core-profile desktop contexts anyway.
+	GLint extensionCount = 0;
+	glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+	for (GLint i = 0; i < extensionCount; i++)
+	{
+		const char* ext = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+		if (ext && extensionName == ext)
+			return true;
+	}
+	return false;
+}
+
+// Real runtime checks for texture compression format support, used by the per-format
+// "texture_compression_bcX" experimental options (BC1-BC5 -> ETC2/EAC transcode - see
+// texture_chooseDecodedFormat below and LatteTextureGL.cpp's GetOpenGLFormatInfo).
+// Before this function existed, BC1/S3TC support was simply assumed unconditionally
+// here - a reasonable assumption on desktop GL, where S3TC has been a de facto standard
+// for two decades, but not a safe one on Android/GLES, where this same renderer also
+// runs and BC/S3TC support is inconsistent between GPU vendors.
+void OpenGLRenderer::QuerySupportedFormats()
+{
+	const char* glVersionString = (const char*)glGetString(GL_VERSION);
+	bool isGLES = glVersionString && boost::icontains(glVersionString, "OpenGL ES");
+	int versionMajor = 0, versionMinor = 0;
+	if (glVersionString)
+	{
+		const char* versionNumberStart = glVersionString;
+		if (isGLES)
+		{
+			const char* esPos = strstr(glVersionString, "OpenGL ES");
+			if (esPos)
+				versionNumberStart = esPos + strlen("OpenGL ES ");
+		}
+		sscanf(versionNumberStart, "%d.%d", &versionMajor, &versionMinor);
+	}
+
+	m_supportedFormatInfo.fmt_bc1 =
+		IsGLExtensionSupported("GL_EXT_texture_compression_s3tc") ||
+		IsGLExtensionSupported("GL_EXT_texture_compression_dxt1") ||
+		IsGLExtensionSupported("GL_ANGLE_texture_compression_dxt1");
+
+	// Unlike fmt_bc1, BC2/DXT3 has no "DXT1-only" partial extension fallback - only the
+	// full bundle extension covers it.
+	m_supportedFormatInfo.fmt_bc2 = IsGLExtensionSupported("GL_EXT_texture_compression_s3tc");
+	// same reasoning as fmt_bc2 - BC3/DXT5 is part of the same bundle extension.
+	m_supportedFormatInfo.fmt_bc3 = IsGLExtensionSupported("GL_EXT_texture_compression_s3tc");
+
+	// BC4/BC5 (RGTC) is a separate extension bundle from S3TC - covers both formats and
+	// both UNORM/SNORM variants together.
+	m_supportedFormatInfo.fmt_bc4 =
+		IsGLExtensionSupported("GL_EXT_texture_compression_rgtc") ||
+		IsGLExtensionSupported("GL_ARB_texture_compression_rgtc");
+	m_supportedFormatInfo.fmt_bc5 = m_supportedFormatInfo.fmt_bc4;
+
+	// ETC2 is mandatory-core in GLES 3.0+ (any conformant Android GPU) and in desktop
+	// OpenGL 4.3+; also available on older desktop GL via GL_ARB_ES3_compatibility.
+	bool etc2CoreVersion = isGLES ? (versionMajor >= 3) : (versionMajor > 4 || (versionMajor == 4 && versionMinor >= 3));
+	m_supportedFormatInfo.fmt_etc2 = etc2CoreVersion || IsGLExtensionSupported("GL_ARB_ES3_compatibility");
+
+	cemuLog_log(LogType::Force, "OpenGL texture compression support: BC1/S3TC={} BC2/DXT3={} BC3/DXT5={} BC4-5/RGTC={} ETC2={}", m_supportedFormatInfo.fmt_bc1, m_supportedFormatInfo.fmt_bc2, m_supportedFormatInfo.fmt_bc3, m_supportedFormatInfo.fmt_bc4, m_supportedFormatInfo.fmt_etc2);
 }
 
 void _glDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam)
@@ -908,35 +975,110 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	else if (format == Latte::E_GX2SURFFMT::R32_FLOAT)
 		texDecoder = TextureDecoder_R32_FLOAT::getInstance();
 	else if (format == Latte::E_GX2SURFFMT::BC1_UNORM)
-		texDecoder = TextureDecoder_BC1::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc1)
+			texDecoder = TextureDecoder_BC1::getInstance();
+		else if (GetConfig().texture_compression_bc1 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
+		else
+			texDecoder = TextureDecoder_BC1_UNORM_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::BC1_SRGB)
-		texDecoder = TextureDecoder_BC1::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc1)
+			texDecoder = TextureDecoder_BC1::getInstance();
+		else if (GetConfig().texture_compression_bc1 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
+		else
+			texDecoder = TextureDecoder_BC1_SRGB_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::BC2_UNORM)
-		texDecoder = TextureDecoder_BC2_UNORM_uncompress::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc2)
+			texDecoder = TextureDecoder_BC2::getInstance();
+		else if (GetConfig().texture_compression_bc2 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
+		else
+			texDecoder = TextureDecoder_BC2_UNORM_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::BC2_SRGB)
-		texDecoder = TextureDecoder_BC2_SRGB_uncompress::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc2)
+			texDecoder = TextureDecoder_BC2::getInstance();
+		else if (GetConfig().texture_compression_bc2 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
+		else
+			texDecoder = TextureDecoder_BC2_SRGB_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::BC3_UNORM)
-		texDecoder = TextureDecoder_BC3::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc3)
+			texDecoder = TextureDecoder_BC3::getInstance();
+		else if (GetConfig().texture_compression_bc3 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
+		else
+			texDecoder = TextureDecoder_BC3_UNORM_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::BC3_SRGB)
-		texDecoder = TextureDecoder_BC3::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc3)
+			texDecoder = TextureDecoder_BC3::getInstance();
+		else if (GetConfig().texture_compression_bc3 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
+		else
+			texDecoder = TextureDecoder_BC3_SRGB_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::BC4_UNORM)
 	{
+		// Native BC4/RGTC and the ETC2/EAC transcode both require a plain 2D (or 2D
+		// array) texture type in this GL backend - other dimensions (3D, cube, ...)
+		// always fall back to the fully uncompressed path regardless of the options
+		// below, same restriction the code already had before this feature existed.
 		if (dim != Latte::E_DIM::DIM_2D && dim != Latte::E_DIM::DIM_2D_ARRAY)
 			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
-		else
+		else if (GetInstance()->m_supportedFormatInfo.fmt_bc4)
 			texDecoder = TextureDecoder_BC4::getInstance();
+		else if (GetConfig().texture_compression_bc4 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC::getInstance();
+		else
+			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC4_SNORM)
 	{
+		// Fixed: this used to have native vs. uncompress backwards for the 2D case
+		// (treating SNORM data as UNORM, silently corrupting anything using the negative
+		// half of the range - typically normal map channels) - see the SNORM bug fix
+		// report. TextureDecoder_BC4_UNORM_uncompress is still used for the final
+		// fallback here deliberately: it decodes to plain UNORM floats, which is what
+		// this GL path already expected downstream before this feature - a real SNORM
+        // uncompressed fallback would need its own decoder and format, out of scope here.
 		if (dim != Latte::E_DIM::DIM_2D && dim != Latte::E_DIM::DIM_2D_ARRAY)
+			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+		else if (GetInstance()->m_supportedFormatInfo.fmt_bc4)
 			texDecoder = TextureDecoder_BC4::getInstance();
+		else if (GetConfig().texture_compression_bc4 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC_SNORM::getInstance();
 		else
 			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC5_UNORM)
-		texDecoder = TextureDecoder_BC5::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc5)
+			texDecoder = TextureDecoder_BC5::getInstance();
+		else if (GetConfig().texture_compression_bc5 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC::getInstance();
+		else
+			texDecoder = TextureDecoder_BC5_UNORM_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::BC5_SNORM)
-		texDecoder = TextureDecoder_BC5::getInstance();
+	{
+		if (GetInstance()->m_supportedFormatInfo.fmt_bc5)
+			texDecoder = TextureDecoder_BC5::getInstance();
+		else if (GetConfig().texture_compression_bc5 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC_SNORM::getInstance();
+		else
+			texDecoder = TextureDecoder_BC5_SNORM_uncompress::getInstance();
+	}
 	else if (format == Latte::E_GX2SURFFMT::R8_G8_B8_A8_UNORM)
 		texDecoder = TextureDecoder_R8_G8_B8_A8::getInstance();
 	else if (format == Latte::E_GX2SURFFMT::R8_G8_B8_A8_SNORM)

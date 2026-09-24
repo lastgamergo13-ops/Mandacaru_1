@@ -16,6 +16,30 @@ struct ppcRecRange_t
 	void* storedRange;
 };
 
+// Identifies an absolute host address that a backend embedded directly into the
+// generated machine code (e.g. as an immediate operand). Native machine code produced
+// by the recompiler is NOT position independent - both backends embed a small number of
+// absolute pointers (to PPCRecompiler_virtualHLE, ppcRecompilerInstanceData and memory_base)
+// directly into the instruction stream. Those pointers are only valid for the process run
+// that generated them (ASLR places them differently every launch), so if compiled code is
+// ever persisted to disk (see PPCRecompilerCache.h) and reloaded in a later run, every one
+// of these locations has to be re-patched with the *current* run's actual address before
+// the code is safe to execute. This struct records where those locations are and what value
+// belongs there, at generation time, so that the AOT disk cache can perform that re-patching.
+enum class PPCRecRelocType : uint8
+{
+	HLE_FUNCTION = 0,  // absolute address of PPCRecompiler_virtualHLE
+	INSTANCE_DATA = 1, // absolute address of ppcRecompilerInstanceData (only re-embedded per-function on the x64 backend)
+	MEMORY_BASE = 2,   // absolute address of memory_base (only re-embedded per-function on the x64 backend)
+};
+
+struct PPCRecRelocEntry
+{
+	uint32 codeOffset; // byte offset (relative to the start of x86Code) where the relocatable load is emitted
+	PPCRecRelocType type;
+	uint8 regId; // AArch64 only: index of the destination register the value is loaded into. Unused (0) on x64, where the register is implicit in the fixed instruction encoding
+};
+
 struct PPCRecFunction_t
 {
 	struct JumpTableEntry
@@ -32,6 +56,11 @@ struct PPCRecFunction_t
 	size_t x86Size;
 	std::vector<ppcRecRange_t> list_ranges;
 	boost::container::small_vector<JumpTableEntry, 2> jumpTableEntries;
+	// Every absolute-address embedding this function's generated code contains (see
+	// PPCRecRelocEntry above) - empty for functions that made no HLE calls. Only ever
+	// consumed by the AOT disk cache (PPCRecompilerCache.cpp); a normal, freshly compiled
+	// function that's never cached simply carries this around unused.
+	std::vector<PPCRecRelocEntry> relocations;
 };
 
 #include "Cafe/HW/Espresso/Recompiler/IML/IMLInstruction.h"

@@ -19,6 +19,14 @@ std::atomic_int32_t g_padVolume = 0;
 uint32 IAudioAPI::s_audioDelay = 2;
 std::array<bool, IAudioAPI::AudioAPIEnd> IAudioAPI::s_availableApis{};
 
+// See declaration and usage comment in IAudioAPI.h / ax_out.cpp
+bool g_enableAudioBufferSync = false;
+
+void IAudioAPI_SetBufferSyncEnabled(bool enabled)
+{
+	g_enableAudioBufferSync = enabled;
+}
+
 IAudioAPI::IAudioAPI(uint32 samplerate, uint32 channels, uint32 samples_per_block, uint32 bits_per_sample)
 	: m_samplerate(samplerate), m_channels(channels), m_samplesPerBlock(samples_per_block), m_bitsPerSample(bits_per_sample)
 {
@@ -77,6 +85,7 @@ void IAudioAPI::InitWFX(sint32 samplerate, sint32 channels, sint32 bits_per_samp
 void IAudioAPI::InitializeStatic()
 {
 	s_audioDelay = GetConfig().audio_delay;
+	g_enableAudioBufferSync = GetConfig().audio_buffer_sync.GetValue();
 
 #if BOOST_OS_WINDOWS
 	s_availableApis[DirectSound] = true;

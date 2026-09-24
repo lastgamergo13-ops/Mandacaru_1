@@ -53,4 +53,12 @@ object NativeEmulation {
 
     @JvmStatic
     external fun supportsLoadingCustomDriver(): Boolean
+
+    // Quality of Life: pushes the device's current Android thermal status level (from
+    // PowerManager.getCurrentThermalStatus()/OnThermalStatusChangedListener; see EmulationScreen)
+    // into the native overlay, for the "Device thermal status" HUD stat. Not a get/set
+    // configuration pair like the rest of NativeSettings - this is a one-way live push of a
+    // reading that only Android knows about.
+    @JvmStatic
+    external fun updateThermalStatus(status: Int)
 }

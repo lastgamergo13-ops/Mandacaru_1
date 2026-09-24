@@ -333,6 +333,29 @@ struct AArch64GenContext_t : CodeGenerator
 			nop();
 	}
 
+	// Absolute host addresses (e.g. PPCRecompiler_virtualHLE) embedded in the generated code by
+	// movAbsFixed() below. Only valid for this process run (ASLR); the AOT disk cache uses this
+	// list to re-patch every such location if this function's code is loaded in a later run.
+	std::vector<struct PPCRecRelocEntry> relocations;
+
+	// Loads a 64-bit absolute address into dst using an UNCONDITIONAL, always-4-instruction
+	// (16 byte) movz+movk+movk+movk sequence, and records a relocation entry for it.
+	// This must NOT use the regular mov(XReg, uint64) pseudo-instruction: that helper emits a
+	// variable number of instructions depending on how many 16-bit chunks of the value are zero,
+	// which is fine for a value used only within this run, but breaks cache re-patching - the
+	// value that gets patched in on a later run will almost certainly have a different zero-chunk
+	// pattern (ASLR), which would shift the size/layout of a variable-length encoding and corrupt
+	// every instruction after it. A fixed instruction count keeps the patch a simple in-place
+	// overwrite of the four immediate fields, independent of the value.
+	void movAbsFixed(const XReg& dst, uint64 value, PPCRecRelocType relocType)
+	{
+		relocations.push_back({ (uint32)getSize(), relocType, (uint8)dst.getIdx() });
+		movz(dst, (uint32)(value & 0xFFFF), 0);
+		movk(dst, (uint32)((value >> 16) & 0xFFFF), 16);
+		movk(dst, (uint32)((value >> 32) & 0xFFFF), 32);
+		movk(dst, (uint32)((value >> 48) & 0xFFFF), 48);
+	}
+
 	std::map<IMLSegment*, size_t> segmentStarts;
 	void storeSegmentStart(IMLSegment* imlSegment)
 	{
@@ -1262,8 +1285,11 @@ bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 		mov(x0, HCPU_REG);
 		mov(w1, funcId);
 		// call HLE function
-
-		mov(TEMP_GPR1.XReg, (uint64)PPCRecompiler_virtualHLE);
+		// NOTE: must use movAbsFixed() here, not mov(reg, imm64) - see its comment for why
+		// (this address is only valid for this process run; the AOT disk cache needs a
+		// fixed-size, always-patchable instruction sequence to safely reuse this function's
+		// code in a later run).
+		movAbsFixed(TEMP_GPR1.XReg, (uint64)PPCRecompiler_virtualHLE, PPCRecRelocType::HLE_FUNCTION);
 		blr(TEMP_GPR1.XReg);
 
 		ldp(x29, x30, AdrPostImm(sp, 16));
@@ -1925,6 +1951,7 @@ bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, 
 	// set code
 	PPCRecFunction->x86Code = AArch64Allocator::FinalizeExecutableCode(aarch64GenContext.getCode<void*>(), aarch64GenContext.getSize());
 	PPCRecFunction->x86Size = aarch64GenContext.getMaxSize();
+	PPCRecFunction->relocations = std::move(aarch64GenContext.relocations);
 	// set free disabled to skip freeing the code from the CodeGenerator destructor
 	allocator.setFreeDisabled(true);
 	return true;
@@ -1936,6 +1963,66 @@ void PPCRecompiler_cleanupAArch64Code(void* code, size_t size)
 	if (allocator.useProtect())
 		CodeArray::protect(code, size, CodeArray::PROTECT_RW);
 	allocator.free(static_cast<uint32*>(code));
+}
+
+// AOT cache support: re-emits a previously generated (and persisted) function's raw
+// machine code into fresh memory, patching in this run's actual absolute addresses at
+// the locations AArch64GenContext_t::relocations recorded when it was first compiled
+// (see the big comment on PPCRecRelocEntry in PPCRecompiler.h, and on movAbsFixed()
+// above, for why that's necessary). Returns nullptr on any sanity-check failure (never
+// crashes/asserts in release builds on a corrupt cache entry - callers must gracefully
+// fall back to a normal recompile in that case).
+void* PPCRecompiler_injectAArch64CachedCode(const uint8* code, size_t codeSize, const std::vector<PPCRecRelocEntry>& relocations)
+{
+	// AArch64 instructions are always 4 bytes; anything else can only be a corrupt cache entry
+	if (codeSize == 0 || (codeSize % 4) != 0)
+		return nullptr;
+
+	// declaration order matters here: 'allocator' must outlive 'codeGen' so that CodeArray's
+	// destructor can still safely call into it (see the identical pattern in PPCRecompiler_generateAArch64Code)
+	AArch64Allocator allocator;
+	CodeGenerator codeGen(codeSize, 0 /* ALLOC_BUF, fixed size, allocator sets it RWE/RW immediately */, &allocator);
+	uint8* buf = const_cast<uint8*>(codeGen.getCode()); // writable address - see FinalizeExecutableCode's comment
+	memcpy(buf, code, codeSize);
+
+	for (auto& reloc : relocations)
+	{
+		// every relocation on this backend is a movAbsFixed() sequence: exactly 4 instructions / 16 bytes
+		if ((size_t)reloc.codeOffset + 16 > codeSize)
+		{
+			cemu_assert_debug(false); // corrupt/truncated cache entry
+			return nullptr;
+		}
+		uint64 patchValue;
+		switch (reloc.type)
+		{
+		case PPCRecRelocType::HLE_FUNCTION:
+			patchValue = (uint64)PPCRecompiler_virtualHLE;
+			break;
+		default:
+			cemu_assert_debug(false); // this backend never emits any other relocation type
+			return nullptr;
+		}
+		// re-emit the exact same fixed movz+movk*3 sequence directly into the target buffer,
+		// using the same (tested) encoder that produced it, rather than hand-encoding the bits
+		CodeGenerator patchGen(16, buf + reloc.codeOffset, nullptr);
+		XReg dst(reloc.regId);
+		patchGen.movz(dst, (uint32)(patchValue & 0xFFFF), 0);
+		patchGen.movk(dst, (uint32)((patchValue >> 16) & 0xFFFF), 16);
+		patchGen.movk(dst, (uint32)((patchValue >> 32) & 0xFFFF), 32);
+		patchGen.movk(dst, (uint32)((patchValue >> 48) & 0xFFFF), 48);
+	}
+
+	codeGen.setSize(codeSize);
+	codeGen.readyRE(); // flips to read+execute (where applicable) and flushes the writable mapping's icache
+	allocator.setFreeDisabled(true);
+	// on Android this translates from the writable address to the separate executable
+	// address (W^X dual-mapping) and additionally clears the icache for THAT address
+	// range - readyRE() above only covers the writable mapping, which is not the one the
+	// CPU actually fetches instructions from once execution jumps here. On every other
+	// platform this is a no-op that returns buf unchanged. Must match exactly what
+	// PPCRecompiler_generateAArch64Code does for freshly generated code.
+	return AArch64Allocator::FinalizeExecutableCode(buf, codeSize);
 }
 
 void AArch64GenContext_t::enterRecompilerCode()

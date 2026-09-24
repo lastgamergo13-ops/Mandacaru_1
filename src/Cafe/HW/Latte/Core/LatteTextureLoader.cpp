@@ -392,6 +392,64 @@ void decodeBC4Block_UNORM(uint8* blockStorage, float* rOutput)
 	}
 }
 
+// Mirrors decodeBC4Block_UNORM's structure exactly, but with the same signed byte
+// interpretation and -1..1 float range already used (and already correct/shipped) in
+// decodeBC5Block_SNORM's red channel below - this is that same, already-proven logic,
+// just for a single channel instead of two.
+void decodeBC4Block_SNORM(uint8* blockStorage, float* rOutput)
+{
+	uint8* blockInput = (uint8*)blockStorage;
+	float red[8];
+
+	red[0] = ((float)(*(sint8*)(blockInput + 0)) + 128.0f) / 255.0f;
+	red[1] = ((float)(*(sint8*)(blockInput + 1)) + 128.0f) / 255.0f;
+	red[0] = (red[0] * 2.0f - 1.0f);
+	red[1] = (red[1] * 2.0f - 1.0f);
+
+	if (red[0] > red[1])
+	{
+		// 6 interpolated color values
+		red[2] = (6 * red[0] + 1 * red[1]) / 7.0f; // bit code 010
+		red[3] = (5 * red[0] + 2 * red[1]) / 7.0f; // bit code 011
+		red[4] = (4 * red[0] + 3 * red[1]) / 7.0f; // bit code 100
+		red[5] = (3 * red[0] + 4 * red[1]) / 7.0f; // bit code 101
+		red[6] = (2 * red[0] + 5 * red[1]) / 7.0f; // bit code 110
+		red[7] = (1 * red[0] + 6 * red[1]) / 7.0f; // bit code 111
+	}
+	else
+	{
+		// 4 interpolated color values
+		red[2] = (4 * red[0] + 1 * red[1]) / 5.0f; // bit code 010
+		red[3] = (3 * red[0] + 2 * red[1]) / 5.0f; // bit code 011
+		red[4] = (2 * red[0] + 3 * red[1]) / 5.0f; // bit code 100
+		red[5] = (1 * red[0] + 4 * red[1]) / 5.0f; // bit code 101
+		red[6] = -1.0f;                       // bit code 110
+		red[7] = 1.0f;                       // bit code 111
+	}
+
+	uint8* bitIndices = blockInput + 2;
+	uint32 redRow0 = (((uint32)bitIndices[2]) << 16) | (((uint32)bitIndices[1]) << 8) | (((uint32)bitIndices[0]) << 0);
+	uint32 redRow1 = (((uint32)bitIndices[5]) << 16) | (((uint32)bitIndices[4]) << 8) | (((uint32)bitIndices[3]) << 0);
+
+	uint8 pRed[16];
+	for (sint32 i = 0; i < 8; i++)
+	{
+		pRed[i] = (redRow0 >> (i * 3)) & 7;
+		pRed[i + 8] = (redRow1 >> (i * 3)) & 7;
+	}
+
+	float* pixelOutput = rOutput;
+	for (sint32 py = 0; py < 4; py++)
+	{
+		for (sint32 px = 0; px < 4; px++)
+		{
+			float c = red[pRed[px + py * 4]];
+			*pixelOutput = c;
+			pixelOutput++;
+		}
+	}
+}
+
 void decodeBC5Block_UNORM(uint8* blockStorage, float* rgOutput)
 {
 	uint8* blockInput = (uint8*)blockStorage;

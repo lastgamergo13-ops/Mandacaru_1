@@ -53,6 +53,25 @@ namespace snd_core
 	sint32 __AXOutTVOutputChannelCount;
 	sint32 __AXOutDRCOutputChannelCount;
 
+	// See CemuConfig::force_audio_downmix. Mirrors the config value; refreshed at the top of
+	// AXOut_SubmitTVFrame() and AXOut_SubmitDRCFrame() (once per frame, on every call - not just
+	// once at startup) so toggling the setting takes effect immediately, without needing to
+	// restart the game or the audio subsystem.
+	bool g_forceAudioDownmix = false;
+
+	// Clamps a mixed (post-summation) float sample back into the valid s16 range. Needed because
+	// once multiple channels are summed together for a real downmix, the result can exceed what a
+	// single already-clamped s16 channel could reach, unlike the previous single-channel-copy code
+	// which only ever had to clamp one channel's value at a time.
+	static inline sint16 AXOut_ClampToS16(float sample)
+	{
+		if (sample > 32767.0f)
+			return 32767;
+		if (sample < -32768.0f)
+			return -32768;
+		return (sint16)sample;
+	}
+
 	void __AXSetTVMode(sint32 mode)
 	{
 		cemu_assert(mode == AX_MODE_STEREO || mode == AX_MODE_6CH || mode == AX_MODE_MONO);
@@ -218,6 +237,8 @@ namespace snd_core
 
 	void AXOut_SubmitTVFrame(sint32 frameIndex)
 	{
+		g_forceAudioDownmix = GetConfig().force_audio_downmix.GetValue();
+
 		sint32 numSamples = AIGetSamplesPerChannel(AX_DEV_TV);
 		if (__AXMode[AX_DEV_TV] == AX_MODE_6CH)
 		{
@@ -267,17 +288,51 @@ namespace snd_core
 		}
 		else if (__AXMode[AX_DEV_TV] == AX_MODE_STEREO)
 		{
-			sint32* inputChannel0 = __AXTVBuffer48.GetPtr() + numSamples * 0;
-			sint32* inputChannel1 = __AXTVBuffer48.GetPtr() + numSamples * 1;
+			sint32* inputChannel0 = __AXTVBuffer48.GetPtr() + numSamples * 0; // FL
+			sint32* inputChannel1 = __AXTVBuffer48.GetPtr() + numSamples * 1; // FR
 			sint16* dmaOutputBuffer = __AXTVDMABuffers[frameIndex];
-			for (sint32 i = 0; i < numSamples; i++)
+			if (g_forceAudioDownmix)
 			{
-				dmaOutputBuffer[0] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel0), -32768), 32767));
-				dmaOutputBuffer[1] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel1), -32768), 32767));
-				dmaOutputBuffer += 2;
-				// next sample
-				inputChannel0++;
-				inputChannel1++;
+				// Real downmix instead of dropping center/LFE/surround: fold them into the front
+				// L/R pair using the standard ITU-R BS.775 "Lo/Ro" coefficients (center and
+				// surround channels attenuated by -3dB / 0.707 before being summed in; LFE is
+				// intentionally excluded, matching that same standard formula):
+				//   Lo = FL + 0.707*FC + 0.707*BL
+				//   Ro = FR + 0.707*FC + 0.707*BR
+				sint32* inputChannel2 = __AXTVBuffer48.GetPtr() + numSamples * 2; // BL (surround left)
+				sint32* inputChannel3 = __AXTVBuffer48.GetPtr() + numSamples * 3; // BR (surround right)
+				sint32* inputChannel4 = __AXTVBuffer48.GetPtr() + numSamples * 4; // FC (center)
+				for (sint32 i = 0; i < numSamples; i++)
+				{
+					float fl = (float)_swapEndianS32(*inputChannel0);
+					float fr = (float)_swapEndianS32(*inputChannel1);
+					float bl = (float)_swapEndianS32(*inputChannel2);
+					float br = (float)_swapEndianS32(*inputChannel3);
+					float fc = (float)_swapEndianS32(*inputChannel4);
+					float lo = fl + 0.707f * fc + 0.707f * bl;
+					float ro = fr + 0.707f * fc + 0.707f * br;
+					dmaOutputBuffer[0] = _swapEndianS16(AXOut_ClampToS16(lo));
+					dmaOutputBuffer[1] = _swapEndianS16(AXOut_ClampToS16(ro));
+					dmaOutputBuffer += 2;
+					// next sample
+					inputChannel0++;
+					inputChannel1++;
+					inputChannel2++;
+					inputChannel3++;
+					inputChannel4++;
+				}
+			}
+			else
+			{
+				for (sint32 i = 0; i < numSamples; i++)
+				{
+					dmaOutputBuffer[0] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel0), -32768), 32767));
+					dmaOutputBuffer[1] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel1), -32768), 32767));
+					dmaOutputBuffer += 2;
+					// next sample
+					inputChannel0++;
+					inputChannel1++;
+				}
 			}
 			AIInitDMA(__AXTVDMABuffers[frameIndex], numSamples * 2 * sizeof(sint16)); // 2ch output
 		}
@@ -285,12 +340,44 @@ namespace snd_core
 		{
 			sint32* inputChannel0 = __AXTVBuffer48.GetPtr() + numSamples * 0;
 			sint16* dmaOutputBuffer = __AXTVDMABuffers[frameIndex];
-			for (sint32 i = 0; i < numSamples; i++)
+			if (g_forceAudioDownmix)
 			{
-				dmaOutputBuffer[0] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel0), -32768), 32767));
-				dmaOutputBuffer++;
-				// next sample
-				inputChannel0++;
+				// Same Lo/Ro downmix as the stereo case above, then folded down to one channel by
+				// averaging (0.5x, not a raw sum, so combining two full-scale channels can't clip).
+				// This averaging step isn't a separately standardized broadcast formula - it's just
+				// a safe way to combine Lo/Ro into mono - unlike the Lo/Ro formula itself above.
+				sint32* inputChannel1 = __AXTVBuffer48.GetPtr() + numSamples * 1; // FR
+				sint32* inputChannel2 = __AXTVBuffer48.GetPtr() + numSamples * 2; // BL
+				sint32* inputChannel3 = __AXTVBuffer48.GetPtr() + numSamples * 3; // BR
+				sint32* inputChannel4 = __AXTVBuffer48.GetPtr() + numSamples * 4; // FC
+				for (sint32 i = 0; i < numSamples; i++)
+				{
+					float fl = (float)_swapEndianS32(*inputChannel0);
+					float fr = (float)_swapEndianS32(*inputChannel1);
+					float bl = (float)_swapEndianS32(*inputChannel2);
+					float br = (float)_swapEndianS32(*inputChannel3);
+					float fc = (float)_swapEndianS32(*inputChannel4);
+					float lo = fl + 0.707f * fc + 0.707f * bl;
+					float ro = fr + 0.707f * fc + 0.707f * br;
+					dmaOutputBuffer[0] = _swapEndianS16(AXOut_ClampToS16((lo + ro) * 0.5f));
+					dmaOutputBuffer++;
+					// next sample
+					inputChannel0++;
+					inputChannel1++;
+					inputChannel2++;
+					inputChannel3++;
+					inputChannel4++;
+				}
+			}
+			else
+			{
+				for (sint32 i = 0; i < numSamples; i++)
+				{
+					dmaOutputBuffer[0] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel0), -32768), 32767));
+					dmaOutputBuffer++;
+					// next sample
+					inputChannel0++;
+				}
 			}
 			AIInitDMA(__AXTVDMABuffers[frameIndex], numSamples * 1 * sizeof(sint16)); // 1ch (output as stereo)
 		}
@@ -328,6 +415,8 @@ namespace snd_core
 
 	void AXOut_SubmitDRCFrame(sint32 frameIndex)
 	{
+		g_forceAudioDownmix = GetConfig().force_audio_downmix.GetValue();
+
 		sint32 numSamples = AIGetSamplesPerChannel(AX_DEV_DRC);
 		if (__AXMode[AX_DEV_DRC] == AX_MODE_6CH)
 		{
@@ -376,13 +465,35 @@ namespace snd_core
 		{
 			sint32* inputChannel0 = __AXDRCBuffer48.GetPtr() + numSamples * 0;
 			sint16* dmaOutputBuffer = __AXDRCDMABuffers[frameIndex];
-			for (sint32 i = 0; i < numSamples; i++)
+			if (g_forceAudioDownmix)
 			{
-				// write mono input as stereo output
-				dmaOutputBuffer[1] = dmaOutputBuffer[0] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel0), -32768), 32767));
-				dmaOutputBuffer += 2;
-				// next sample
-				inputChannel0++;
+				// The Gamepad never carries more than L/R, so unlike the TV path above there is no
+				// center/surround to fold in - but the previous code below still discarded the
+				// right channel outright instead of mixing it in. Average L+R instead (0.5x to
+				// avoid clipping when combining two full-scale channels).
+				sint32* inputChannel1 = __AXDRCBuffer48.GetPtr() + numSamples * 1;
+				for (sint32 i = 0; i < numSamples; i++)
+				{
+					float fl = (float)_swapEndianS32(*inputChannel0);
+					float fr = (float)_swapEndianS32(*inputChannel1);
+					// write mono input as stereo output
+					dmaOutputBuffer[1] = dmaOutputBuffer[0] = _swapEndianS16(AXOut_ClampToS16((fl + fr) * 0.5f));
+					dmaOutputBuffer += 2;
+					// next sample
+					inputChannel0++;
+					inputChannel1++;
+				}
+			}
+			else
+			{
+				for (sint32 i = 0; i < numSamples; i++)
+				{
+					// write mono input as stereo output
+					dmaOutputBuffer[1] = dmaOutputBuffer[0] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel0), -32768), 32767));
+					dmaOutputBuffer += 2;
+					// next sample
+					inputChannel0++;
+				}
 			}
 			AIInitDRCDMA(__AXDRCDMABuffers[frameIndex], numSamples * 2 * sizeof(sint16)); // 1ch (output as stereo)
 		}
@@ -484,13 +595,25 @@ namespace snd_core
 
 		// if we haven't buffered any blocks, we will wait less time than usual
 		bool additional_blocks_required = false;
+		// Limitar o processamento de áudio assíncrono (g_enableAudioBufferSync): if the backend
+		// reports it's critically low (about to run dry - e.g. because heavy GPU work on this
+		// thread delayed us getting here), poll again as soon as the kWaitDurationMinimum floor
+		// below allows, instead of the normal "fast" cadence. This never blocks: it's still just
+		// a read of the current buffer occupancy, and the existing kWaitDurationMinimum check
+		// further down is untouched, so this can't turn into a busy-loop that starves the
+		// emulation thread.
+		bool buffer_critically_low = false;
 		{
 			const std::shared_lock lock(g_audioMutex, std::try_to_lock);
 			if (lock)
+			{
 				additional_blocks_required = (g_tvAudio && g_tvAudio->NeedAdditionalBlocks()) || (g_padAudio && g_padAudio->NeedAdditionalBlocks());
+				if (g_enableAudioBufferSync)
+					buffer_critically_low = (g_tvAudio && g_tvAudio->IsBufferCriticallyLow()) || (g_padAudio && g_padAudio->IsBufferCriticallyLow());
+			}
 		}
 
-		const auto wait_duration = additional_blocks_required ? kWaitDurationFast : kWaitDuration;
+		const auto wait_duration = buffer_critically_low ? kWaitDurationMinimum : (additional_blocks_required ? kWaitDurationFast : kWaitDuration);
 
 		// s_ax_interval_timer increases by the wait period
 		// it can lag behind by multiple periods (up to kTimeout) if there is minor stutter in the CPU thread

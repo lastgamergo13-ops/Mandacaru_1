@@ -8,6 +8,7 @@
 #include "util/MemMapper/MemMapper.h"
 #include "Common/cpu_features.h"
 #include <boost/container/static_vector.hpp>
+#include <limits>
 
 static x86Assembler64::GPR32 _reg32(IMLReg physReg)
 {
@@ -288,13 +289,19 @@ bool PPCRecompilerX64Gen_imlInstruction_macro(PPCRecFunction_t* PPCRecFunction, 
 		x64Gen_sub_reg64_imm32(x64GenContext, X86_REG_RSP, 8*11); // must be uneven number in order to retain stack 0x10 alignment
 		x64Gen_mov_reg64_imm64(x64GenContext, X86_REG_RBP, 0);
 		// call HLE function
+		// NOTE: x64Gen_mov_reg64_imm64() always emits a fixed 10-byte instruction (2 byte opcode + 8 byte absolute immediate).
+		// The 3 absolute pointers below are only valid for this process run (ASLR); PPCRecompilerCache_Store() persists
+		// their locations as relocations so PPCRecompiler_injectX64CachedCode() can re-patch them on a later run.
+		PPCRecFunction->relocations.push_back({ (uint32)(x64GenContext->emitter->GetWriteIndex() + 2), PPCRecRelocType::HLE_FUNCTION, 0 });
 		x64Gen_mov_reg64_imm64(x64GenContext, X86_REG_RAX, (uint64)PPCRecompiler_virtualHLE);
 		x64Gen_call_reg64(x64GenContext, X86_REG_RAX);
 		// restore RSP to hCPU (from RAX, result of PPCRecompiler_virtualHLE)
 		x64Gen_mov_reg64_reg64(x64GenContext, REG_RESV_HCPU, X86_REG_RAX);
 		// MOV R15, ppcRecompilerInstanceData
+		PPCRecFunction->relocations.push_back({ (uint32)(x64GenContext->emitter->GetWriteIndex() + 2), PPCRecRelocType::INSTANCE_DATA, 0 });
 		x64Gen_mov_reg64_imm64(x64GenContext, REG_RESV_RECDATA, (uint64)ppcRecompilerInstanceData);
 		// MOV R13, memory_base
+		PPCRecFunction->relocations.push_back({ (uint32)(x64GenContext->emitter->GetWriteIndex() + 2), PPCRecRelocType::MEMORY_BASE, 0 });
 		x64Gen_mov_reg64_imm64(x64GenContext, REG_RESV_MEMBASE, (uint64)memory_base);
 		// check if cycles where decreased beyond zero, if yes -> leave recompiler
 		x64Gen_bt_mem8(x64GenContext, REG_RESV_HCPU, offsetof(PPCInterpreter_t, remainingCycles), 31); // check if negative
@@ -1332,6 +1339,41 @@ uint8* PPCRecompilerX86_allocateExecutableMemory(sint32 size)
 		codeMemoryBlockIndex++;
 	}
 	return codeMem;
+}
+
+void* PPCRecompiler_injectX64CachedCode(const uint8* code, size_t codeSize, const std::vector<PPCRecRelocEntry>& relocations)
+{
+	if (codeSize == 0 || codeSize > (size_t)std::numeric_limits<sint32>::max())
+		return nullptr;
+	// same bump allocator used by fresh codegen - memory is already RWX, so no protection flip or icache flush is needed on x86/x64
+	uint8* execMem = PPCRecompilerX86_allocateExecutableMemory((sint32)codeSize);
+	memcpy(execMem, code, codeSize);
+	for (auto& reloc : relocations)
+	{
+		if ((size_t)reloc.codeOffset + sizeof(uint64) > codeSize)
+		{
+			cemu_assert_debug(false); // corrupt/truncated cache entry
+			return nullptr;
+		}
+		uint64 patchValue;
+		switch (reloc.type)
+		{
+		case PPCRecRelocType::HLE_FUNCTION:
+			patchValue = (uint64)PPCRecompiler_virtualHLE;
+			break;
+		case PPCRecRelocType::INSTANCE_DATA:
+			patchValue = (uint64)ppcRecompilerInstanceData;
+			break;
+		case PPCRecRelocType::MEMORY_BASE:
+			patchValue = (uint64)memory_base;
+			break;
+		default:
+			cemu_assert_debug(false);
+			return nullptr;
+		}
+		memcpy(execMem + reloc.codeOffset, &patchValue, sizeof(patchValue));
+	}
+	return execMem;
 }
 
 bool PPCRecompiler_generateX64Code(PPCRecFunction_t* PPCRecFunction, ppcImlGenContext_t* ppcImlGenContext)

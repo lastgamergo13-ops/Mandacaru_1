@@ -1,8 +1,10 @@
 package info.cemu.cemu
 
+import android.app.Activity
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
@@ -14,6 +16,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
@@ -24,6 +29,8 @@ import androidx.navigation.compose.rememberNavController
 import info.cemu.cemu.about.AboutCemuRoute
 import info.cemu.cemu.about.aboutCemuNavigation
 import info.cemu.cemu.common.input.GamepadInputSource
+import info.cemu.cemu.common.settings.AppSettings
+import info.cemu.cemu.common.settings.AppSettingsStore
 import info.cemu.cemu.common.ui.components.ActivityContent
 import info.cemu.cemu.common.ui.localization.TranslatableContent
 import info.cemu.cemu.download.DownloadRoute
@@ -97,6 +104,19 @@ class MainActivity : AppCompatActivity() {
 private fun MainNav() {
     val navController = rememberNavController()
     val context = LocalContext.current
+
+    // Quality of Life (Experimental/Hackers): lock the MENU's orientation instead of following
+    // the sensor. Off by default (SCREEN_ORIENTATION_FULL_SENSOR), matching this app's existing
+    // behavior. Only applies to this menu Activity - EmulationActivity (gameplay) keeps its own
+    // fixed landscape orientation from AndroidManifest.xml, untouched by this.
+    val appSettings by AppSettingsStore.dataStore.data.collectAsState(initial = AppSettings())
+    LaunchedEffect(appSettings.guiSettings.lockMenuOrientation) {
+        (context as? Activity)?.requestedOrientation =
+            if (appSettings.guiSettings.lockMenuOrientation)
+                ActivityInfo.SCREEN_ORIENTATION_LOCKED
+            else
+                ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+    }
 
     NavHost(
         navController = navController,

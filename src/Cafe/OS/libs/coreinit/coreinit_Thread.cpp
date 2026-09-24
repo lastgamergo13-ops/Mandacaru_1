@@ -1349,6 +1349,16 @@ namespace coreinit
 				__OSCheckSystemEvents();
 				if(g_isMulticoreMode == false)
 					coreIndex = (coreIndex + 1) % 3;
+				// Unlike the secondary-core branch below, this loop has no blocking wait, so it
+				// never naturally reaches a point to check for shutdown - it would otherwise spin
+				// here forever. OSSchedulerEnd() sets sSchedulerActive to false and then blocks
+				// (thread.join()) waiting for this core's real host thread to return; without this
+				// check, if the main core happened to be idling when shutdown was requested (e.g.
+				// right after a game calls coreinit.exit(), which suspends its own thread and lets
+				// the core go idle), that join() would never complete and the whole shutdown -
+				// including returning to the game list - would hang indefinitely.
+				if (!sSchedulerActive.load(std::memory_order::relaxed))
+					Fiber::Switch(*t_schedulerFiber); // switch back to original thread to exit
 			}
 			else
 			{

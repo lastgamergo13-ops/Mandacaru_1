@@ -412,6 +412,21 @@ struct CemuConfig
 
 	ConfigValue<uint64> log_flag{ 0 };
 	ConfigValue<bool> advanced_ppc_logging{ false };
+	// Persists compiled PPC recompiler functions to a per-title disk cache (mirrors
+	// LatteShaderCache) so a later launch of the same title can reuse them instead of
+	// recompiling from scratch - see PPCRecompilerCache.h for the safety details around
+	// why this is more delicate than the shader cache (raw machine code isn't position
+	// independent). Off by default: still new, and any bug here means running
+	// miscompiled native code instead of just a visual glitch.
+	ConfigValue<bool> enable_recompiler_aot_cache{ false };
+
+	// Limitar threads do compilador de shaders: caps both shader/pipeline compiler thread pools
+	// (VulkanPipelineCompiler's organic, in-game pool and VulkanPipelineStableCache's burst
+	// reload-at-boot pool) at 2 threads instead of up to 8, to avoid RAM spikes that can get the
+	// app OOM-killed on Android devices with many logical cores but little available RAM. Only
+	// ever reduces the thread count, never increases it. Off by default; takes effect on the
+	// next title boot (the thread pools are only created then).
+	ConfigValue<bool> limit_shader_compiler_threads{ false };
 
 	ConfigValue<bool> permanent_storage{ true };
 
@@ -428,6 +443,26 @@ struct CemuConfig
 	ConfigValue<bool> disable_screensaver{DISABLE_SCREENSAVER_DEFAULT};
 #undef DISABLE_SCREENSAVER_DEFAULT
 	ConfigValue<bool> play_boot_sound{false};
+
+	// Internal (emulated Wii U) real-time clock. When rtc_use_system_time is true (default),
+	// the emulated console's clock is read from the device's real clock, exactly as before this
+	// option existed. When false, rtc_custom_timestamp (Unix epoch seconds, UTC) is used instead
+	// as the wall-clock time read once at the start of the next launched title - see
+	// cemu_initForGame() in CafeSystem.cpp for where this is actually consumed. Default of
+	// 946684800 (2000-01-01 00:00:00 UTC) is the Wii U clock's own epoch - the earliest timestamp
+	// it can represent - so a never-touched value is already valid instead of falling back to the
+	// Unix epoch (1970), which underflows the Wii U's cycle-since-2000 math.
+	ConfigValue<bool> rtc_use_system_time{ true };
+	ConfigValue<sint64> rtc_custom_timestamp{ 946684800 };
+
+	// Quality of Life (Experimental/Hackers): each master switch below gates one feature from
+	// that tab that lives outside the CemuConfig-driven Toggle pattern most options here use
+	// (an in-game action button, a background hotkey handler, etc.) - the switch is what the QoL
+	// screen's Toggle actually controls; the feature itself checks this before doing anything.
+	// All off by default, like the rest of Experimental/Hackers.
+	ConfigValue<bool> qol_quick_screenshot_enabled{ false };
+	ConfigValue<bool> qol_quick_controller_profile_switcher_enabled{ false };
+	ConfigValue<bool> qol_in_game_cheats_enabled{ false };
 
 	std::vector<std::string> game_paths;
 	std::mutex game_cache_entries_mutex;
@@ -446,6 +481,21 @@ struct CemuConfig
 
 	ConfigValueBounds<CPUMode> cpu_mode{ CPUMode::Auto };
 	ConfigValueBounds<CafeConsoleLanguage> console_language{ CafeConsoleLanguage::EN };
+
+	// Recompiler IR optimizations (dead code elimination fixpoint loop + redundant segment
+	// merging, see IMLOptimizer.cpp). Off by default, matching the other Experimental/Hackers
+	// options that touch the recompiler (texture compression, AOT cache) - exposed as an opt-in
+	// (Android: Experimental / Hackers -> Deep IR Optimizations) since a bug in these passes
+	// could affect any game.
+	ConfigValue<bool> advanced_iml_optimizations{ false };
+
+	// "Memory Usage Brake" (Android: Experimental / Hackers). When enabled, once this process's
+	// own RSS crosses memory_ceiling_mb, the app immediately reclaims any texture it already
+	// considers safe to discard instead of trickling that cleanup in over several seconds - see
+	// AndroidMemoryManager and LatteTC_RequestAggressiveCleanup(). memory_ceiling_mb is only
+	// consulted while the toggle is on. Off by default.
+	ConfigValue<bool> memory_usage_brake{ false };
+	ConfigValue<sint32> memory_ceiling_mb{ 4096 };
 
 	// graphics
 	ConfigValue<GraphicAPI> graphic_api{ kDefaultGraphicsAPI };
@@ -467,6 +517,16 @@ struct CemuConfig
 
 	ConfigValue<bool> vk_accurate_barriers{ true };
 
+	// Experimental: recompress Wii U BC1-BC5 textures to ETC2/EAC on GPUs that support
+	// ETC2 but not BC/S3TC natively (the common case on Android), instead of decoding
+	// them to uncompressed RGBA. One toggle per format so the user can pick exactly
+	// which (untested-on-real-hardware) transcoders to opt into. Off by default.
+	ConfigValue<bool> texture_compression_bc1{ false };
+	ConfigValue<bool> texture_compression_bc2{ false };
+	ConfigValue<bool> texture_compression_bc3{ false };
+	ConfigValue<bool> texture_compression_bc4{ false };
+	ConfigValue<bool> texture_compression_bc5{ false };
+
 	struct
 	{
 		ScreenPosition position = ScreenPosition::kDisabled;
@@ -479,6 +539,15 @@ struct CemuConfig
 		bool ram_usage = false;
 		bool vram_usage = false;
 		bool debug = false;
+		// Quality of Life additions below - all off by default / unchanged default value, so a
+		// config file from before these existed behaves identically to one with these explicitly
+		// set to their defaults.
+		bool frame_time = false;
+		bool device_thermal_status = false;
+		bool horizontal_layout = false;
+		// Was a fixed kBackgroundAlpha constant in LatteOverlay.cpp; now configurable (still used
+		// for both the stats/debug HUD and notifications, same as the constant it replaces).
+		float background_opacity = 0.65f;
 	} overlay{};
 
 	struct
@@ -499,9 +568,33 @@ struct CemuConfig
 	// audio
 	sint32 audio_api = 0;
 	sint32 audio_delay = 2;
+	// Experimental: continuously trims a small amount (at most 1 block) of the oldest queued
+	// audio once the buffer drifts meaningfully past the configured latency, instead of letting
+	// it grow until the hard buffer limit forces one large, audible drop - see CubebAPI::FeedBlock.
+	// Off by default: this has not been confirmed inaudible across long play sessions yet - it
+	// trades one rare, larger pop for small, un-crossfaded waveform cuts that could themselves be
+	// audible as occasional clicks.
+	ConfigValue<bool> audio_video_sync{ false };
 	AudioChannels tv_channels = kStereo, pad_channels = kStereo, input_channels = kMono;
 	sint32 tv_volume = 50, pad_volume = 0, input_volume = 50, portal_volume = 50;
 	std::wstring tv_device{ L"default" }, pad_device, input_device, portal_device;
+	// Experimental: forces every audio voice to be resampled with nearest-neighbor sample
+	// fetching (the AX engine's cheapest decode path) instead of whatever mode the game itself
+	// requested for that voice (Tap or Linear) - trades resampling fidelity for CPU headroom on
+	// the audio thread. Off by default (the exact previous behavior - each voice decoded the way
+	// the game asked for it).
+	ConfigValue<bool> fast_audio_resampling{ false };
+	// Experimental: when the TV output mode (see tv_channels above) is Stereo or Mono, Cemu's
+	// stock behavior is to simply drop the Center/LFE/Surround channels instead of mixing them
+	// in - this performs a real downmix instead, folding those channels into the front L/R pair
+	// using the standard broadcast "Lo/Ro" coefficients (see AXOut_SubmitTVFrame/
+	// AXOut_SubmitDRCFrame in ax_out.cpp). Off by default (exact previous behavior).
+	ConfigValue<bool> force_audio_downmix{ false };
+	// Experimental: while the audio buffer is critically low (about to run dry), polls the
+	// audio backend more aggressively to try to top it up before it starts playing silence -
+	// see g_enableAudioBufferSync in audio/IAudioAPI.h and AXOut_update() in ax_out.cpp. Off by
+	// default.
+	ConfigValue<bool> audio_buffer_sync{ false };
 
 	// account
 	struct

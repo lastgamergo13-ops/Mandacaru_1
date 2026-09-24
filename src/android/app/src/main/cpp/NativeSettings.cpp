@@ -1,4 +1,5 @@
 #include "JNIUtils.h"
+#include "AndroidMemoryManager.h"
 #include "audio/IAudioAPI.h"
 #include "config/CemuConfig.h"
 #include "config/NetworkSettings.h"
@@ -111,6 +112,57 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setOverlayDebugEnabled([[mayb
 	GetConfig().overlay.debug = enabled;
 }
 
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isOverlayFrameTimeEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().overlay.frame_time;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setOverlayFrameTimeEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().overlay.frame_time = enabled;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isOverlayDeviceThermalStatusEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().overlay.device_thermal_status;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setOverlayDeviceThermalStatusEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().overlay.device_thermal_status = enabled;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isOverlayHorizontalLayoutEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().overlay.horizontal_layout;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setOverlayHorizontalLayoutEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().overlay.horizontal_layout = enabled;
+}
+
+// Stored internally as 0.0-1.0 (see CemuConfig::overlay.background_opacity); converted to/from a
+// 0-100 percentage only at this JNI boundary, same convention as the other overlay percentages
+// in this file (e.g. getOverlayTextScalePercentage).
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getOverlayBackgroundOpacityPercentage([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return static_cast<jint>(GetConfig().overlay.background_opacity * 100.0f + 0.5f);
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setOverlayBackgroundOpacityPercentage([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint opacityPercentage)
+{
+	GetConfig().overlay.background_opacity = static_cast<float>(opacityPercentage) / 100.0f;
+}
+
 extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_getNotificationsPosition([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
@@ -207,6 +259,36 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setAsyncShaderCompile([[maybe
 	GetConfig().async_compile = enabled;
 }
 
+// Recompiler AOT (ahead-of-time) disk cache: persists compiled PPC functions per title so
+// a later launch can reuse them instead of recompiling from scratch - see
+// PPCRecompilerCache.h for the full explanation and safety details.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getRecompilerAOTCache([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().enable_recompiler_aot_cache;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setRecompilerAOTCache([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().enable_recompiler_aot_cache = enabled;
+}
+
+// Limitar threads do compilador de shaders: caps both shader/pipeline compiler thread pools at
+// 2 threads instead of up to 8 - see VulkanPipelineCompiler.cpp and VulkanPipelineStableCache.cpp.
+// Only takes effect on the next title boot, since the thread pools are only created then.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getLimitShaderCompilerThreads([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().limit_shader_compiler_threads;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setLimitShaderCompilerThreads([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().limit_shader_compiler_threads = enabled;
+}
+
 extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_getVsyncMode([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
@@ -267,6 +349,71 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setAccurateBarriers([[maybe_u
 	GetConfig().vk_accurate_barriers = enabled;
 }
 
+// Experimental per-format texture compression: transcodes Wii U BC1-BC5 textures to
+// ETC2/EAC (Vulkan and OpenGL) when the host GPU lacks native BC/S3TC support - see
+// VulkanRenderer::GetTextureFormatInfoVK / OpenGLRenderer::texture_chooseDecodedFormat.
+// One toggle per format so the user can pick exactly which (untested-on-real-hardware)
+// transcoders to opt into, rather than one all-or-nothing switch.
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setTextureCompressionBC1([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean value)
+{
+	GetConfig().texture_compression_bc1 = (bool)value;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getTextureCompressionBC1([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().texture_compression_bc1;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setTextureCompressionBC2([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean value)
+{
+	GetConfig().texture_compression_bc2 = (bool)value;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getTextureCompressionBC2([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().texture_compression_bc2;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setTextureCompressionBC3([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean value)
+{
+	GetConfig().texture_compression_bc3 = (bool)value;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getTextureCompressionBC3([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().texture_compression_bc3;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setTextureCompressionBC4([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean value)
+{
+	GetConfig().texture_compression_bc4 = (bool)value;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getTextureCompressionBC4([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().texture_compression_bc4;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setTextureCompressionBC5([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean value)
+{
+	GetConfig().texture_compression_bc5 = (bool)value;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getTextureCompressionBC5([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().texture_compression_bc5;
+}
+
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_getAudioDeviceEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean tv)
 {
@@ -324,6 +471,21 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setAudioLatency([[maybe_unuse
 	sint32 audioDelay = latency / 12;
 	GetConfig().audio_delay = audioDelay;
 	IAudioAPI::SetAudioDelay(audioDelay);
+}
+
+// Audio/video sync: continuously trims a small amount of queued audio when it drifts past the
+// configured latency, instead of one large drop when the hard buffer limit is hit - see
+// CubebAPI::FeedBlock. Off by default (unconfirmed to be inaudible across long sessions yet).
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getAudioVideoSync([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().audio_video_sync.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setAudioVideoSync([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean value)
+{
+	GetConfig().audio_video_sync = (bool)value;
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
@@ -415,10 +577,143 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setEmulateDimensionsToypadEna
 	GetConfig().emulated_usb_devices.emulate_dimensions_toypad = enabled;
 }
 
+// Deep IR Optimizations: dead code elimination fixpoint loop + redundant IR segment merging -
+// see IMLOptimizer.cpp. Off by default; can be turned on to try more thorough recompiler
+// cleanup, at the cost of a bug in these passes potentially affecting any game.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isAdvancedIMLOptimizationsEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().advanced_iml_optimizations.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setAdvancedIMLOptimizationsEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().advanced_iml_optimizations = enabled;
+}
+
+// Fast Audio Resampling: forces every AX voice to nearest-neighbor sample fetching instead of
+// whatever mode the game requested (Tap/Linear) - see AXVoiceMix_DecodeSamples in ax_mix.cpp.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isFastAudioResamplingEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().fast_audio_resampling.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setFastAudioResamplingEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().fast_audio_resampling = (bool)enabled;
+}
+
+// Force Audio Downmix: when TV output is Stereo/Mono, mixes Center/LFE/Surround into the front
+// L/R pair (ITU-R BS.775 "Lo/Ro") instead of dropping them - see AXOut_SubmitTVFrame/
+// AXOut_SubmitDRCFrame in ax_out.cpp.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isForceAudioDownmixEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().force_audio_downmix.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setForceAudioDownmixEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().force_audio_downmix = (bool)enabled;
+}
+
+// Limitar o processamento de áudio assíncrono: while the audio buffer is critically low, polls
+// the backend more aggressively to try to refill it before it runs dry - see
+// g_enableAudioBufferSync in audio/IAudioAPI.h and AXOut_update() in ax_out.cpp.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isAudioBufferSyncEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().audio_buffer_sync.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setAudioBufferSyncEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().audio_buffer_sync = (bool)enabled;
+	// applied immediately, even with a game already running
+	IAudioAPI_SetBufferSyncEnabled(enabled);
+}
+
+// keeps AndroidMemoryManager's live ceiling in sync with whatever GetConfig() currently says;
+// called after either the master toggle or the chosen ceiling changes
+static void UpdateMemoryCeilingFromConfig()
+{
+	AndroidMemoryManager::SetMemoryCeilingMB(
+		GetConfig().memory_usage_brake.GetValue() ? (uint64_t)GetConfig().memory_ceiling_mb.GetValue() : 0);
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isMemoryUsageBrakeEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().memory_usage_brake.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setMemoryUsageBrakeEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().memory_usage_brake = (bool)enabled;
+	UpdateMemoryCeilingFromConfig();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getMemoryCeilingMB([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().memory_ceiling_mb.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setMemoryCeilingMB([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint ceilingMB)
+{
+	GetConfig().memory_ceiling_mb = ceilingMB;
+	UpdateMemoryCeilingFromConfig();
+}
+
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_hasCustomNetworkConfiguration([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
 	return NetworkConfig::XMLExists();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getRtcUseSystemTime([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return static_cast<jboolean>(GetConfig().rtc_use_system_time.GetValue());
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setRtcUseSystemTime([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean useSystemTime)
+{
+	GetConfig().rtc_use_system_time = static_cast<bool>(useSystemTime);
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jlong JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getRtcCustomTimestamp([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return static_cast<jlong>(GetConfig().rtc_custom_timestamp.GetValue());
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setRtcCustomTimestamp([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jlong timestamp)
+{
+	GetConfig().rtc_custom_timestamp = static_cast<sint64>(timestamp);
+}
+
+// Quality of Life master switches: whether the corresponding in-game menu button/feature shows
+// itself at all. Off by default, like the rest of Experimental/Hackers.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_isQuickControllerProfileSwitcherEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().qol_quick_controller_profile_switcher_enabled;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setQuickControllerProfileSwitcherEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().qol_quick_controller_profile_switcher_enabled = static_cast<bool>(enabled);
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL

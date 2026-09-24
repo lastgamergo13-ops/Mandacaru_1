@@ -549,7 +549,7 @@ bool _resolverPass(PatchContext_t& patchContext, std::vector<UnresolvedPatches_t
 	return numResolvedEntries;
 }
 
-void GraphicPack2::ApplyPatchGroups(std::vector<PatchGroup*>& groups, const RPLModule* rpl)
+void GraphicPack2::ApplyPatchGroups(std::vector<PatchGroup*>& groups, const RPLModule* rpl, std::vector<std::string>* out_unresolvedSymbols)
 {
 	// init context information
 	PatchContext_t patchContext{};
@@ -625,8 +625,17 @@ void GraphicPack2::ApplyPatchGroups(std::vector<PatchGroup*>& groups, const RPLM
 			if(isLastPass)
 				patchContext.errorHandler.printError(nullptr, -1, "Some symbols could not be resolved because the dependency chain is too deep");
 			for (auto& itr : patchContext.unresolvedSymbols)
+			{
 				patchContext.errorHandler.printError(itr.patchGroup, itr.lineNumber, fmt::format("Unresolved symbol: {}", itr.symbolName));
-			patchContext.errorHandler.showStageErrorMessageBox();
+				if (out_unresolvedSymbols)
+					out_unresolvedSymbols->push_back(itr.symbolName);
+			}
+			// A caller passing out_unresolvedSymbols is doing a silent dependency probe
+			// (see ApplyPatchGroupWithDependencies) - failing here is an expected,
+			// internally-handled step for it, not a genuine user-facing error, so skip
+			// the interactive message box in that case.
+			if (!out_unresolvedSymbols)
+				patchContext.errorHandler.showStageErrorMessageBox();
 			return;
 		}
 	}

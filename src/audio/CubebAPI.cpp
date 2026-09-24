@@ -1,4 +1,5 @@
 #include "CubebAPI.h"
+#include "config/CemuConfig.h"
 
 #if BOOST_OS_WINDOWS
 #include <combaseapi.h>
@@ -130,9 +131,43 @@ bool CubebAPI::NeedAdditionalBlocks() const
 	return m_buffer.size() < GetAudioDelay() * m_bytesPerBlock;
 }
 
+bool CubebAPI::IsBufferCriticallyLow() const
+{
+	std::shared_lock lock(m_mutex);
+	// less than ~2 blocks queued means the platform audio callback (data_cb, running on its own
+	// real-time OS thread) could start reading silence - an audible glitch - within the next
+	// couple of AXOut_update() cycles if nothing feeds the buffer soon. This is just a read of
+	// the current occupancy, taken with the same shared_lock as NeedAdditionalBlocks(); it
+	// never blocks the audio callback thread.
+	constexpr uint32 kCriticalBlockThreshold = 2;
+	return m_buffer.size() < (size_t)m_bytesPerBlock * kCriticalBlockThreshold;
+}
+
 bool CubebAPI::FeedBlock(sint16* data)
 {
 	std::unique_lock lock(m_mutex);
+
+	if (GetConfig().audio_video_sync)
+	{
+		// Audio/Video sync: the queued audio buffer is drained by the real audio device clock,
+		// while it's filled at the pace of the emulated video/game clock. Those two clocks are
+		// independent and drift apart over long play sessions, so without correction the buffer
+		// slowly grows past the configured latency target until the hard capacity limit below
+		// is hit and a large, audible chunk of audio has to be dropped all at once.
+		// Instead, once the buffer grows meaningfully beyond the target latency, trim a small
+		// amount of the oldest queued audio here on every block so the audio clock is continuously
+		// pulled back in line with the video clock in small, inaudible steps.
+		const size_t targetSize = (size_t)GetAudioDelay() * m_bytesPerBlock;
+		const size_t driftTolerance = (size_t)2 * m_bytesPerBlock; // allow minor jitter before correcting
+		if (targetSize > 0 && m_buffer.size() > targetSize + driftTolerance)
+		{
+			const size_t excess = m_buffer.size() - targetSize;
+			const size_t trim = std::min(excess, (size_t)m_bytesPerBlock);
+			m_buffer.erase(m_buffer.begin(), std::next(m_buffer.begin(), trim));
+			cemuLog_logDebug(LogType::Force, "audio/video sync: trimmed {} byte(s) of queued audio to correct drift", trim);
+		}
+	}
+
 	if (m_buffer.capacity() <= m_buffer.size() + m_bytesPerBlock)
 	{
 		cemuLog_logDebug(LogType::Force, "dropped direct sound block since too many buffers are queued");

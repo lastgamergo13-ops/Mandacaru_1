@@ -6,6 +6,9 @@
 bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, struct ppcImlGenContext_t* ppcImlGenContext);
 void PPCRecompiler_cleanupAArch64Code(void* code, size_t size);
 
+// AOT cache support: see the implementation's comment in BackendAArch64.cpp.
+void* PPCRecompiler_injectAArch64CachedCode(const uint8* code, size_t codeSize, const std::vector<struct PPCRecRelocEntry>& relocations);
+
 void PPCRecompilerAArch64Gen_generateRecompilerInterfaceFunctions();
 
 // architecture specific constants

@@ -3,8 +3,18 @@
 #include "Cafe/HW/Latte/Core/LatteTexture.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Common/cpu_features.h"
+#include <atomic>
 
 std::unordered_set<LatteTexture*> g_allTextures;
+
+// see LatteTC_RequestAggressiveCleanup() in Latte.h for what this does and why it's an atomic
+// flag rather than a direct call into texture deletion
+static std::atomic<bool> s_aggressiveCleanupRequested{false};
+
+void LatteTC_RequestAggressiveCleanup()
+{
+	s_aggressiveCleanupRequested = true;
+}
 
 void LatteTC_Init()
 {
@@ -368,6 +378,18 @@ void LatteTexture_RefreshInfoCache();
  */
 void LatteTC_CleanupUnusedTextures()
 {
+	// A platform memory monitor (e.g. Android, under a user-configured memory ceiling) can request
+	// an immediate, thorough sweep instead of the normal slow/throttled one below. This still only
+	// deletes textures LatteTC_GetDeleteableTextures() already considers safe to drop (the same
+	// list VKRMemoryManager uses when it runs out of VRAM) - it just does it right away instead of
+	// trickling it in over many frames.
+	if (s_aggressiveCleanupRequested.exchange(false))
+	{
+		std::vector<LatteTexture*> deleteableTextures = LatteTC_GetDeleteableTextures();
+		for (LatteTexture* tex : deleteableTextures)
+			LatteTexture_Delete(tex);
+	}
+
 	static size_t currentScanIndex = 0;
 	uint32 currentTick = GetTickCount();
 	sint32 maxDelete = 10;

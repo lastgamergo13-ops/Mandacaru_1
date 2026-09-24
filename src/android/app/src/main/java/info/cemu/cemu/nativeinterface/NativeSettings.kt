@@ -19,6 +19,24 @@ object NativeSettings {
     @JvmStatic
     external fun setAsyncShaderCompile(value: Boolean)
 
+    // Recompiler AOT (ahead-of-time) disk cache: persists compiled PPC functions per
+    // title so a later launch of the same title can reuse them instead of recompiling
+    // from scratch.
+    @JvmStatic
+    external fun getRecompilerAOTCache(): Boolean
+
+    @JvmStatic
+    external fun setRecompilerAOTCache(value: Boolean)
+
+    // Limitar threads do compilador de shaders: caps both shader/pipeline compiler thread pools
+    // at 2 threads instead of up to 8, to avoid RAM-spike OOM kills on Android. Only takes
+    // effect on the next title boot.
+    @JvmStatic
+    external fun getLimitShaderCompilerThreads(): Boolean
+
+    @JvmStatic
+    external fun setLimitShaderCompilerThreads(value: Boolean)
+
     object VSyncMode {
         const val OFF: Int = 0
         const val DOUBLE_BUFFERING: Int = 1
@@ -67,6 +85,39 @@ object NativeSettings {
     @JvmStatic
     external fun setAccurateBarriers(value: Boolean)
 
+    // Experimental per-format texture compression (BC1-BC5 -> ETC2/EAC on GPUs lacking
+    // native BC/S3TC support). One getter/setter pair per format so the user can choose
+    // exactly which transcoders to opt into.
+    @JvmStatic
+    external fun getTextureCompressionBC1(): Boolean
+
+    @JvmStatic
+    external fun setTextureCompressionBC1(value: Boolean)
+
+    @JvmStatic
+    external fun getTextureCompressionBC2(): Boolean
+
+    @JvmStatic
+    external fun setTextureCompressionBC2(value: Boolean)
+
+    @JvmStatic
+    external fun getTextureCompressionBC3(): Boolean
+
+    @JvmStatic
+    external fun setTextureCompressionBC3(value: Boolean)
+
+    @JvmStatic
+    external fun getTextureCompressionBC4(): Boolean
+
+    @JvmStatic
+    external fun setTextureCompressionBC4(value: Boolean)
+
+    @JvmStatic
+    external fun getTextureCompressionBC5(): Boolean
+
+    @JvmStatic
+    external fun setTextureCompressionBC5(value: Boolean)
+
     @JvmStatic
     external fun getAudioDeviceEnabled(tv: Boolean): Boolean
 
@@ -101,6 +152,14 @@ object NativeSettings {
 
     @JvmStatic
     external fun setAudioLatency(value: Int)
+
+    // Audio/video sync: continuously trims queued audio to correct clock drift instead of one
+    // large drop when the buffer limit is hit. Off by default.
+    @JvmStatic
+    external fun getAudioVideoSync(): Boolean
+
+    @JvmStatic
+    external fun setAudioVideoSync(value: Boolean)
 
     object OverlayScreenPosition {
         const val DISABLED: Int = 0
@@ -146,16 +205,58 @@ object NativeSettings {
     external fun setOverlayCPUUsageEnabled(value: Boolean)
 
     @JvmStatic
+    external fun isOverlayCPUPerCoreUsageEnabled(): Boolean
+
+    @JvmStatic
+    external fun setOverlayCPUPerCoreUsageEnabled(value: Boolean)
+
+    @JvmStatic
     external fun isOverlayRAMUsageEnabled(): Boolean
 
     @JvmStatic
     external fun setOverlayRAMUsageEnabled(value: Boolean)
 
     @JvmStatic
+    external fun isOverlayVRAMUsageEnabled(): Boolean
+
+    @JvmStatic
+    external fun setOverlayVRAMUsageEnabled(value: Boolean)
+
+    @JvmStatic
     external fun isOverlayDebugEnabled(): Boolean
 
     @JvmStatic
     external fun setOverlayDebugEnabled(value: Boolean)
+
+    // Quality of Life: same 5-second-average FPS as isOverlayFPSEnabled, shown as ms/frame instead.
+    @JvmStatic
+    external fun isOverlayFrameTimeEnabled(): Boolean
+
+    @JvmStatic
+    external fun setOverlayFrameTimeEnabled(value: Boolean)
+
+    // Quality of Life: coarse Android thermal level (Nominal..Shutdown), not a precise
+    // temperature - see NativeEmulation.updateThermalStatus for where the live value comes from.
+    // Only ever shows anything on Android 10 (API 29) and up; harmless no-op below that.
+    @JvmStatic
+    external fun isOverlayDeviceThermalStatusEnabled(): Boolean
+
+    @JvmStatic
+    external fun setOverlayDeviceThermalStatusEnabled(value: Boolean)
+
+    // Quality of Life: lays every enabled stat line above out side by side instead of stacked.
+    @JvmStatic
+    external fun isOverlayHorizontalLayoutEnabled(): Boolean
+
+    @JvmStatic
+    external fun setOverlayHorizontalLayoutEnabled(value: Boolean)
+
+    // Quality of Life: HUD/notification background opacity, 0-100%. Stored as 0.0-1.0 natively.
+    @JvmStatic
+    external fun getOverlayBackgroundOpacityPercentage(): Int
+
+    @JvmStatic
+    external fun setOverlayBackgroundOpacityPercentage(opacityPercentage: Int)
 
     @JvmStatic
     external fun getNotificationsPosition(): Int
@@ -259,6 +360,81 @@ object NativeSettings {
     @JvmStatic
     external fun setEmulateDimensionsToypadEnabled(enabled: Boolean)
 
+    // Deep IR Optimizations: dead code elimination fixpoint loop + redundant IR segment
+    // merging in the PPC recompiler. Off by default.
+    @JvmStatic
+    external fun isAdvancedIMLOptimizationsEnabled(): Boolean
+
+    @JvmStatic
+    external fun setAdvancedIMLOptimizationsEnabled(enabled: Boolean)
+
+    // Fast Audio Resampling: forces every AX voice to nearest-neighbor sample fetching
+    // instead of whatever mode the game requested (Tap/Linear).
+    @JvmStatic
+    external fun isFastAudioResamplingEnabled(): Boolean
+
+    @JvmStatic
+    external fun setFastAudioResamplingEnabled(enabled: Boolean)
+
+    // Force Audio Downmix: when TV output is Stereo/Mono, mixes Center/LFE/Surround into the
+    // front L/R pair instead of dropping them.
+    @JvmStatic
+    external fun isForceAudioDownmixEnabled(): Boolean
+
+    @JvmStatic
+    external fun setForceAudioDownmixEnabled(enabled: Boolean)
+
+    // Limitar o processamento de áudio assíncrono: while the audio buffer is critically low,
+    // polls the backend more aggressively to try to refill it before it runs dry.
+    @JvmStatic
+    external fun isAudioBufferSyncEnabled(): Boolean
+
+    @JvmStatic
+    external fun setAudioBufferSyncEnabled(enabled: Boolean)
+
+    object MemoryCeiling {
+        const val GB_2: Int = 2048
+        const val GB_4: Int = 4096
+        const val GB_6: Int = 6144
+        const val GB_8: Int = 8192
+        const val GB_12: Int = 12288
+    }
+
+    // Memory Usage Brake: while enabled, once this process's own RSS crosses the chosen ceiling
+    // (MemoryCeiling above), immediately reclaims textures already considered safe to discard.
+    @JvmStatic
+    external fun isMemoryUsageBrakeEnabled(): Boolean
+
+    @JvmStatic
+    external fun setMemoryUsageBrakeEnabled(enabled: Boolean)
+
+    @JvmStatic
+    external fun getMemoryCeilingMB(): Int
+
+    @JvmStatic
+    external fun setMemoryCeilingMB(ceilingMB: Int)
+
     @JvmStatic
     external fun hasCustomNetworkConfiguration(): Boolean
+
+    // Internal (emulated Wii U) clock. When true (default), the emulated console reads the
+    // device's real clock, same as always. When false, getRtcCustomTimestamp/setRtcCustomTimestamp
+    // (Unix epoch seconds, UTC) is used instead - only takes effect on the next launched title.
+    @JvmStatic
+    external fun getRtcUseSystemTime(): Boolean
+
+    @JvmStatic
+    external fun setRtcUseSystemTime(useSystemTime: Boolean)
+
+    @JvmStatic
+    external fun getRtcCustomTimestamp(): Long
+
+    @JvmStatic
+    external fun setRtcCustomTimestamp(timestamp: Long)
+
+    @JvmStatic
+    external fun isQuickControllerProfileSwitcherEnabled(): Boolean
+
+    @JvmStatic
+    external fun setQuickControllerProfileSwitcherEnabled(enabled: Boolean)
 }

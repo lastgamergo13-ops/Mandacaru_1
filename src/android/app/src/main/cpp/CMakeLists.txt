@@ -2,6 +2,7 @@ add_library(CemuAndroid SHARED
         ${CMAKE_SOURCE_DIR}/src/CemuCommonInit.cpp
         AndroidFilesystemCallbacks.cpp
         AndroidInputHelpers.cpp
+        AndroidMemoryManager.cpp
         CompressTitleCallbacks.cpp
         GameTitleLoader.cpp
         Image.cpp
@@ -17,6 +18,8 @@ add_library(CemuAndroid SHARED
         NativeLocalization.cpp
         NativeLogging.cpp
         NativeSettings.cpp
+        NativeRenderer.cpp
+        NativeCheats.cpp
         NativeSwkbd.cpp
         WuaConverter.cpp
 )

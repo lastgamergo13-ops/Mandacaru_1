@@ -1,6 +1,8 @@
 package info.cemu.cemu.emulation
 
 import android.annotation.SuppressLint
+import android.os.Build
+import android.os.PowerManager
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.compose.BackHandler
@@ -36,6 +38,7 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,12 +50,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.getSystemService
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.R
@@ -67,7 +72,10 @@ import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView
 import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.DEFAULT
 import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_POSITION
 import info.cemu.cemu.emulation.inputoverlay.InputOverlaySurfaceView.InputMode.EDIT_SIZE
+import info.cemu.cemu.nativeinterface.NativeCheats
 import info.cemu.cemu.nativeinterface.NativeEmulation
+import info.cemu.cemu.nativeinterface.NativeRenderer
+import info.cemu.cemu.nativeinterface.NativeSettings
 import kotlinx.coroutines.launch
 
 @Composable
@@ -87,6 +95,8 @@ fun EmulationScreen(
     var showQuitConfirmationDialog by remember { mutableStateOf(false) }
     var inputOverlayInputMode by rememberSaveable { mutableStateOf(DEFAULT) }
     var showEmulatedUSBDevices by remember { mutableStateOf(false) }
+    var showQuickControllerProfileSwitcher by remember { mutableStateOf(false) }
+    var showInGameCheats by remember { mutableStateOf(false) }
 
     val emulationError by viewModel.emulationError.collectAsState()
     val isEmulationInitialized by viewModel.isEmulationInitialized.collectAsState()
@@ -124,6 +134,26 @@ fun EmulationScreen(
 
     LaunchedEffect(drawerState.isClosed) {
         setInputListeningEnabled(drawerState.isClosed)
+    }
+
+    // Quality of Life: pushes the device's thermal status to the native overlay for the "Device
+    // thermal status" HUD stat. Only a coarse level (Nominal..Shutdown) is available to a normal
+    // app - there's no public API for a real temperature reading in degrees. The public API for
+    // this only exists from Android 10 (API 29) onward; below that, this is simply skipped -
+    // the HUD toggle can safely stay on, it just never shows anything on those devices.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val context = LocalContext.current
+        DisposableEffect(context) {
+            val powerManager = context.getSystemService<PowerManager>()
+            val listener = PowerManager.OnThermalStatusChangedListener { status ->
+                NativeEmulation.updateThermalStatus(status)
+            }
+            powerManager?.addThermalStatusListener(listener)
+            powerManager?.let { listener.onThermalStatusChanged(it.currentThermalStatus) }
+            onDispose {
+                powerManager?.removeThermalStatusListener(listener)
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -164,12 +194,25 @@ fun EmulationScreen(
                             viewModel.resetInputOverlayLayout()
                             closeDrawer()
                         },
+                        onTakeScreenshot = {
+                            snackbarHostState.showMessage(scope, tr("Taking screenshot..."))
+                            NativeRenderer.triggerScreenshot()
+                            closeDrawer()
+                        },
                         onQuit = {
                             showQuitConfirmationDialog = true
                             closeDrawer()
                         },
                         onShowEmulatedUSBDevices = {
                             showEmulatedUSBDevices = true
+                            closeDrawer()
+                        },
+                        onShowQuickControllerProfileSwitcher = {
+                            showQuickControllerProfileSwitcher = true
+                            closeDrawer()
+                        },
+                        onShowInGameCheats = {
+                            showInGameCheats = true
                             closeDrawer()
                         },
                     )
@@ -241,6 +284,18 @@ fun EmulationScreen(
         )
     }
 
+    if (showQuickControllerProfileSwitcher) {
+        QuickControllerProfileDialog(
+            onDismiss = { showQuickControllerProfileSwitcher = false },
+        )
+    }
+
+    if (showInGameCheats) {
+        InGameCheatsDialog(
+            onDismiss = { showInGameCheats = false },
+        )
+    }
+
     EmulationTextInputDialog()
 }
 
@@ -287,8 +342,11 @@ private fun EmulationSideMenuContent(
     sideMenuState: SideMenuState,
     updateState: (SideMenuState) -> Unit,
     onShowEmulatedUSBDevices: () -> Unit,
+    onShowQuickControllerProfileSwitcher: () -> Unit,
+    onShowInGameCheats: () -> Unit,
     onEditInputOverlay: () -> Unit,
     onResetInputOverlay: () -> Unit,
+    onTakeScreenshot: () -> Unit,
     onQuit: () -> Unit,
 ) {
     CheckboxItem(
@@ -314,6 +372,22 @@ private fun EmulationSideMenuContent(
         onClick = onShowEmulatedUSBDevices,
     )
 
+    // Quality of Life (Experimental/Hackers), off by default: only shown once explicitly enabled
+    // in the Quality of Life settings screen.
+    if (NativeSettings.isQuickControllerProfileSwitcherEnabled()) {
+        TextButtonItem(
+            label = tr("Switch controller profile"),
+            onClick = onShowQuickControllerProfileSwitcher,
+        )
+    }
+
+    if (NativeCheats.isInGameCheatsEnabled()) {
+        TextButtonItem(
+            label = tr("Cheats"),
+            onClick = onShowInGameCheats,
+        )
+    }
+
     CheckboxItem(
         label = tr("Show input overlay"),
         checked = sideMenuState.isInputOverlayVisible,
@@ -331,6 +405,15 @@ private fun EmulationSideMenuContent(
         enabled = sideMenuState.isInputOverlayVisible,
         onClick = onResetInputOverlay,
     )
+
+    // Quality of Life (Experimental/Hackers), off by default: only shown once explicitly enabled
+    // in the Quality of Life settings screen.
+    if (NativeRenderer.isQuickScreenshotEnabled()) {
+        TextButtonItem(
+            label = tr("Take Screenshot"),
+            onClick = onTakeScreenshot,
+        )
+    }
 
     TextButtonItem(
         label = tr("Exit"),

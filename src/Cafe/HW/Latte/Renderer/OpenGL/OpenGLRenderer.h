@@ -37,6 +37,34 @@ public:
 
 	static OpenGLRenderer* GetInstance();
 
+	// Real runtime capability checks for texture compression formats - used by the
+	// per-format "texture_compression_bcX" experimental options (BC1-BC5 -> ETC2/EAC
+	// transcode, see texture_chooseDecodedFormat below and LatteTextureGL.cpp's
+	// GetOpenGLFormatInfo, which reads this from another class via GetInstance() and
+	// therefore needs it public - same pattern as the Vulkan renderer's equivalent
+	// m_supportedFormatInfo). Before this existed, BC1/S3TC support was simply assumed
+	// unconditionally; that assumption doesn't hold on most Android GPUs, so it's
+	// checked for real now.
+	struct GLSupportedFormatInfo_t
+	{
+		bool fmt_bc1{};
+		// BC2 (DXT3) needs the full GL_EXT_texture_compression_s3tc bundle - the
+		// DXT1-only extensions checked for fmt_bc1 above don't cover it.
+		bool fmt_bc2{};
+		// same reasoning as fmt_bc2 - BC3 (DXT5) is part of the same S3TC bundle extension.
+		bool fmt_bc3{};
+		// BC4/BC5 (RGTC) is a separate extension bundle from S3TC.
+		bool fmt_bc4{};
+		bool fmt_bc5{};
+		// ETC2 is mandatory-core in OpenGL ES 3.0 (any conformant Android GPU) and in
+		// desktop OpenGL 4.3+ / GL_ARB_ES3_compatibility, but still checked for real
+		// rather than assumed, same reasoning as fmt_bc1 above.
+		bool fmt_etc2{};
+	};
+	GLSupportedFormatInfo_t m_supportedFormatInfo;
+	void QuerySupportedFormats();
+	static bool IsGLExtensionSupported(std::string_view extensionName);
+
 	// imgui
 	bool ImguiBegin(bool mainWindow) override;
 	void ImguiEnd() override;

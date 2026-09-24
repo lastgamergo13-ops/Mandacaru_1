@@ -4,6 +4,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Quality of Life: Quick Screenshot. Only needed by MediaStore on Android 9 (API 28) and
+         below; on Android 10+ MediaStore writes to its own app-scoped Pictures/Cemu folder
+         without this permission at all, so it's capped at maxSdkVersion 28 and simply isn't
+         considered on newer versions. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <uses-feature
         android:name="android.hardware.vulkan.version"
