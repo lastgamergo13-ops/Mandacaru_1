@@ -69,6 +69,7 @@ OpticalFlowVk::OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth,
 	CreateIntermediateResources(resolutionWidth, resolutionHeight);
 	CreatePipelines();
 	CreateDescriptorSets();
+	CreateSampler();
 }
 
 OpticalFlowVk::~OpticalFlowVk()
@@ -307,6 +308,118 @@ void OpticalFlowVk::CreateDescriptorSets()
 	// nao aqui na inicializacao. Ver Dispatch() abaixo.
 }
 
+void OpticalFlowVk::CreateSampler()
+{
+	// Sampler simples, sem filtro anisotropico - a imagem de entrada e
+	// lida pixel a pixel pelo prepare_luma, nao precisa de nada
+	// sofisticado aqui.
+	VkSamplerCreateInfo samplerInfo{};
+	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	samplerInfo.magFilter = VK_FILTER_LINEAR;
+	samplerInfo.minFilter = VK_FILTER_LINEAR;
+	samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.anisotropyEnable = VK_FALSE;
+	samplerInfo.maxAnisotropy = 1.0f;
+	samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+	samplerInfo.unnormalizedCoordinates = VK_FALSE;
+	samplerInfo.compareEnable = VK_FALSE;
+	samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+	samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+	if (vkCreateSampler(m_renderer->GetLogicalDevice(), &samplerInfo, nullptr, &m_colorSampler) != VK_SUCCESS)
+		throw std::runtime_error("OpticalFlowVk: falha ao criar m_colorSampler");
+}
+
+void OpticalFlowVk::UpdateDescriptorSets(VkImageView currentColorView)
+{
+	// Escreve os 5 bindings (ver CreatePipelines() para o layout) em
+	// CADA um dos 7 descriptor sets - um por pass. Nesta versao
+	// simplificada todo pass recebe o mesmo conjunto de recursos; o
+	// shader de cada pass so le os bindings que ele de fato declarou
+	// no HLSL (ver aviso no .h sobre isso nao ser 100% fiel ao layout
+	// real de binding da AMD, que varia por pass).
+	VkDevice device = m_renderer->GetLogicalDevice();
+
+	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
+	{
+		VkDescriptorBufferInfo constantBufferInfo{};
+		constantBufferInfo.buffer = m_constantBuffer;
+		constantBufferInfo.offset = 0;
+		constantBufferInfo.range = sizeof(OpticalFlowConstants);
+
+		VkDescriptorImageInfo colorImageInfo{};
+		colorImageInfo.sampler = m_colorSampler;
+		colorImageInfo.imageView = currentColorView;
+		colorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkDescriptorImageInfo lumaImageInfo{};
+		lumaImageInfo.imageView = m_lumaView;
+		lumaImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image precisa de GENERAL
+
+		VkDescriptorImageInfo vectorImageInfo{};
+		vectorImageInfo.imageView = m_opticalFlowVectorView;
+		vectorImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+		VkDescriptorBufferInfo histogramBufferInfo{};
+		histogramBufferInfo.buffer = m_scdHistogramBuffer;
+		histogramBufferInfo.offset = 0;
+		histogramBufferInfo.range = VK_WHOLE_SIZE;
+
+		VkWriteDescriptorSet writes[5]{};
+
+		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[0].dstSet = m_descriptorSets[i];
+		writes[0].dstBinding = 0;
+		writes[0].descriptorCount = 1;
+		writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		writes[0].pBufferInfo = &constantBufferInfo;
+
+		writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[1].dstSet = m_descriptorSets[i];
+		writes[1].dstBinding = 1;
+		writes[1].descriptorCount = 1;
+		writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		writes[1].pImageInfo = &colorImageInfo;
+
+		writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[2].dstSet = m_descriptorSets[i];
+		writes[2].dstBinding = 2;
+		writes[2].descriptorCount = 1;
+		writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		writes[2].pImageInfo = &lumaImageInfo;
+
+		writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[3].dstSet = m_descriptorSets[i];
+		writes[3].dstBinding = 3;
+		writes[3].descriptorCount = 1;
+		writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		writes[3].pImageInfo = &vectorImageInfo;
+
+		writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[4].dstSet = m_descriptorSets[i];
+		writes[4].dstBinding = 4;
+		writes[4].descriptorCount = 1;
+		writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		writes[4].pBufferInfo = &histogramBufferInfo;
+
+		vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
+	}
+
+	// NOTA IMPORTANTE: m_lumaView e m_opticalFlowVectorView estao
+	// como VK_IMAGE_LAYOUT_GENERAL acima porque e o layout exigido
+	// para uso como storage image. Isso pressupoe que essas imagens
+	// ja foram transicionadas pra esse layout (com
+	// vkCmdPipelineBarrier, mudando de VK_IMAGE_LAYOUT_UNDEFINED para
+	// VK_IMAGE_LAYOUT_GENERAL) ANTES da primeira chamada de Dispatch().
+	// Isso ainda nao esta feito automaticamente neste arquivo - se o
+	// Vulkan Validation Layer acusar erro de layout, e por causa
+	// disso. Ver TODO equivalente a ser resolvido na proxima etapa,
+	// idealmente dentro de CreateIntermediateResources() logo apos
+	// criar cada imagem.
+}
+
 void OpticalFlowVk::ComputeToComputeBarrier(VkCommandBuffer cb)
 {
 	VkMemoryBarrier barrier{};
@@ -321,6 +434,35 @@ void OpticalFlowVk::ComputeToComputeBarrier(VkCommandBuffer cb)
 
 void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentColorView, VkImageView previousColorView, bool reset)
 {
+	// Na primeira chamada, transiciona as imagens de storage
+	// (m_lumaImage, m_opticalFlowVectorImage) de UNDEFINED para
+	// GENERAL - layout exigido pra uso como storage image nos
+	// shaders. Sem isso, o Vulkan Validation Layer acusa erro assim
+	// que o primeiro vkCmdDispatch tentar ler/escrever nelas.
+	if (!m_resourcesTransitioned)
+	{
+		VkImageMemoryBarrier barriers[2]{};
+
+		barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barriers[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		barriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barriers[0].image = m_lumaImage;
+		barriers[0].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		barriers[0].srcAccessMask = 0;
+		barriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+		barriers[1] = barriers[0];
+		barriers[1].image = m_opticalFlowVectorImage;
+
+		vkCmdPipelineBarrier(commandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0, 0, nullptr, 0, nullptr, 2, barriers);
+
+		m_resourcesTransitioned = true;
+	}
+
 	// 1) Atualiza o buffer de constantes para este frame
 	{
 		OpticalFlowConstants constants{};
@@ -339,12 +481,14 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 		vkUnmapMemory(m_renderer->GetLogicalDevice(), m_constantBufferMemory);
 	}
 
-	// TODO: atualizar aqui os descriptor sets de cada pass, escrevendo
-	// currentColorView/previousColorView, m_lumaView, m_opticalFlowVectorView
-	// e m_scdHistogramBuffer nos bindings certos via vkUpdateDescriptorSets -
-	// omitido nesta primeira versao para manter o arquivo legivel; e
-	// mecanico (repete o padrao de CreateDescriptorSets + VkWriteDescriptorSet
-	// por binding). Se quiser, na proxima mensagem eu escrevo essa parte.
+	// TODO: escrever aqui a atualizacao do binding de previousColorView
+	// tambem - nesta versao so currentColorView esta sendo passado pro
+	// shader (binding 1). O prepare_luma real da AMD usa cor atual E
+	// anterior para decidir o "reset" de cena; por enquanto o parametro
+	// previousColorView fica sem uso (ver "(void)reset" mais abaixo,
+	// mesma limitacao).
+	UpdateDescriptorSets(currentColorView);
+	(void)previousColorView;
 
 	uint32_t groupsX = DivRoundUp(m_width, kThreadGroupWidth);
 	uint32_t groupsY = DivRoundUp(m_height, kThreadGroupHeight);
@@ -394,4 +538,6 @@ void OpticalFlowVk::DestroyAll()
 
 	if (m_constantBuffer) vkDestroyBuffer(device, m_constantBuffer, nullptr);
 	if (m_constantBufferMemory) vkFreeMemory(device, m_constantBufferMemory, nullptr);
+
+	if (m_colorSampler) vkDestroySampler(device, m_colorSampler, nullptr);
 }

@@ -56,6 +56,8 @@ private:
 	void CreatePipelines();
 	void CreateIntermediateResources(uint32_t width, uint32_t height);
 	void CreateDescriptorSets();
+	void CreateSampler();
+	void UpdateDescriptorSets(VkImageView currentColorView);
 	void DestroyAll();
 
 	// Helper: cria um VkShaderModule a partir de um .spv em shaders_spv/
@@ -84,6 +86,8 @@ private:
 		Count
 	};
 
+	bool m_resourcesTransitioned = false; // controla a transicao de layout (ver Dispatch())
+
 	VkShaderModule m_shaderModules[(uint32_t)Pass::Count] = {};
 	VkPipeline m_pipelines[(uint32_t)Pass::Count] = {};
 	VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
@@ -111,4 +115,7 @@ private:
 	// buffer de constantes (equivalente ao cbuffer CB_COMMON do HLSL)
 	VkBuffer m_constantBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_constantBufferMemory = VK_NULL_HANDLE;
+
+	// sampler usado para ler a imagem de cor de entrada (binding 1)
+	VkSampler m_colorSampler = VK_NULL_HANDLE;
 };
