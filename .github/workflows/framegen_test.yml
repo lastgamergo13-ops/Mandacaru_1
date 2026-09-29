@@ -51,4 +51,4 @@ jobs:
             dependencies/ffx-frame-generation/src/opticalflow_vk.h
 
       - name: Resultado
-        run: echo "Checagem estatica passou. Lembre-se: isso NAO substitui compilar o projeto completo."
+        run: echo "Checagem estatica passou. Lembre-se - isso NAO substitui compilar o projeto completo."
