@@ -45,6 +45,8 @@ jobs:
       - name: Checagem estatica dos arquivos novos
         run: |
           cppcheck --enable=warning,performance,portability \
+            --language=c++ \
+            --std=c++20 \
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
             dependencies/ffx-frame-generation/src/opticalflow_vk.cpp \
