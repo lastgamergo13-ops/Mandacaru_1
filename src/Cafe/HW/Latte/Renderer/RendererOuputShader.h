@@ -16,6 +16,10 @@ public:
 		uint32 applySRGBEncoding;
 		float targetGamma;
 		float displayGamma;
+		// FSR RCAS sharpening amount, in "stops" (0.0 = sharpest, higher = softer) - see
+		// FsrRcasCon() in AMD's ffx_fsr1.h. Unused by every other filter; a fixed default is
+		// used for now rather than a user-facing slider - see s_fsr_rcas_shader_source.
+		float fsrRcasSharpness;
 	};
 	enum Shader
 	{
@@ -50,6 +54,15 @@ public:
 	static RendererOutputShader* s_hermit_shader;
 	static RendererOutputShader* s_hermit_shader_ud;
 
+	// AMD FidelityFX Super Resolution 1.0 (EASU edge-adaptive upsample + RCAS sharpen),
+	// ported from the official ffx_fsr1.h/ffx_a.h reference as two chained fragment-shader
+	// passes reusing this same RendererOutputShader/DrawBackbufferQuad machinery - see
+	// Renderer::DrawBackbufferQuadFSR() for how the two passes and the intermediate texture
+	// between them are driven, and RendererOuputShader.cpp for the shader source itself.
+	static RendererOutputShader* s_fsr_easu_shader;
+	static RendererOutputShader* s_fsr_rcas_shader;
+	static RendererOutputShader* s_fsr_rcas_shader_ud;
+
 	static std::string GetOpenGlVertexSource(bool render_upside_down);
 	static std::string GetVulkanVertexSource(bool render_upside_down);
 	static std::string GetMetalVertexSource(bool render_upside_down);
@@ -65,6 +78,9 @@ private:
 	static const std::string s_copy_shader_source;
 	static const std::string s_bicubic_shader_source;
 	static const std::string s_hermite_shader_source;
+
+	static const std::string s_fsr_easu_shader_source;
+	static const std::string s_fsr_rcas_shader_source;
 
 	static const std::string s_bicubic_shader_source_vk;
 	static const std::string s_hermite_shader_source_vk;

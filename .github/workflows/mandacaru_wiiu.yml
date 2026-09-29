@@ -1,10 +1,15 @@
 name: mandacaru_wiiu
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "*.md"
+  # DESATIVADO TEMPORARIAMENTE enquanto o Frame Generation esta em
+  # desenvolvimento, pra nao gastar minutos de CI compilando o APK
+  # inteiro a cada push. Use o workflow "framegen_test.yml" (novo,
+  # ao lado deste arquivo) pra testes rapidos so da parte de frame gen.
+  # Para reativar o build automatico: descomente o bloco "push:" abaixo.
+  # push:
+  #   branches:
+  #     - main
+  #   paths-ignore:
+  #     - "*.md"
   workflow_dispatch:
     inputs:
       version_major:

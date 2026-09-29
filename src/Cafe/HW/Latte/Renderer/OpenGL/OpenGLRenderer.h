@@ -65,6 +65,19 @@ public:
 	void QuerySupportedFormats();
 	static bool IsGLExtensionSupported(std::string_view extensionName);
 
+	// True when this renderer instance is running against an OpenGL ES driver (Android
+	// Mali/Adreno/etc via EGL) rather than desktop OpenGL. Set once in QuerySupportedFormats
+	// during Init, before any texture/readback work happens. Consulted by the GLES-only
+	// codepaths this port needed (1D texture emulation in LatteTextureGL.cpp, the FBO-based
+	// readback in TextureReadbackGL.cpp) instead of re-parsing GL_VERSION in each of those
+	// places - see the OpenGL-on-Android technical report for why those two areas in
+	// particular need to diverge from the desktop code.
+	static bool IsGLES() { return s_isGLES; }
+
+  private:
+	static inline bool s_isGLES = false;
+
+  public:
 	// imgui
 	bool ImguiBegin(bool mainWindow) override;
 	void ImguiEnd() override;
@@ -87,6 +100,8 @@ public:
 	void HandleScreenshotRequest(LatteTextureView* texView, bool padView) override;
 
 	void DrawBackbufferQuad(LatteTextureView* texView, RendererOutputShader* shader, bool useLinearTexFilter, sint32 imageX, sint32 imageY, sint32 imageWidth, sint32 imageHeight, bool padView, bool clearBackground) override;
+	bool CanUseFSR() const override { return true; }
+	void DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 imageX, sint32 imageY, sint32 imageWidth, sint32 imageHeight, bool padView, bool clearBackground, bool renderUpsideDown) override;
 
 	void AppendOverlayDebugInfo() override
 	{
@@ -181,6 +196,25 @@ public:
 	void bufferCache_copyStreamoutToMainBuffer(uint32 srcOffset, uint32 dstOffset, uint32 size) override;
 	void streamout_rendererFinishDrawcall() override;
 
+	// GLES has no hardware transform feedback layout-qualifier syntax (xfb_buffer/xfb_offset/
+	// xfb_stride - GLSL ES never got the desktop GL_ARB_enhanced_layouts equivalent), so on
+	// GLES this backend uses the same SSBO-based manual streamout path Vulkan and Metal
+	// already use instead of native GL_TRANSFORM_FEEDBACK (see OpenGLRendererStreamout.cpp
+	// and LatteDecompilerEmitGLSL[Header].cpp's useSSBOForStreamout branches). Desktop OpenGL
+	// keeps using native transform feedback, since it has no such limitation.
+	bool UseTFViaSSBO() const override { return IsGLES(); }
+
+	// mirrors VulkanRenderer::m_streamoutState / MetalRenderer's m_state.m_streamoutState -
+	// only populated/used when UseTFViaSSBO() is true (GLES)
+	struct
+	{
+		uint32 verticesPerInstance{};
+		struct
+		{
+			sint32 ringBufferOffset{};
+		} buffer[LATTE_NUM_STREAMOUT_BUFFER];
+	} m_streamoutState{};
+
 	// draw
 	void draw_init();
 
@@ -237,6 +271,14 @@ private:
 
 	// backbuffer blit
 	GLuint m_backbufferBlit_uniformBuffer;
+
+	// intermediate texture FSR's EASU pass renders into, before RCAS reads it back and
+	// writes the real, final image - see DrawBackbufferQuadFSR(). Lazily (re)created to match
+	// whatever output size is currently requested; texture-less (0) until first used.
+	GLuint m_fsrIntermediateTexture = 0;
+	GLuint m_fsrIntermediateFBO = 0;
+	sint32 m_fsrIntermediateWidth = 0;
+	sint32 m_fsrIntermediateHeight = 0;
 
 	// attribute stream
 	GLuint glAttributeCacheAB{};

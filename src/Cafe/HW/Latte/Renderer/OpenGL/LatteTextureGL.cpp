@@ -42,7 +42,15 @@ void LatteTextureGL::GenerateEmptyTextureFromGX2Dim(Latte::E_DIM dim, GLuint& te
 	if (dim == Latte::E_DIM::DIM_2D)
 		texTarget = GL_TEXTURE_2D;
 	else if (dim == Latte::E_DIM::DIM_1D)
-		texTarget = GL_TEXTURE_1D;
+	{
+		// GLES has no GL_TEXTURE_1D target at all (not even via extension) - the closest
+		// equivalent, and the one this port uses, is a regular 2D texture with height 1.
+		// See AllocateStorage() above for the matching storage-allocation side of this, and
+		// note the GLSL sampler1D->sampler2D change this still requires in the shader
+		// decompiler, which is not part of this change (see the project's OpenGL-on-Android
+		// technical report, Etapa 4/6).
+		texTarget = OpenGLRenderer::IsGLES() ? GL_TEXTURE_2D : GL_TEXTURE_1D;
+	}
 	else if (dim == Latte::E_DIM::DIM_3D)
 		texTarget = GL_TEXTURE_3D;
 	else if (dim == Latte::E_DIM::DIM_2D_ARRAY)
@@ -496,29 +504,47 @@ void LatteTextureGL::AllocateOnHost()
 	// calculate mip count
 	sint32 mipLevels = std::min(hostTexture->mipLevels, hostTexture->maxPossibleMipLevels);
 	mipLevels = std::max(mipLevels, 1);
+	AllocateStorage(hostTexture->glId_texture, hostTexture->dim, hostTexture->glInternalFormat, effectiveBaseWidth, effectiveBaseHeight, effectiveBaseDepth, mipLevels);
+}
+
+// Shared by AllocateOnHost() above (for a texture's own storage) and by
+// LatteTextureViewGL::InitAliasView()'s GLES glCopyImageSubData fallback (for the fresh,
+// still-empty texture object created to hold a copied-in view when no glTextureView
+// variant exists on this device - see GLInclude.h's glTextureViewWrapper).
+void LatteTextureGL::AllocateStorage(GLuint texId, Latte::E_DIM dim, GLuint glInternalFormat, sint32 width, sint32 height, sint32 depth, sint32 mipLevels)
+{
 	// create immutable storage
-	if (hostTexture->dim == Latte::E_DIM::DIM_2D || hostTexture->dim == Latte::E_DIM::DIM_2D_MSAA)
+	if (dim == Latte::E_DIM::DIM_2D || dim == Latte::E_DIM::DIM_2D_MSAA)
 	{
-		cemu_assert_debug(effectiveBaseDepth == 1);
-		glTextureStorage2DWrapper(GL_TEXTURE_2D, hostTexture->glId_texture, mipLevels, hostTexture->glInternalFormat, effectiveBaseWidth, effectiveBaseHeight);
+		cemu_assert_debug(depth == 1);
+		glTextureStorage2DWrapper(GL_TEXTURE_2D, texId, mipLevels, glInternalFormat, width, height);
 	}
-	else if (hostTexture->dim == Latte::E_DIM::DIM_1D)
+	else if (dim == Latte::E_DIM::DIM_1D)
 	{
-		cemu_assert_debug(effectiveBaseHeight == 1);
-		cemu_assert_debug(effectiveBaseDepth == 1);
-		glTextureStorage1DWrapper(GL_TEXTURE_1D, hostTexture->glId_texture, mipLevels, hostTexture->glInternalFormat, effectiveBaseWidth);
+		cemu_assert_debug(height == 1);
+		cemu_assert_debug(depth == 1);
+		if (OpenGLRenderer::IsGLES())
+		{
+			// GLES has no 1D textures at all (not even via extension) - GenerateEmptyTextureFromGX2Dim
+			// already redirected texId's target to GL_TEXTURE_2D for this case, so allocate a
+			// height-1 2D texture instead. See the comment there for the (separate, still
+			// outstanding) GLSL sampler1D->sampler2D change this also requires on the shader side.
+			glTextureStorage2DWrapper(GL_TEXTURE_2D, texId, mipLevels, glInternalFormat, width, 1);
+		}
+		else
+			glTextureStorage1DWrapper(GL_TEXTURE_1D, texId, mipLevels, glInternalFormat, width);
 	}
-	else if (hostTexture->dim == Latte::E_DIM::DIM_2D_ARRAY || hostTexture->dim == Latte::E_DIM::DIM_2D_ARRAY_MSAA)
+	else if (dim == Latte::E_DIM::DIM_2D_ARRAY || dim == Latte::E_DIM::DIM_2D_ARRAY_MSAA)
 	{
-		glTextureStorage3DWrapper(GL_TEXTURE_2D_ARRAY, hostTexture->glId_texture, mipLevels, hostTexture->glInternalFormat, effectiveBaseWidth, effectiveBaseHeight, std::max(1, effectiveBaseDepth));
+		glTextureStorage3DWrapper(GL_TEXTURE_2D_ARRAY, texId, mipLevels, glInternalFormat, width, height, std::max(1, depth));
 	}
-	else if (hostTexture->dim == Latte::E_DIM::DIM_3D)
+	else if (dim == Latte::E_DIM::DIM_3D)
 	{
-		glTextureStorage3DWrapper(GL_TEXTURE_3D, hostTexture->glId_texture, mipLevels, hostTexture->glInternalFormat, effectiveBaseWidth, effectiveBaseHeight, std::max(1, effectiveBaseDepth));
+		glTextureStorage3DWrapper(GL_TEXTURE_3D, texId, mipLevels, glInternalFormat, width, height, std::max(1, depth));
 	}
-	else if (hostTexture->dim == Latte::E_DIM::DIM_CUBEMAP)
+	else if (dim == Latte::E_DIM::DIM_CUBEMAP)
 	{
-		glTextureStorage3DWrapper(GL_TEXTURE_CUBE_MAP_ARRAY, hostTexture->glId_texture, mipLevels, hostTexture->glInternalFormat, effectiveBaseWidth, effectiveBaseHeight, effectiveBaseDepth);
+		glTextureStorage3DWrapper(GL_TEXTURE_CUBE_MAP_ARRAY, texId, mipLevels, glInternalFormat, width, height, depth);
 	}
 	else
 	{

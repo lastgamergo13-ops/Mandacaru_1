@@ -89,19 +89,60 @@ LatteTextureReadbackInfoGL::~LatteTextureReadbackInfoGL()
 
 	if(texImageBufferGL)
 		glDeleteBuffers(1, &texImageBufferGL);
+
+	if (m_readbackFBO)
+		glDeleteFramebuffers(1, &m_readbackFBO);
 }
 
+// Reads the source texture back via a temporary FBO + glReadPixels instead of glGetTexImage,
+// which has no equivalent anywhere in the GLES line (core or extension) - see Etapa 5 of the
+// OpenGL-on-Android technical report. glReadPixels + a bound GL_PIXEL_PACK_BUFFER works
+// identically to the old glGetTexImage-into-PBO approach on both desktop GL and GLES 3.0+,
+// so this same path is now used unconditionally on both, rather than branching by platform.
+//
+// Honest caveat: reading a depth attachment via glReadPixels(GL_DEPTH_COMPONENT, ...) is
+// allowed by the GLES 3.x spec only when the implementation exposes it (it is not one of the
+// two combinations every implementation is required to support), so depth readback here may
+// legitimately fail/return garbage on some GLES drivers even though the exact same call
+// always worked on desktop GL. There is no portable alternative within core GLES 3.x for
+// this - it would require a driver-specific extension query.
 void LatteTextureReadbackInfoGL::StartTransfer()
 {
 	cemu_assert(m_textureView);
-	((OpenGLRenderer*)g_renderer.get())->texture_bindAndActivate(m_textureView, 0);
+	auto textureViewGL = (LatteTextureViewGL*)m_textureView;
+	LatteTexture* baseTexture = m_textureView->baseTexture;
+
+	if (!m_readbackFBO)
+		glGenFramebuffers(1, &m_readbackFBO);
+
+	GLint previousReadFBO = 0;
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFBO);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, m_readbackFBO);
+
+	GLenum attachment = (m_texFormatGL == GL_DEPTH_COMPONENT) ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
+	if (textureViewGL->glTexTarget == GL_TEXTURE_2D)
+		glFramebufferTexture2D(GL_READ_FRAMEBUFFER, attachment, GL_TEXTURE_2D, textureViewGL->glTexId, m_textureView->firstMip);
+	else
+		glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, attachment, textureViewGL->glTexId, m_textureView->firstMip, m_textureView->firstSlice);
+	if (attachment == GL_COLOR_ATTACHMENT0)
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+	else
+		glReadBuffer(GL_NONE);
+
 	// create unsynchronized buffer
 	glGenBuffers(1, &texImageBufferGL);
 	glBindBuffer(GL_PIXEL_PACK_BUFFER, texImageBufferGL);
 	glBufferData(GL_PIXEL_PACK_BUFFER, m_image_size, NULL, GL_DYNAMIC_READ);
-	// request texture read into buffer
-	glGetTexImage(((LatteTextureViewGL*)m_textureView)->glTexTarget, 0, m_texFormatGL, m_texDataTypeGL, NULL);
+	// request texture read into buffer (pixels=nullptr means "into the bound PBO", same as before)
+	GLint previousPackAlignment = 4;
+	glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadPixels(0, 0, baseTexture->width, baseTexture->height, m_texFormatGL, m_texDataTypeGL, nullptr);
+	glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
 	glFlush();
+
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFBO);
+
 	// create fence sync (so we can check if the image copy operation finished)
 	imageCopyFinSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 	m_textureView = nullptr;
@@ -121,8 +162,12 @@ bool LatteTextureReadbackInfoGL::IsFinished()
 uint8* LatteTextureReadbackInfoGL::GetData()
 {
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, texImageBufferGL);
-		return (uint8*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+		// glMapBuffer doesn't exist on GLES (only glMapBufferRange, GLES 3.0+) - desktop GL
+		// has supported glMapBufferRange since 3.0 too, so this now always uses it instead of
+		// branching, same reasoning as the StartTransfer() unification above.
+		return (uint8*)glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, m_image_size, GL_MAP_READ_BIT);
 }
+
 
 
 void LatteTextureReadbackInfoGL::ReleaseData()

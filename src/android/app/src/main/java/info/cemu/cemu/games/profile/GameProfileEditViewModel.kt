@@ -10,6 +10,7 @@ import info.cemu.cemu.common.customdrivers.parseInstalledDrivers
 import info.cemu.cemu.nativeinterface.NativeGameTitles
 import info.cemu.cemu.nativeinterface.NativeGameTitles.DriverSettingMode
 import info.cemu.cemu.nativeinterface.NativeGameTitles.Game
+import info.cemu.cemu.nativeinterface.NativeGraphicPacks
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -24,10 +25,71 @@ data class DriverSettingChoice(
     val customDriverData: CustomDriverData? = null,
 )
 
+/**
+ * One graphic pack applicable to this specific game (its titleId is listed in the
+ * pack's rules.txt), plus whether the user has selected it for this game only.
+ * Selecting a pack here does NOT enable it globally — see
+ * [NativeGameTitles.setSelectedGraphicPacksForTitle].
+ */
+data class GameGraphicPackChoice(
+    val basicInfo: NativeGraphicPacks.GraphicPackBasicInfo,
+    val selectedForThisGame: Boolean,
+)
+
 class GameProfileEditViewModel(val game: Game) : ViewModel() {
     private val _selectedDriverSetting =
         MutableStateFlow(DriverSettingChoice(DriverSettingMode.GLOBAL))
     val selectedDriverSetting = _selectedDriverSetting.asStateFlow()
+
+    // ─── Graphic packs available for this game ─────────────────────────
+    private val _graphicPackChoices = MutableStateFlow<List<GameGraphicPackChoice>>(listOf())
+    val graphicPackChoices = _graphicPackChoices.asStateFlow()
+
+    private suspend fun getGraphicPackChoices(): List<GameGraphicPackChoice> {
+        val selectedPaths =
+            NativeGameTitles.getSelectedGraphicPacksForTitle(game.titleId).toSet()
+        return NativeGraphicPacks.getGraphicPackBasicInfos()
+            .filter { it.titleIds.contains(game.titleId) }
+            .sortedBy { it.virtualPath }
+            .map { info -> GameGraphicPackChoice(info, info.normalizedPath in selectedPaths) }
+    }
+
+    /** Toggles a single graphic pack for this game only and persists immediately. */
+    fun setGraphicPackSelectedForGame(normalizedPath: String, selected: Boolean) {
+        val updated = _graphicPackChoices.value.map {
+            if (it.basicInfo.normalizedPath == normalizedPath)
+                it.copy(selectedForThisGame = selected)
+            else
+                it
+        }
+        _graphicPackChoices.value = updated
+        val selectedPaths = updated
+            .filter { it.selectedForThisGame }
+            .map { it.basicInfo.normalizedPath }
+            .toTypedArray()
+        NativeGameTitles.setSelectedGraphicPacksForTitle(game.titleId, selectedPaths)
+    }
+
+    // ─── Limit to 30 FPS / Emulation speed — per-game override ────────────────
+    // Tri-state: -1 = "use the global setting" (Settings → Experimental/Hackers),
+    // 0/1 = off/on just for this game. Never touches the global setting or any
+    // other game.
+    private val _limitToHalfFpsOverride = MutableStateFlow(-1)
+    val limitToHalfFpsOverride = _limitToHalfFpsOverride.asStateFlow()
+
+    fun setLimitToHalfFpsOverride(triState: Int) {
+        NativeGameTitles.setLimitToHalfFpsForTitle(game.titleId, triState)
+        _limitToHalfFpsOverride.value = triState
+    }
+
+    // -1 = "use the global setting", otherwise 100-200 just for this game.
+    private val _emulationSpeedPercentOverride = MutableStateFlow(-1)
+    val emulationSpeedPercentOverride = _emulationSpeedPercentOverride.asStateFlow()
+
+    fun setEmulationSpeedPercentOverride(value: Int) {
+        NativeGameTitles.setEmulationSpeedPercentForTitle(game.titleId, value)
+        _emulationSpeedPercentOverride.value = value
+    }
 
     fun setSelectedDriverSetting(driverSetting: DriverSettingChoice) {
         if (driverSetting.mode != DriverSettingMode.GLOBAL
@@ -97,6 +159,9 @@ class GameProfileEditViewModel(val game: Game) : ViewModel() {
     init {
         viewModelScope.launch {
             _driverSettingChoices.value = getDriverSettingsChoices()
+            _graphicPackChoices.value = getGraphicPackChoices()
+            _limitToHalfFpsOverride.value = NativeGameTitles.getLimitToHalfFpsForTitle(game.titleId)
+            _emulationSpeedPercentOverride.value = NativeGameTitles.getEmulationSpeedPercentForTitle(game.titleId)
         }
     }
 

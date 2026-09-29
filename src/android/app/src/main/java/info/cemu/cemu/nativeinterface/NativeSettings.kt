@@ -49,6 +49,22 @@ object NativeSettings {
     @JvmStatic
     external fun setVsyncMode(value: Int)
 
+    // Render API (Experimental/Hackers tab): which graphics backend the emulator uses.
+    // Automatic currently always resolves to Vulkan under the hood - see the native
+    // NativeEmulation_initializeRenderer comment - since Vulkan is this project's mature,
+    // tested backend and the OpenGL ES backend is new/experimental.
+    object RendererMode {
+        const val AUTOMATIC: Int = 0
+        const val VULKAN: Int = 1
+        const val OPENGL: Int = 2
+    }
+
+    @JvmStatic
+    external fun getRendererMode(): Int
+
+    @JvmStatic
+    external fun setRendererMode(value: Int)
+
     object FullscreenScaling {
         const val KEEP_ASPECT_RATIO: Int = 0
         const val STRETCH: Int = 1
@@ -65,6 +81,7 @@ object NativeSettings {
         const val BICUBIC_FILTER: Int = 1
         const val BICUBIC_HERMITE_FILTER: Int = 2
         const val NEAREST_NEIGHBOR_FILTER: Int = 3
+        const val FSR_FILTER: Int = 4
     }
 
     @JvmStatic
@@ -78,6 +95,14 @@ object NativeSettings {
 
     @JvmStatic
     external fun setDownscalingFilter(value: Int)
+
+    // FSR RCAS sharpening amount, in "stops" (0.0 = sharpest, higher = softer) - only
+    // meaningful when the upscale filter is set to ScalingFilter.FSR_FILTER above.
+    @JvmStatic
+    external fun getFsrSharpness(): Float
+
+    @JvmStatic
+    external fun setFsrSharpness(value: Float)
 
     @JvmStatic
     external fun getAccurateBarriers(): Boolean
@@ -437,4 +462,18 @@ object NativeSettings {
 
     @JvmStatic
     external fun setQuickControllerProfileSwitcherEnabled(enabled: Boolean)
+
+    // ─── Limit to 30 FPS / Emulation speed (global default) ────────────
+    @JvmStatic
+    external fun getLimitToHalfFps(): Boolean
+
+    @JvmStatic
+    external fun setLimitToHalfFps(value: Boolean)
+
+    /** 100-200, e.g. 150 = 1.5x. */
+    @JvmStatic
+    external fun getEmulationSpeedPercent(): Int
+
+    @JvmStatic
+    external fun setEmulationSpeedPercent(value: Int)
 }

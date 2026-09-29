@@ -3,6 +3,7 @@ add_library(CemuAndroid SHARED
         AndroidFilesystemCallbacks.cpp
         AndroidInputHelpers.cpp
         AndroidMemoryManager.cpp
+        AndroidOpenGLCanvas.cpp
         CompressTitleCallbacks.cpp
         GameTitleLoader.cpp
         Image.cpp

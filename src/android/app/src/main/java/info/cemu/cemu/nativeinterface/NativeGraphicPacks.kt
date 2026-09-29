@@ -27,7 +27,10 @@ object NativeGraphicPacks {
         val id: Long,
         val virtualPath: String,
         val enabled: Boolean,
-        val titleIds: LongArray
+        val titleIds: LongArray,
+        // Path used to persist per-game selections (gameProfiles/<titleId>.ini),
+        // matches GraphicPack2::GetNormalizedPathString() on the native side.
+        val normalizedPath: String
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -39,6 +42,7 @@ object NativeGraphicPacks {
             if (enabled != other.enabled) return false
             if (virtualPath != other.virtualPath) return false
             if (!titleIds.contentEquals(other.titleIds)) return false
+            if (normalizedPath != other.normalizedPath) return false
 
             return true
         }
@@ -48,6 +52,7 @@ object NativeGraphicPacks {
             result = 31 * result + enabled.hashCode()
             result = 31 * result + virtualPath.hashCode()
             result = 31 * result + titleIds.contentHashCode()
+            result = 31 * result + normalizedPath.hashCode()
             return result
         }
     }

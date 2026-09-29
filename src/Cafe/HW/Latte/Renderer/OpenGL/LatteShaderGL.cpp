@@ -51,6 +51,17 @@ void LatteShader_prepareSeparableUniforms(LatteDecompilerShader* shader)
 	shader->uniform.loc_alphaTestRef = glGetUniformLocation(shaderGL->GetProgram(), "uf_alphaTestRef");
 	shader->uniform.loc_pointSize = glGetUniformLocation(shaderGL->GetProgram(), "uf_pointSize");
 	shader->uniform.loc_fragCoordScale = glGetUniformLocation(shaderGL->GetProgram(), "uf_fragCoordScale");
+	// alternative (SSBO-based) transform feedback path - see OpenGLRenderer::UseTFViaSSBO()
+	// and OpenGLRendererStreamout.cpp. Harmless no-op query (-1) for shaders that don't
+	// declare these, i.e. every shader when streamout isn't used or the native GL_TRANSFORM_FEEDBACK
+	// path is active instead (desktop OpenGL).
+	shader->uniform.loc_verticesPerInstance = glGetUniformLocation(shaderGL->GetProgram(), "uf_verticesPerInstance");
+	for (sint32 t = 0; t < LATTE_NUM_STREAMOUT_BUFFER; t++)
+	{
+		char ufStreamoutName[64];
+		sprintf(ufStreamoutName, "uf_streamoutBufferBase%d", t);
+		shader->uniform.loc_streamoutBufferBase[t] = glGetUniformLocation(shaderGL->GetProgram(), ufStreamoutName);
+	}
 	cemu_assert_debug(shader->uniform.list_ufTexRescale.empty());
 	for (sint32 t = 0; t < LATTE_NUM_MAX_TEX_UNITS; t++)
 	{

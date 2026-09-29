@@ -655,6 +655,12 @@ namespace LatteDecompiler
 			decompilerContext->currentBindingPointVK++;
 			decompilerContext->output->resourceMappingMTL.tfStorageBindingPoint = decompilerContext->currentBufferBindingPointMTL;
 			decompilerContext->currentBufferBindingPointMTL++;
+			// OpenGL (GLES via UseTFViaSSBO() - see OpenGLRenderer.h): GL_SHADER_STORAGE_BUFFER
+			// bindings are their own independent namespace, separate from the
+			// GL_UNIFORM_BUFFER bindings resourceMappingGL.uniformBuffersBindingPoint uses
+			// above, and this is currently the only thing this backend binds as an SSBO - so
+			// binding point 0 is always free, no counter needed like VK/MTL's.
+			decompilerContext->output->resourceMappingGL.tfStorageBindingPoint = 0;
 		}
 	}
 

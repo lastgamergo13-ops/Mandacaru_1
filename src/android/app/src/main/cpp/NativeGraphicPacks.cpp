@@ -107,7 +107,7 @@ extern "C" [[maybe_unused]] JNIEXPORT jobjectArray JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeGraphicPacks_getGraphicPackBasicInfos(JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
 	jclass graphicPackInfoClass = env->FindClass("info/cemu/cemu/nativeinterface/NativeGraphicPacks$GraphicPackBasicInfo");
-	jmethodID graphicPackInfoCtorId = env->GetMethodID(graphicPackInfoClass, "<init>", "(JLjava/lang/String;Z[J)V");
+	jmethodID graphicPackInfoCtorId = env->GetMethodID(graphicPackInfoClass, "<init>", "(JLjava/lang/String;Z[JLjava/lang/String;)V");
 
 	return JNIUtils::CreateObjectArray(
 		env,
@@ -117,7 +117,8 @@ Java_info_cemu_cemu_nativeinterface_NativeGraphicPacks_getGraphicPackBasicInfos(
 			jstring virtualPath = JNIUtils::ToJString(env, graphicPack.second->GetVirtualPath());
 			jlong id = graphicPack.first;
 			jlongArray titleIds = JNIUtils::CreateLongArray(env, graphicPack.second->GetTitleIds());
-			return env->NewObject(graphicPackInfoClass, graphicPackInfoCtorId, id, virtualPath, graphicPack.second->IsEnabled(), titleIds);
+			jstring normalizedPath = JNIUtils::ToJString(env, graphicPack.second->GetNormalizedPathString());
+			return env->NewObject(graphicPackInfoClass, graphicPackInfoCtorId, id, virtualPath, graphicPack.second->IsEnabled(), titleIds, normalizedPath);
 		});
 }
 

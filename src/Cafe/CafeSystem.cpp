@@ -24,6 +24,7 @@
 #include "Cafe/OS/libs/snd_core/ax.h"
 #include "Cafe/OS/RPL/rpl.h"
 #include "Cafe/HW/Latte/Core/Latte.h"
+#include "Cafe/HW/Latte/Core/LatteTiming.h"
 #include "Cafe/Filesystem/FST/FST.h"
 #include "Common/FileStream.h"
 #include "GamePatch.h"
@@ -435,6 +436,15 @@ void cemu_initForGame()
 	}
 	LatteGPUState.isDRCPrimary = ActiveSettings::DisplayDRCEnabled();
 	InfoLog_PrintActiveSettings();
+
+	// Android/Mandacaru — on Android the app process is not restarted between titles,
+	// so any custom vsync frequency (Limit to 30 FPS, or set by a previous title's
+	// graphic pack) and any emulation speed override left over from a previous session
+	// must be cleared here, before this title's own settings are applied below.
+	// Without this, a setting from the last game played could silently leak into this one.
+	LatteTiming_disableCustomVsyncFrequency();
+	ActiveSettings::SetGameSpeedPercent(100);
+
 	Latte_Start();
 	// check for debugger entrypoint bp
     if (g_gdbstub)
@@ -446,6 +456,38 @@ void cemu_initForGame()
 	// load graphic packs
 	cemuLog_log(LogType::Force, "------- Activate graphic packs -------");
 	GraphicPack2::ActivateForCurrentTitle();
+
+	// Android/Mandacaru — "Limit to 30 FPS" / "Emulation speed".
+	// Per-title override (gameProfiles/<titleId>.ini, [Timing] section) takes priority
+	// over the global setting when present; falls back to the global config otherwise.
+	// Neither ever touches the other title's profile or the global config itself, so
+	// this can never "leak" into other games.
+	{
+		bool effectiveLimitToHalfFps = g_current_game_profile->GetLimitToHalfFps().value_or(GetConfig().limit_to_half_fps.GetValue());
+		uint32 effectiveSpeedPercent = g_current_game_profile->GetEmulationSpeedPercent().value_or(GetConfig().emulation_speed_percent.GetValue());
+
+		sint32 existingCustomVsyncFreq = 0;
+		bool graphicPackOwnsTiming = LatteTiming_getCustomVsyncFrequency(existingCustomVsyncFreq);
+
+		if (!graphicPackOwnsTiming)
+		{
+			if (effectiveLimitToHalfFps)
+			{
+				LatteTiming_setCustomVsyncFrequency(30);
+				ActiveSettings::SetGameSpeedPercent(100);
+			}
+			else
+			{
+				uint32 clampedSpeedPercent = std::clamp<uint32>(effectiveSpeedPercent, 100, 200);
+				ActiveSettings::SetGameSpeedPercent(clampedSpeedPercent);
+			}
+		}
+		else
+		{
+			cemuLog_log(LogType::Force, "Limit to 30 FPS / Emulation speed skipped: a graphic pack already owns the vsync timing for this title ({}Hz)", existingCustomVsyncFreq);
+		}
+	}
+
 	// print audio log
 	IAudioAPI::PrintLogging();
 	IAudioInputAPI::PrintLogging();

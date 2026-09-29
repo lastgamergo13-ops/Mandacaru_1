@@ -47,6 +47,25 @@ public:
 
 	[[nodiscard]] const std::array< std::optional<std::string>, 8>& GetControllerProfile() const { return m_controllerProfile; }
 
+	// Android/Mandacaru — graphic packs selected specifically for this title.
+	// Stored as normalized relative paths (e.g. "Bayonetta2/Graphics"), matching
+	// GraphicPack2::GetNormalizedPathString(). These are activated in addition to
+	// (not instead of) globally-enabled packs, purely for this title's session —
+	// see GraphicPack2::ActivateForCurrentTitle(). They never touch the global
+	// graphic_pack_entries config, so other games are never affected.
+	[[nodiscard]] const std::vector<std::string>& GetSelectedGraphicPacks() const { return m_selectedGraphicPacks; }
+	void SetSelectedGraphicPacks(std::vector<std::string> selectedGraphicPacks) { m_selectedGraphicPacks = std::move(selectedGraphicPacks); }
+
+	// Android/Mandacaru — per-title override for "Limit to 30 FPS" / "Emulation speed".
+	// nullopt (the default) means "use the global setting" — setting either of these only
+	// affects THIS title, never the global config or any other game's profile. See the
+	// priority/reset logic in CafeSystem's title launch flow (cemu_initForGame).
+	[[nodiscard]] const std::optional<bool>& GetLimitToHalfFps() const { return m_limitToHalfFps; }
+	void SetLimitToHalfFps(std::optional<bool> value) { m_limitToHalfFps = value; }
+
+	[[nodiscard]] const std::optional<uint32>& GetEmulationSpeedPercent() const { return m_emulationSpeedPercent; }
+	void SetEmulationSpeedPercent(std::optional<uint32> value) { m_emulationSpeedPercent = value; }
+
 #if BOOST_PLAT_ANDROID
   public:
 	struct DriverSetting
@@ -97,6 +116,11 @@ public:
 	bool m_disableAudio = false;
 	// controller settings
 	std::array< std::optional<std::string>, 8> m_controllerProfile{};
+	// graphic packs selected specifically for this title (Android/Mandacaru)
+	std::vector<std::string> m_selectedGraphicPacks{};
+	// per-title "Limit to 30 FPS" / "Emulation speed" override (Android/Mandacaru)
+	std::optional<bool> m_limitToHalfFps{};
+	std::optional<uint32> m_emulationSpeedPercent{};
 };
 extern std::unique_ptr<GameProfile> g_current_game_profile;
 

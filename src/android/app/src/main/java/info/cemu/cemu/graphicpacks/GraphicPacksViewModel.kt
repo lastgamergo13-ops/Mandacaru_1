@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import info.cemu.cemu.nativeinterface.NativeGameTitles
 import info.cemu.cemu.nativeinterface.NativeGraphicPacks
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.regex.Pattern
 
 data class Preset(
@@ -202,6 +204,20 @@ class GraphicPacksViewModel(
 
     private var downloadJob: Job? = null
 
+    // ─── Versão instalada dos graphic packs (rodapé da lista) ──────────────────
+    private val _installedVersion = MutableStateFlow<String?>(null)
+    val installedVersion = _installedVersion.asStateFlow()
+
+    fun refreshInstalledVersion(context: Context) {
+        val graphicPacksRootDir = context.internalFolder() ?: return
+        val graphicPacksDir = graphicPacksRootDir.resolve("graphicPacks")
+        viewModelScope.launch {
+            _installedVersion.value = withContext(Dispatchers.IO) {
+                graphicPacksDownloader.getCurrentVersion(graphicPacksDir)
+            }
+        }
+    }
+
     fun downloadNewUpdate(context: Context) {
 
         val graphicPacksRootDir = context.internalFolder()
@@ -226,6 +242,7 @@ class GraphicPacksViewModel(
 
                 if (it == GraphicPacksDownloadStatus.FINISHED_DOWNLOADING) {
                     refreshGraphicPacks()
+                    refreshInstalledVersion(context)
                 }
             }
         }

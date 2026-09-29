@@ -1103,7 +1103,33 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 	}
 	catchOpenGLError();
 	// prepare streamout
+	m_streamoutState.verticesPerInstance = count;
 	LatteStreamout_PrepareDrawcall(count, instanceCount);
+	// GLES SSBO-based streamout (see OpenGLRenderer::UseTFViaSSBO()): bind the ring buffer as
+	// an SSBO on whichever shader stage actually emits the streamout writes (geometry shader
+	// if present, otherwise vertex shader - mirrors the same choice
+	// LatteStreamout_PrepareDrawcall() above makes for streamoutBufferWriteMask) and push
+	// this draw's per-buffer ring offsets - just populated into m_streamoutState by that same
+	// call, via streamout_setupXfbBuffer() - into the uf_streamoutBufferBase{}/
+	// uf_verticesPerInstance uniforms that shader declared. Same values Vulkan/Metal write
+	// into their own packed uniform blocks for the identical SSBO path (see
+	// VulkanRendererCore.cpp / MetalRenderer.cpp around loc_streamoutBufferBase).
+	if (UseTFViaSSBO())
+	{
+		LatteDecompilerShader* streamoutShader = geometryShader ? geometryShader : vertexShader;
+		if (streamoutShader && streamoutShader->uniform.loc_verticesPerInstance >= 0)
+		{
+			auto streamoutShaderGL = (RendererShaderGL*)streamoutShader->shader;
+			if (streamoutShader->resourceMapping.tfStorageBindingPoint >= 0)
+				glBindBufferBase(GL_SHADER_STORAGE_BUFFER, streamoutShader->resourceMapping.tfStorageBindingPoint, glStreamoutCacheRingBuffer);
+			glProgramUniform1i(streamoutShaderGL->GetProgram(), streamoutShader->uniform.loc_verticesPerInstance, (sint32)m_streamoutState.verticesPerInstance);
+			for (sint32 t = 0; t < LATTE_NUM_STREAMOUT_BUFFER; t++)
+			{
+				if (streamoutShader->uniform.loc_streamoutBufferBase[t] >= 0)
+					glProgramUniform1i(streamoutShaderGL->GetProgram(), streamoutShader->uniform.loc_streamoutBufferBase[t], (sint32)m_streamoutState.buffer[t].ringBufferOffset);
+			}
+		}
+	}
 
 	if (streamoutEnable && rasterizerEnable)
 	{

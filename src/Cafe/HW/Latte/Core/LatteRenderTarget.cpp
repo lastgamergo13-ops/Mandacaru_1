@@ -959,6 +959,37 @@ void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPa
 
 			filter = LatteTextureView::MagFilter::kNearestNeighbor;
 		}
+		else if (scaling_filter == kFsrFilter)
+		{
+			// FSR is a two-pass (EASU+RCAS) algorithm needing an intermediate texture between
+			// the passes, which doesn't fit the single-shader DrawBackbufferQuad() path every
+			// other filter above uses - it gets its own entry point instead. Not applicable to
+			// downscaling (EASU specifically upsamples) - the "FSR" choice only exists in the
+			// upscale filter list to begin with (see GraphicsSettingsScreen.kt/GeneralSettings2.cpp),
+			// but downscaling is guarded here too in case an old config file somehow set it.
+			// CanUseFSR() is false on backends FSR hasn't been ported to (currently just Metal) -
+			// fall back to bicubic there rather than asserting on a null shader below.
+			if (downscaling || !g_renderer->CanUseFSR())
+			{
+				if (renderUpsideDown)
+					shader = RendererOutputShader::s_bicubic_shader_ud;
+				else
+					shader = RendererOutputShader::s_bicubic_shader;
+				filter = LatteTextureView::MagFilter::kLinear;
+			}
+			else
+			{
+				g_renderer->DrawBackbufferQuadFSR(textureView, imageX, imageY, imageWidth, imageHeight, isPadView, clearBackground, renderUpsideDown);
+				g_renderer->HandleScreenshotRequest(textureView, isPadView);
+				if (!g_renderer->ImguiBegin(!isPadView))
+					return;
+				swkbd_render(!isPadView);
+				nn::erreula::render(!isPadView);
+				LatteOverlay_render(isPadView);
+				g_renderer->ImguiEnd();
+				return;
+			}
+		}
 	}
 	cemu_assert(shader);
 	g_renderer->DrawBackbufferQuad(textureView, shader, filter==LatteTextureView::MagFilter::kLinear, imageX, imageY, imageWidth, imageHeight, isPadView, clearBackground);

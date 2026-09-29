@@ -1,5 +1,6 @@
 #include "Cafe/HW/Latte/Renderer/RendererOuputShader.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
+#include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h" // for OpenGLRenderer::IsGLES() - see GetOpenGlVertexSource/PrependFragmentPreamble
 #include "Cafe/HW/Latte/Core/Latte.h"
 #include "config/ActiveSettings.h"
 
@@ -180,6 +181,201 @@ void outputShader(){
 }
 )";
 
+// AMD FidelityFX Super Resolution 1.0 - EASU (edge-adaptive spatial upsampling) pass.
+// Ported by hand from the official ffx_fsr1.h/ffx_a.h reference (MIT licensed, AMD 2021) into
+// plain GLSL for this project's fragment-shader-based output filter pipeline (see
+// Renderer::DrawBackbufferQuadFSR()), rather than pulling in the AU/AF macro layer and the
+// original compute-shader entry point. Reads the low-resolution game image (textureSrc) and
+// writes the upsampled result into an intermediate texture at output resolution; RCAS below
+// then reads that intermediate texture and sharpens it into the real backbuffer.
+// AMD's fast approximate reciprocal/rsqrt bit-trick helpers (APrxLoRcpF1 and friends) are
+// replaced with plain division/inversesqrt here - mathematically equivalent (they were a GCN
+// hardware micro-optimization, not part of the actual algorithm), and one less thing to get
+// subtly wrong porting by hand.
+const std::string RendererOutputShader::s_fsr_easu_shader_source =
+R"(
+void FsrEasuTapF(inout vec3 aC, inout float aW, vec2 off, vec2 dir, vec2 len, float lob, float clp, vec3 c)
+{
+	vec2 v;
+	v.x = (off.x*( dir.x)) + (off.y*dir.y);
+	v.y = (off.x*(-dir.y)) + (off.y*dir.x);
+	v *= len;
+	float d2 = v.x*v.x + v.y*v.y;
+	d2 = min(d2, clp);
+	float wB = (2.0/5.0)*d2 - 1.0;
+	float wA = lob*d2 - 1.0;
+	wB *= wB;
+	wA *= wA;
+	wB = (25.0/16.0)*wB - (25.0/16.0-1.0);
+	float w = wB*wA;
+	aC += c*w; aW += w;
+}
+
+void FsrEasuSetF(inout vec2 dir, inout float len, vec2 pp, bool biS, bool biT, bool biU, bool biV, float lA, float lB, float lC, float lD, float lE)
+{
+	float w = 0.0;
+	if(biS) w = (1.0-pp.x)*(1.0-pp.y);
+	if(biT) w =      pp.x *(1.0-pp.y);
+	if(biU) w = (1.0-pp.x)*     pp.y ;
+	if(biV) w =      pp.x *     pp.y ;
+	float dc = lD-lC;
+	float cb = lC-lB;
+	float lenX = max(abs(dc), abs(cb));
+	lenX = 1.0/max(lenX, 1e-8); // AMD's approximate reciprocal saturates instead of reaching
+	                            // true infinity for flat regions (dc==cb==0) - guard the same
+	                            // case here to avoid an outright NaN from 0.0*(1.0/0.0).
+	float dirX = lD-lB;
+	dir.x += dirX*w;
+	lenX = clamp(abs(dirX)*lenX, 0.0, 1.0);
+	lenX *= lenX;
+	len += lenX*w;
+	float ec = lE-lC;
+	float ca = lC-lA;
+	float lenY = max(abs(ec), abs(ca));
+	lenY = 1.0/max(lenY, 1e-8); // see the lenX guard above
+	float dirY = lE-lA;
+	dir.y += dirY*w;
+	lenY = clamp(abs(dirY)*lenY, 0.0, 1.0);
+	lenY *= lenY;
+	len += lenY*w;
+}
+
+vec3 FsrEasuF(vec2 ip)
+{
+	// con0: output-pixel -> input-viewport-space; con1..con3: gather4 tap offsets in
+	// normalized input-texture space. See FsrEasuCon() in ffx_fsr1.h - inlined here directly
+	// from the resolutions this project's output shaders already carry (textureSrcResolution
+	// = input viewport in pixels, nativeResolution = full input texture size, outputResolution
+	// = output size), rather than precomputing them on the CPU into a separate uniform block.
+	vec2 con0_xy = textureSrcResolution / outputResolution;
+	vec2 con0_zw = 0.5*con0_xy - 0.5;
+	vec2 rcpIn = 1.0 / nativeResolution;
+	vec2 con1_xy = rcpIn;
+	vec2 con1_zw = vec2(1.0,-1.0) * rcpIn;
+	vec2 con2_xy = vec2(-1.0, 2.0) * rcpIn;
+	vec2 con2_zw = vec2( 1.0, 2.0) * rcpIn;
+	vec2 con3_xy = vec2( 0.0, 4.0) * rcpIn;
+
+	vec2 pp = ip*con0_xy + con0_zw;
+	vec2 fp = floor(pp);
+	pp -= fp;
+
+	vec2 p0 = fp*con1_xy + con1_zw;
+	vec2 p1 = p0 + con2_xy;
+	vec2 p2 = p0 + con2_zw;
+	vec2 p3 = p0 + con3_xy;
+	vec4 bczzR = textureGather(textureSrc, p0, 0);
+	vec4 bczzG = textureGather(textureSrc, p0, 1);
+	vec4 bczzB = textureGather(textureSrc, p0, 2);
+	vec4 ijfeR = textureGather(textureSrc, p1, 0);
+	vec4 ijfeG = textureGather(textureSrc, p1, 1);
+	vec4 ijfeB = textureGather(textureSrc, p1, 2);
+	vec4 klhgR = textureGather(textureSrc, p2, 0);
+	vec4 klhgG = textureGather(textureSrc, p2, 1);
+	vec4 klhgB = textureGather(textureSrc, p2, 2);
+	vec4 zzonR = textureGather(textureSrc, p3, 0);
+	vec4 zzonG = textureGather(textureSrc, p3, 1);
+	vec4 zzonB = textureGather(textureSrc, p3, 2);
+
+	vec4 bczzL = bczzB*0.5 + (bczzR*0.5 + bczzG);
+	vec4 ijfeL = ijfeB*0.5 + (ijfeR*0.5 + ijfeG);
+	vec4 klhgL = klhgB*0.5 + (klhgR*0.5 + klhgG);
+	vec4 zzonL = zzonB*0.5 + (zzonR*0.5 + zzonG);
+	float bL=bczzL.x, cL=bczzL.y;
+	float iL=ijfeL.x, jL=ijfeL.y, fL=ijfeL.z, eL=ijfeL.w;
+	float kL=klhgL.x, lL=klhgL.y, hL=klhgL.z, gL=klhgL.w;
+	float oL=zzonL.z, nL=zzonL.w;
+
+	vec2 dir = vec2(0.0);
+	float len = 0.0;
+	FsrEasuSetF(dir,len,pp,true, false,false,false,bL,eL,fL,gL,jL);
+	FsrEasuSetF(dir,len,pp,false,true ,false,false,cL,fL,gL,hL,kL);
+	FsrEasuSetF(dir,len,pp,false,false,true ,false,fL,iL,jL,kL,nL);
+	FsrEasuSetF(dir,len,pp,false,false,false,true ,gL,jL,kL,lL,oL);
+
+	vec2 dir2 = dir*dir;
+	float dirR = dir2.x + dir2.y;
+	bool zro = dirR < (1.0/32768.0);
+	dirR = inversesqrt(dirR);
+	dirR = zro ? 1.0 : dirR;
+	dir.x = zro ? 1.0 : dir.x;
+	dir *= vec2(dirR);
+	len = len*0.5;
+	len *= len;
+	float stretch = (dir.x*dir.x + dir.y*dir.y) / max(abs(dir.x), abs(dir.y));
+	vec2 len2 = vec2(1.0 + (stretch-1.0)*len, 1.0 - 0.5*len);
+	float lob = 0.5 + ((1.0/4.0-0.04)-0.5)*len;
+	float clp = 1.0/lob;
+
+	vec3 min4 = min(min(vec3(ijfeR.z,ijfeG.z,ijfeB.z), vec3(klhgR.w,klhgG.w,klhgB.w)), min(vec3(ijfeR.y,ijfeG.y,ijfeB.y), vec3(klhgR.x,klhgG.x,klhgB.x)));
+	vec3 max4 = max(max(vec3(ijfeR.z,ijfeG.z,ijfeB.z), vec3(klhgR.w,klhgG.w,klhgB.w)), max(vec3(ijfeR.y,ijfeG.y,ijfeB.y), vec3(klhgR.x,klhgG.x,klhgB.x)));
+
+	vec3 aC = vec3(0.0);
+	float aW = 0.0;
+	FsrEasuTapF(aC,aW, vec2( 0.0,-1.0)-pp, dir,len2,lob,clp, vec3(bczzR.x,bczzG.x,bczzB.x));
+	FsrEasuTapF(aC,aW, vec2( 1.0,-1.0)-pp, dir,len2,lob,clp, vec3(bczzR.y,bczzG.y,bczzB.y));
+	FsrEasuTapF(aC,aW, vec2(-1.0, 1.0)-pp, dir,len2,lob,clp, vec3(ijfeR.x,ijfeG.x,ijfeB.x));
+	FsrEasuTapF(aC,aW, vec2( 0.0, 1.0)-pp, dir,len2,lob,clp, vec3(ijfeR.y,ijfeG.y,ijfeB.y));
+	FsrEasuTapF(aC,aW, vec2( 0.0, 0.0)-pp, dir,len2,lob,clp, vec3(ijfeR.z,ijfeG.z,ijfeB.z));
+	FsrEasuTapF(aC,aW, vec2(-1.0, 0.0)-pp, dir,len2,lob,clp, vec3(ijfeR.w,ijfeG.w,ijfeB.w));
+	FsrEasuTapF(aC,aW, vec2( 1.0, 1.0)-pp, dir,len2,lob,clp, vec3(klhgR.x,klhgG.x,klhgB.x));
+	FsrEasuTapF(aC,aW, vec2( 2.0, 1.0)-pp, dir,len2,lob,clp, vec3(klhgR.y,klhgG.y,klhgB.y));
+	FsrEasuTapF(aC,aW, vec2( 2.0, 0.0)-pp, dir,len2,lob,clp, vec3(klhgR.z,klhgG.z,klhgB.z));
+	FsrEasuTapF(aC,aW, vec2( 1.0, 0.0)-pp, dir,len2,lob,clp, vec3(klhgR.w,klhgG.w,klhgB.w));
+	FsrEasuTapF(aC,aW, vec2( 1.0, 2.0)-pp, dir,len2,lob,clp, vec3(zzonR.z,zzonG.z,zzonB.z));
+	FsrEasuTapF(aC,aW, vec2( 0.0, 2.0)-pp, dir,len2,lob,clp, vec3(zzonR.w,zzonG.w,zzonB.w));
+
+	return min(max4, max(min4, aC/aW));
+}
+
+void outputShader(){
+	vec2 ip = floor(passUV * outputResolution);
+	colorOut0 = vec4(FsrEasuF(ip), 1.0);
+}
+)";
+
+// AMD FidelityFX Super Resolution 1.0 - RCAS (robust contrast-adaptive sharpening) pass.
+// Reads the EASU output (already at full output resolution, bound here as textureSrc) via
+// texelFetch and writes the final sharpened image to the real backbuffer. Same porting notes
+// as EASU above apply (fast-reciprocal bit tricks replaced with plain division).
+const std::string RendererOutputShader::s_fsr_rcas_shader_source =
+R"(
+void outputShader(){
+	ivec2 sp = ivec2(floor(passUV * outputResolution));
+	vec3 b = texelFetch(textureSrc, sp + ivec2( 0,-1), 0).rgb;
+	vec3 d = texelFetch(textureSrc, sp + ivec2(-1, 0), 0).rgb;
+	vec3 e = texelFetch(textureSrc, sp,                0).rgb;
+	vec3 f = texelFetch(textureSrc, sp + ivec2( 1, 0), 0).rgb;
+	vec3 h = texelFetch(textureSrc, sp + ivec2( 0, 1), 0).rgb;
+
+	float bL = b.b*0.5 + (b.r*0.5 + b.g);
+	float dL = d.b*0.5 + (d.r*0.5 + d.g);
+	float eL = e.b*0.5 + (e.r*0.5 + e.g);
+	float fL = f.b*0.5 + (f.r*0.5 + f.g);
+	float hL = h.b*0.5 + (h.r*0.5 + h.g);
+
+	float nz = 0.25*bL + 0.25*dL + 0.25*fL + 0.25*hL - eL;
+	float rangeL = max(max(max(bL,dL),eL),max(fL,hL)) - min(min(min(bL,dL),eL),min(fL,hL));
+	nz = clamp(abs(nz)/max(rangeL, 1.0/32768.0), 0.0, 1.0);
+	nz = -0.5*nz + 1.0;
+
+	vec3 mn4 = min(min(min(b,d),f),h);
+	vec3 mx4 = max(max(max(b,d),f),h);
+	vec2 peakC = vec2(1.0, -4.0);
+	vec3 hitMin = min(mn4, e) / max(4.0*mx4, 1e-8); // guarded against pure-black regions
+	// 4*mn4+peakC.y is always <= 0 here (mn4 in [0,1], peakC.y=-4) - clamp the upper bound
+	// instead of the lower one so a near-zero denominator (mn4==1, pure white) doesn't flip
+	// sign or blow up, unlike a plain max() would.
+	vec3 hitMax = (peakC.x - max(mx4, e)) / min(4.0*mn4 + peakC.y, -1e-8);
+	vec3 lobeRGB = max(-hitMin, hitMax);
+	float lobe = max(-0.1875, min(max(max(lobeRGB.r,lobeRGB.g),lobeRGB.b), 0.0)) * exp2(-fsrRcasSharpness);
+
+	float rcpL = 1.0 / (4.0*lobe + 1.0);
+	vec3 outColor = (lobe*b + lobe*d + lobe*h + lobe*f + e) * rcpL;
+	colorOut0 = vec4(outColor, 1.0);
+}
+)";
+
 const std::string RendererOutputShader::s_hermite_shader_source_mtl =
 R"(#include <metal_stdlib>
 using namespace metal;
@@ -287,6 +483,7 @@ RendererOutputShader::OutputUniformVariables RendererOutputShader::FillUniformBl
 	vars.applySRGBEncoding = padView ? LatteGPUState.drcBufferUsesSRGB : LatteGPUState.tvBufferUsesSRGB;
 	vars.targetGamma = padView ? ActiveSettings::GetDRCGamma() : ActiveSettings::GetTVGamma();
 	vars.displayGamma = GetConfig().userDisplayGamma;
+	vars.fsrRcasSharpness = GetConfig().fsr_sharpness;
 
 	return vars;
 }
@@ -300,10 +497,33 @@ RendererOutputShader* RendererOutputShader::s_bicubic_shader_ud;
 RendererOutputShader* RendererOutputShader::s_hermit_shader;
 RendererOutputShader* RendererOutputShader::s_hermit_shader_ud;
 
+RendererOutputShader* RendererOutputShader::s_fsr_easu_shader;
+RendererOutputShader* RendererOutputShader::s_fsr_rcas_shader;
+RendererOutputShader* RendererOutputShader::s_fsr_rcas_shader_ud;
+
 std::string RendererOutputShader::GetOpenGlVertexSource(bool render_upside_down)
 {
 	// vertex shader
 	std::ostringstream vertex_source;
+	bool isGLES = OpenGLRenderer::IsGLES();
+	if (isGLES)
+	{
+		// GLSL ES has no #version 420 (desktop-only) and no gl_PerVertex redeclaration block
+		// at all (that's a desktop compatibility-profile concept GLES never had, so it's
+		// simply omitted rather than replaced with anything).
+		vertex_source <<
+			R"(#version 320 es
+precision highp float;
+layout(location = 0) out vec2 passUV;
+
+void main(){
+	vec2 vPos;
+	vec2 vUV;
+	int vID = gl_VertexID;
+)";
+	}
+	else
+	{
 		vertex_source <<
 			R"(#version 420
 layout(location = 0) smooth out vec2 passUV;
@@ -318,6 +538,7 @@ void main(){
 	vec2 vUV;
 	int vID = gl_VertexID;
 )";
+	}
 
 		if (render_upside_down)
 		{
@@ -440,6 +661,58 @@ vertex VertexOut main0(ushort vid [[vertex_id]]) {
 
 std::string RendererOutputShader::PrependFragmentPreamble(const std::string& shaderSrc)
 {
+	if (OpenGLRenderer::IsGLES())
+	{
+		// GLSL ES: no #version 430, needs explicit precision qualifiers, and textureGather
+		// (used by the FSR EASU shader below) is core since GLES 3.1 - 320 es covers it.
+		return R"(#version 320 es
+precision highp float;
+precision highp sampler2D;
+layout(location = 0) in vec2 passUV;
+layout(binding = 0) uniform sampler2D textureSrc;
+layout(location = 0) out vec4 colorOut0;
+
+layout (binding = 0, std140)
+uniform parameters {
+uniform vec2 textureSrcResolution;
+uniform vec2 nativeResolution;
+uniform vec2 outputResolution;
+uniform bool applySRGBEncoding;
+uniform float targetGamma;
+uniform float displayGamma;
+uniform float fsrRcasSharpness;
+};
+
+float sRGBEncode(float linear)
+{
+	if(linear <= 0.0031308)
+		return 12.92 * linear;
+	else
+		return 1.055 * pow(linear, 1.0 / 2.4) - 0.055;
+}
+
+vec3 sRGBEncode(vec3 linear)
+{
+	return vec3(sRGBEncode(linear.r), sRGBEncode(linear.g), sRGBEncode(linear.b));
+}
+
+// fwd. declaration
+void outputShader();
+void main()
+{
+	outputShader(); // sets colorOut0
+	if(applySRGBEncoding)
+		colorOut0 = vec4(sRGBEncode(colorOut0.rgb), 1.0);
+
+	if (displayGamma > 0.0)
+		colorOut0 = pow(colorOut0, vec4(targetGamma / displayGamma) );
+	else
+		colorOut0 = vec4( sRGBEncode( pow(colorOut0.rgb, vec3(targetGamma)) ), 1.0);
+
+}
+
+)" + shaderSrc;
+	}
 	return R"(#version 430
 layout(location = 0) smooth in vec2 passUV;
 layout(binding = 0) uniform sampler2D textureSrc;
@@ -457,6 +730,7 @@ uniform vec2 outputResolution;
 uniform bool applySRGBEncoding;
 uniform float targetGamma;
 uniform float displayGamma;
+uniform float fsrRcasSharpness;
 };
 
 float sRGBEncode(float linear)
@@ -527,6 +801,10 @@ void RendererOutputShader::InitializeStatic()
 
     	s_hermit_shader = new RendererOutputShader(vertex_source, s_hermite_shader_source);
     	s_hermit_shader_ud = new RendererOutputShader(vertex_source_ud, s_hermite_shader_source);
+
+    	s_fsr_easu_shader = new RendererOutputShader(vertex_source, s_fsr_easu_shader_source);
+    	s_fsr_rcas_shader = new RendererOutputShader(vertex_source, s_fsr_rcas_shader_source);
+    	s_fsr_rcas_shader_ud = new RendererOutputShader(vertex_source_ud, s_fsr_rcas_shader_source);
 		break;
     }
 #endif
@@ -546,6 +824,10 @@ void RendererOutputShader::InitializeStatic()
 
     	s_hermit_shader = new RendererOutputShader(vertex_source, s_hermite_shader_source);
     	s_hermit_shader_ud = new RendererOutputShader(vertex_source_ud, s_hermite_shader_source);
+
+    	s_fsr_easu_shader = new RendererOutputShader(vertex_source, s_fsr_easu_shader_source);
+    	s_fsr_rcas_shader = new RendererOutputShader(vertex_source, s_fsr_rcas_shader_source);
+    	s_fsr_rcas_shader_ud = new RendererOutputShader(vertex_source_ud, s_fsr_rcas_shader_source);
 		break;
     }
 #endif
@@ -562,4 +844,8 @@ void RendererOutputShader::ShutdownStatic()
 
 	delete s_hermit_shader;
 	delete s_hermit_shader_ud;
+
+	delete s_fsr_easu_shader;
+	delete s_fsr_rcas_shader;
+	delete s_fsr_rcas_shader_ud;
 }

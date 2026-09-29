@@ -287,6 +287,17 @@ public:
 	void CreateDescriptorPool();
 	VkDescriptorSet backbufferBlit_createDescriptorSet(VkDescriptorSetLayout descriptor_set_layout, LatteTextureViewVk* texViewVk, bool useLinearTexFilter);
 
+	// AMD FSR 1.0 (EASU+RCAS) two-pass upscale - mirrors DrawBackbufferQuad above, but the
+	// EASU pass renders into an off-screen intermediate image/render pass of its own instead
+	// of straight into the swapchain, and RCAS then reads that as its input texture instead
+	// of the game's own texView. See OpenGLRenderer::DrawBackbufferQuadFSR for the equivalent
+	// GL implementation and RendererOuputShader.cpp for the shared shader source.
+	bool CanUseFSR() const override { return true; }
+	void DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 imageX, sint32 imageY, sint32 imageWidth, sint32 imageHeight, bool padView, bool clearBackground, bool renderUpsideDown) override;
+	void FSR_EnsureIntermediateResources(sint32 width, sint32 height);
+	void FSR_DestroyIntermediateResources();
+	VkDescriptorSet backbufferBlit_createDescriptorSetForImage(VkImageView imageView, VkSampler sampler);
+
 	robin_hood::unordered_flat_map<uint64, robin_hood::unordered_flat_map<uint64, PipelineInfo*> > m_pipeline_info_cache; // using robin_hood::unordered_flat_map is twice as fast (1-2% overall CPU time reduction)
 	void draw_debugPipelineHashState();
 	PipelineInfo* draw_getCachedPipeline();
@@ -583,7 +594,7 @@ private:
 	// misc
 	void CreatePipelineCache();
 	VkPipelineShaderStageCreateInfo CreatePipelineShaderStageCreateInfo(VkShaderStageFlagBits stage, VkShaderModule& module, const char* entryName) const;
-	VkPipeline backbufferBlit_createGraphicsPipeline(VkDescriptorSetLayout descriptorLayout, bool padView, RendererOutputShader* shader);
+	VkPipeline backbufferBlit_createGraphicsPipeline(VkDescriptorSetLayout descriptorLayout, VkRenderPass renderPass, bool padView, RendererOutputShader* shader);
 	bool AcquireNextSwapchainImage(bool mainWindow);
 	void RecreateSwapchain(bool mainWindow, bool skipCreate = false);
 
@@ -617,6 +628,18 @@ private:
 	VkPipelineCache m_pipeline_cache{ nullptr };
 	std::unordered_map<uint64, VkPipeline> m_backbufferBlitPipelineCache;
 	std::unordered_map<uint64, VkDescriptorSet> m_backbufferBlitDescriptorSetCache;
+
+	// FSR intermediate (EASU output / RCAS input) resources - recreated only when the
+	// requested output size changes, see FSR_EnsureIntermediateResources().
+	VkRenderPass m_fsrIntermediateRenderPass = VK_NULL_HANDLE;
+	VkImage m_fsrIntermediateImage = VK_NULL_HANDLE;
+	VkDeviceMemory m_fsrIntermediateImageMemory = VK_NULL_HANDLE;
+	VkImageView m_fsrIntermediateImageView = VK_NULL_HANDLE;
+	VkFramebuffer m_fsrIntermediateFramebuffer = VK_NULL_HANDLE;
+	VkSampler m_fsrIntermediateSampler = VK_NULL_HANDLE;
+	VkDescriptorSet m_fsrRcasDescriptorSet = VK_NULL_HANDLE;
+	sint32 m_fsrIntermediateWidth = 0;
+	sint32 m_fsrIntermediateHeight = 0;
 	VkPipelineLayout m_pipelineLayout{nullptr};
 	VkCommandPool m_commandPool{ nullptr };
 

@@ -9,6 +9,7 @@
 #include "util/helpers/StringHelpers.h"
 #include "util/IniParser/IniParser.h"
 #include "Cafe/CafeSystem.h"
+#include "Cafe/GameProfile/GameProfile.h"
 #include "HW/Espresso/Debugger/Debugger.h"
 #include "Cafe/HW/Latte/Core/LatteTiming.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
@@ -194,10 +195,28 @@ bool GraphicPack2::DeactivateGraphicPack(const std::shared_ptr<GraphicPack2>& gr
 void GraphicPack2::ActivateForCurrentTitle()
 {
 	uint64 titleId = CafeSystem::GetForegroundTitleId();
+
+	// Android/Mandacaru — graphic packs selected specifically for this title's
+	// profile (gameProfiles/<titleId>.ini, [GraphicPacks] SelectedGraphicPacks).
+	// These activate in addition to globally-enabled packs, for this session
+	// only — SetEnabled()/the global config are never touched, so no other
+	// game or the global Graphic Packs browser is affected. The activation
+	// itself is cleaned up automatically on title shutdown via Reset().
+	const std::vector<std::string>* selectedForTitle = nullptr;
+	if (g_current_game_profile)
+		selectedForTitle = &g_current_game_profile->GetSelectedGraphicPacks();
+
 	// activate graphic packs
 	for (const auto& gp : GraphicPack2::GetGraphicPacks())
 	{
-		if (!gp->IsEnabled())
+		bool selectedForThisTitle = false;
+		if (selectedForTitle && !selectedForTitle->empty())
+		{
+			selectedForThisTitle = std::find(selectedForTitle->begin(), selectedForTitle->end(),
+				gp->GetNormalizedPathString()) != selectedForTitle->end();
+		}
+
+		if (!gp->IsEnabled() && !selectedForThisTitle)
 			continue;
 
 		if (!gp->ContainsTitleId(titleId))

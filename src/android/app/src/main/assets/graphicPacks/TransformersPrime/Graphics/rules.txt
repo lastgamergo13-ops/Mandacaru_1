@@ -1,0 +1,225 @@
+[Definition]
+titleIds = 000500001010b500,000500001010f400
+name = Graphic Options
+path = "Transformers Prime/Graphics"
+description = Allows you to change the game's resolution, anti-aliasing, motion blur, shadows, and also add anisotropic filtering.||Made by FrankyBuster
+version = 6
+
+[Default]
+$width = 1280
+$height = 720
+$gameWidth = 1280
+$gameHeight = 720
+$antialias = 1
+$motionblur = 1
+$shadowRes = 1
+$anisotropy = 1
+
+# Resolution
+
+
+[Preset]
+category = Resolution
+name = 640x360
+$width = 640
+$height = 360
+
+[Preset]
+category = Resolution
+name = 960x540
+$width = 960
+$height = 540
+
+[Preset]
+category = Resolution
+name = 1280x720 (Default)
+$width = 1280
+$height = 720
+default = 1
+
+[Preset]
+category = Resolution
+name = 1360x768
+$width = 1360
+$height = 768
+
+[Preset]
+category = Resolution
+name = 1600x900
+$width = 1600
+$height = 900
+
+[Preset]
+category = Resolution
+name = 1920x1080
+$width = 1920
+$height = 1080
+
+[Preset]
+category = Resolution
+name = 2560x1440
+$width = 2560
+$height = 1440
+
+[Preset]
+category = Resolution
+name = 3200x1800
+$width = 3200
+$height = 1800
+
+[Preset]
+category = Resolution
+name = 3840x2160
+$width = 3840
+$height = 2160
+
+[Preset]
+category = Resolution
+name = 5120x2880
+$width = 5120
+$height = 2880
+
+[Preset]
+category = Resolution
+name = 7680x4320
+$width = 7680
+$height = 4320
+
+# Anti-Aliasing
+
+
+[Preset]
+name = Off
+category = Anti-Aliasing
+$antialias = 0
+
+[Preset]
+name = On (Default)
+category = Anti-Aliasing
+default = 1
+
+
+# Motion Blur
+
+
+[Preset]
+name = Off
+category = Motion Blur
+$motionblur = 0
+
+[Preset]
+name = On (Default)
+category = Motion Blur
+default = 1
+
+
+# Shadow Quality
+
+
+[Preset]
+category = Shadow Quality
+name = Low (50%)
+$shadowRes = 0.5
+
+[Preset]
+category = Shadow Quality
+name = Medium (100%, Default)
+default = 1
+
+[Preset]
+category = Shadow Quality
+name = High (200%)
+$shadowRes = 2
+
+[Preset]
+category = Shadow Quality
+name = Ultra (300%)
+$shadowRes = 3
+
+[Preset]
+category = Shadow Quality
+name = Extreme (400%, Unstable)
+$shadowRes = 4
+
+
+# Anisotropic Filtering
+
+[Preset]
+name = 1x (Default)
+category = Anisotropic Filtering
+default = 1
+
+[Preset]
+name = 2x
+category = Anisotropic Filtering
+$anisotropy = 2
+
+[Preset]
+name = 4x
+category = Anisotropic Filtering
+$anisotropy = 4
+
+[Preset]
+name = 8x
+category = Anisotropic Filtering
+$anisotropy = 8
+
+[Preset]
+name = 16x
+category = Anisotropic Filtering
+$anisotropy = 16
+
+
+
+# Anisotropic Filtering
+
+[TextureRedefine]
+tileModesExcluded = 0x1 # ignore cpu processed textures
+formatsExcluded = 0x005,0x1a,0x11 # ignore shadows
+overwriteAnisotropy = $anisotropy
+
+# Texture Redefines
+
+[TextureRedefine] # Game Resolution
+width = 1280
+height = 720
+formats = 0x1a,0x11,0x08,0x80e,0x41a
+tileModesExcluded = 0x1
+overwriteFormat= 0x1f
+overwriteWidth = ($width/$gameWidth) * 1280
+overwriteHeight = ($height/$gameHeight) * 720
+
+[TextureRedefine] # Bloom/Blur
+width = 640
+height = 368
+formats = 0x1a,0x11
+overwriteWidth = ($width/$gameWidth) * 640
+overwriteHeight = ($height/$gameHeight) * 368
+
+[TextureRedefine] # Bloom/Blur
+width = 640
+height = 360
+formats = 0x1a,0x11
+overwriteWidth = ($width/$gameWidth) * 640
+overwriteHeight = ($height/$gameHeight) * 360
+
+[TextureRedefine] # Bloom/Blur
+width = 320
+height = 192
+formats = 0x1a,0x11
+overwriteWidth = ($width/$gameWidth) * 320
+overwriteHeight = ($height/$gameHeight) * 192
+
+[TextureRedefine] # Bloom/Blur
+width = 320
+height = 180
+formats = 0x1a,0x11
+overwriteWidth = ($width/$gameWidth) * 320
+overwriteHeight = ($height/$gameHeight) * 180
+
+[TextureRedefine] # Shadows
+width = 1024
+height = 1024
+formats = 0x5
+overwriteWidth = $shadowRes * 1024
+overwriteHeight = $shadowRes * 1024

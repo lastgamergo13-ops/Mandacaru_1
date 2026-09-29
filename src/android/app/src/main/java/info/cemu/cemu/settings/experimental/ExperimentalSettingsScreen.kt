@@ -11,6 +11,7 @@ import info.cemu.cemu.common.ui.components.Button
 import info.cemu.cemu.common.ui.components.ScreenContent
 import info.cemu.cemu.common.ui.components.ScrollableDialog
 import info.cemu.cemu.common.ui.components.SingleSelection
+import info.cemu.cemu.common.ui.components.Slider
 import info.cemu.cemu.common.ui.components.Toggle
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.nativeinterface.NativeSettings
@@ -22,6 +23,13 @@ private fun memoryCeilingToString(ceilingMB: Int) = when (ceilingMB) {
     NativeSettings.MemoryCeiling.GB_8 -> tr("8 GB")
     NativeSettings.MemoryCeiling.GB_12 -> tr("12 GB")
     else -> throw IllegalArgumentException("Invalid memory ceiling: $ceilingMB")
+}
+
+private fun rendererModeToString(mode: Int) = when (mode) {
+    NativeSettings.RendererMode.AUTOMATIC -> tr("Automatic")
+    NativeSettings.RendererMode.VULKAN -> tr("Vulkan")
+    NativeSettings.RendererMode.OPENGL -> tr("OpenGL (Experimental)")
+    else -> throw IllegalArgumentException("Invalid renderer mode: $mode")
 }
 
 /**
@@ -58,6 +66,39 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
                         "users. Defaults elsewhere in the app are chosen to be safe; anything you change " +
                         "here is opt-in and may be unstable. If something here misbehaves, it's always " +
                         "safe to switch it back off."
+            ),
+        )
+        InfoDialogButton(
+            title = tr("Render API"),
+            explanation = tr(
+                "What this actually does, honestly: this picks which graphics API the emulator " +
+                        "talks to your GPU driver through. \"Automatic\" lets Mandacaru choose for you - " +
+                        "right now that always means Vulkan, since it's this project's mature, tested " +
+                        "backend. \"Vulkan\" forces that same backend explicitly. \"OpenGL (Experimental)\" " +
+                        "switches to a brand new OpenGL ES backend built specifically for this port, " +
+                        "talking directly to your GPU's own GLES driver (libEGL/libGLESv3) - no Mesa, no " +
+                        "translation layer.\n\n" +
+                        "Honest limitations: the OpenGL path is new and far less tested than Vulkan. Some " +
+                        "older Mali GPUs (Midgard-generation) don't expose geometry/tessellation shaders " +
+                        "in GLES at all, so games that depend on those stages simply won't render " +
+                        "correctly on this path on those devices - that's a real hardware gap, not a bug " +
+                        "to be fixed later. A handful of texture-view and readback edge cases also fall " +
+                        "back to best-effort approximations on GLES where the driver has no exact " +
+                        "equivalent to the desktop OpenGL feature Cemu was originally written against. " +
+                        "If a game looks wrong or crashes on OpenGL, switching back to Vulkan is always " +
+                        "safe and is still the recommended default. Takes effect the next time you " +
+                        "(re)launch a game."
+            ),
+        )
+        SingleSelection(
+            label = tr("Render API"),
+            initialChoice = NativeSettings::getRendererMode,
+            onChoiceChanged = NativeSettings::setRendererMode,
+            choiceToString = { rendererModeToString(it) },
+            choices = listOf(
+                NativeSettings.RendererMode.AUTOMATIC,
+                NativeSettings.RendererMode.VULKAN,
+                NativeSettings.RendererMode.OPENGL,
             ),
         )
         Button(
@@ -414,6 +455,57 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
                 NativeSettings.MemoryCeiling.GB_8,
                 NativeSettings.MemoryCeiling.GB_12,
             ),
+        )
+        InfoDialogButton(
+            title = tr("Limit to 30 FPS / Emulation speed"),
+            explanation = tr(
+                "What this actually does, honestly: this is the global default for two settings " +
+                        "that genuinely change how fast the emulated console's own clock advances (CPU " +
+                        "timer + vsync period), not just how the frames are displayed. \"Limit to 30 " +
+                        "FPS\" locks games that target 60 FPS to a stable 30 FPS instead - useful on " +
+                        "slower devices where a game can't consistently reach 60 FPS, trading peak " +
+                        "framerate for a smoother, more consistent one. \"Emulation speed\" runs the " +
+                        "whole game genuinely faster, from 100% (normal) up to 200% (2x) - while it's " +
+                        "on, \"Limit to 30 FPS\" is disabled, since the two are mutually exclusive. " +
+                        "Neither has any effect on a title where a graphic pack already defines its " +
+                        "own custom vsync timing - that always takes priority, to avoid conflicting " +
+                        "with a fix the pack's author already built for that specific game. Every game " +
+                        "can also override either setting for itself only, in that game's own profile " +
+                        "screen - leaving both there untouched means it just follows whatever is " +
+                        "chosen here.\n\n" +
+                        "Honest limitations: this changes real emulated timing, not a display trick - " +
+                        "audio, animations and in-game logic all speed up or slow down together with " +
+                        "it, so a game's music/sound effects will sound pitched up or down at anything " +
+                        "other than 100%, exactly like physically speeding up a video would. Some " +
+                        "games may not behave correctly, or may become unstable, at framerates or " +
+                        "speeds far from what they were built for. Requires restarting the game to " +
+                        "take effect. Off by default (30 FPS off, speed 100%)."
+            ),
+        )
+        var limitToHalfFps by rememberSaveable { mutableStateOf(NativeSettings.getLimitToHalfFps()) }
+        Toggle(
+            label = tr("Limit to 30 FPS"),
+            description = tr("Locks games that target 60 FPS to a stable 30 FPS instead. See \"What does this do?\" above."),
+            initialCheckedState = { limitToHalfFps },
+            onCheckedChanged = {
+                limitToHalfFps = it
+                NativeSettings.setLimitToHalfFps(it)
+            },
+        )
+        Slider(
+            label = tr("Emulation speed"),
+            initialValue = NativeSettings::getEmulationSpeedPercent,
+            valueFrom = 100,
+            valueTo = 200,
+            steps = 3,
+            enabled = !limitToHalfFps,
+            labelFormatter = {
+                if (limitToHalfFps)
+                    tr("Disabled while \"Limit to 30 FPS\" is on")
+                else
+                    tr("{0}% - the game genuinely plays at {1}x speed, not just the display", it, "%.2f".format(it / 100f))
+            },
+            onValueChange = NativeSettings::setEmulationSpeedPercent,
         )
     }
 }

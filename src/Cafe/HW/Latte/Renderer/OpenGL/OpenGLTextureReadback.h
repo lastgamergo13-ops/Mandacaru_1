@@ -23,5 +23,9 @@ private:
 	GLuint texImageBufferGL = 0;
 	// sync
 	GLsync imageCopyFinSync = nullptr;
+	// scratch FBO used to read the source texture through glReadPixels instead of
+	// glGetTexImage, which does not exist on GLES - see StartTransfer() in the .cpp.
+	// Created lazily on first use, destroyed in the destructor.
+	GLuint m_readbackFBO = 0;
 };
 

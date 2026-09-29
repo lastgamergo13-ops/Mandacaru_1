@@ -10,6 +10,7 @@
 #include "Cafe/HW/Latte/LegacyShaderDecompiler/LatteDecompilerInstructions.h"
 #include "Cafe/HW/Latte/Core/FetchShader.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
+#include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h" // for OpenGLRenderer::IsGLES() - see the DIM_1D sampler fallback in LatteDecompilerEmitGLSLHeader.hpp
 #include "config/ActiveSettings.h"
 #include "util/helpers/StringBuf.h"
 
@@ -2471,11 +2472,16 @@ void _emitTEXSampleTextureCode(LatteDecompilerShaderContext* shaderContext, Latt
 		else if (texDim == Latte::E_DIM::DIM_1D)
 		{
 			// VC DS games forget to initialize textures and use texel fetch on an uninitialized texture (a dim of 0 maps to 1D)
+			if (OpenGLRenderer::IsGLES())
+				src->add("ivec2("); // DIM_1D is emulated as a height-1 sampler2D on GLES - see LatteDecompilerEmitGLSLHeader.hpp
 			src->add("int(");
 			src->add("float(");
 			_emitTEXSampleCoordInputComponent(shaderContext, texInstruction, 0, (texOpcode == GPU7_TEX_INST_LD) ? LATTE_DECOMPILER_DTYPE_SIGNED_INT : LATTE_DECOMPILER_DTYPE_FLOAT);
 			src->addFmt(")*uf_tex{}Scale.x", texInstruction->textureFetch.textureIndex);
-			src->add("), 0");
+			src->add(")");
+			if (OpenGLRenderer::IsGLES())
+				src->add(", 0)"); // second texelFetch coordinate component, closes the ivec2(
+			src->add(", 0");
 			// todo - lod
 		}
 		else
@@ -2555,8 +2561,16 @@ void _emitTEXSampleTextureCode(LatteDecompilerShaderContext* shaderContext, Latt
 		}
 		else if( texDim == Latte::E_DIM::DIM_1D )
 		{
-			// 1 coord
-			src->add(_getTexGPRAccess(shaderContext, texInstruction->srcGpr, LATTE_DECOMPILER_DTYPE_FLOAT, texInstruction->textureFetch.srcSel[0], -1, -1, -1, tempBuffer0));
+			// 1 coord (2 on GLES - DIM_1D is emulated as a height-1 sampler2D there, see
+			// LatteDecompilerEmitGLSLHeader.hpp - second component samples the texture's only row)
+			if (OpenGLRenderer::IsGLES())
+			{
+				src->add("vec2(");
+				src->add(_getTexGPRAccess(shaderContext, texInstruction->srcGpr, LATTE_DECOMPILER_DTYPE_FLOAT, texInstruction->textureFetch.srcSel[0], -1, -1, -1, tempBuffer0));
+				src->add(",0.5)");
+			}
+			else
+				src->add(_getTexGPRAccess(shaderContext, texInstruction->srcGpr, LATTE_DECOMPILER_DTYPE_FLOAT, texInstruction->textureFetch.srcSel[0], -1, -1, -1, tempBuffer0));
 		}
 		else
 		{
@@ -2604,7 +2618,7 @@ void _emitTEXSampleTextureCode(LatteDecompilerShaderContext* shaderContext, Latt
 		{
 			uint8 offsetComponentCount = 0;
 			if( texDim == Latte::E_DIM::DIM_1D )
-				offsetComponentCount = 1;
+				offsetComponentCount = OpenGLRenderer::IsGLES() ? 2 : 1; // see the DIM_1D-as-sampler2D note above
 			else if( texDim == Latte::E_DIM::DIM_2D )
 				offsetComponentCount = 2;
 			else if( texDim == Latte::E_DIM::DIM_3D )
@@ -2738,7 +2752,15 @@ void _emitTEXGetTextureResInfoCode(LatteDecompilerShaderContext* shaderContext, 
 	auto texDim = shaderContext->shader->textureUnitDim[texInstruction->textureFetch.textureIndex];
 
 	if (texDim == Latte::E_DIM::DIM_1D)
-		src->addFmt(" = ivec4(textureSize({}{}, 0),1,1,1).", _getTextureUnitVariablePrefixName(shaderContext->shader->shaderType), texInstruction->textureFetch.textureIndex);
+	{
+		// DIM_1D is emulated as a height-1 sampler2D on GLES (see LatteDecompilerEmitGLSLHeader.hpp),
+		// so textureSize() returns ivec2 there instead of the plain int a real sampler1D gives -
+		// take only the width (.x) component in that case.
+		if (OpenGLRenderer::IsGLES())
+			src->addFmt(" = ivec4(textureSize({}{}, 0).x,1,1,1).", _getTextureUnitVariablePrefixName(shaderContext->shader->shaderType), texInstruction->textureFetch.textureIndex);
+		else
+			src->addFmt(" = ivec4(textureSize({}{}, 0),1,1,1).", _getTextureUnitVariablePrefixName(shaderContext->shader->shaderType), texInstruction->textureFetch.textureIndex);
+	}
 	else if (texDim == Latte::E_DIM::DIM_1D_ARRAY)
 		src->addFmt(" = ivec4(textureSize({}{}, 0),1,1).", _getTextureUnitVariablePrefixName(shaderContext->shader->shaderType), texInstruction->textureFetch.textureIndex);
 	else if (texDim == Latte::E_DIM::DIM_2D || texDim == Latte::E_DIM::DIM_2D_MSAA)
@@ -3945,12 +3967,41 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 	StringBuf* src = new StringBuf(1024*1024*12); // reserve 12MB for generated source (we resize-to-fit at the end)
 	shaderContext->shaderSource = src;
 	// GLSL shader header
-	src->add("#version 430" _CRLF); // 430 is required for shader storage (Vulkan alternative TF path)
-	src->add("#extension GL_ARB_texture_gather : enable" _CRLF);
-	src->add("#extension GL_ARB_separate_shader_objects : enable" _CRLF);
+	if (OpenGLRenderer::IsGLES())
+	{
+		// GLSL ES has no #version 430 (that's desktop-only) and no ARB_* extensions at all -
+		// use GLSL ES 3.2 core instead, which already includes everything the three ARB
+		// extensions below provide on desktop (texture_gather, separate_shader_objects) as
+		// core functionality, and requires the explicit precision qualifiers desktop GLSL
+		// doesn't. Mali Bifrost/Valhall (G31+) support GLES 3.2; older Midgard parts
+		// (T6xx/T7xx/T8xx) only go up to GLES 3.1 and are not currently targeted by this path
+		// (see Etapa 0/8 of the OpenGL-on-Android technical report) - GL_EXT_separate_shader_objects
+		// would need to be added here for those.
+		src->add("#version 320 es" _CRLF);
+		src->add("precision highp float;" _CRLF);
+		src->add("precision highp int;" _CRLF);
+		src->add("precision highp sampler2D;" _CRLF);
+		src->add("precision highp sampler2DArray;" _CRLF);
+		src->add("precision highp sampler3D;" _CRLF);
+		src->add("precision highp samplerCubeArray;" _CRLF);
+		src->add("precision highp usampler2D;" _CRLF);
+		src->add("precision highp isampler2D;" _CRLF);
+		// Streamout/geometry-shader output on GLES does NOT go through GL_ARB_enhanced_layouts
+		// (desktop-only, no GLES equivalent) - it uses the same SSBO-based manual streamout
+		// path Vulkan and Metal already rely on instead of native transform feedback (see
+		// OpenGLRenderer::UseTFViaSSBO(), OpenGLRendererStreamout.cpp, and
+		// useSSBOForStreamout/useTFViaSSBO throughout this file), so no extension or special
+		// layout syntax is needed here at all.
+	}
+	else
+	{
+		src->add("#version 430" _CRLF); // 430 is required for shader storage (Vulkan alternative TF path)
+		src->add("#extension GL_ARB_texture_gather : enable" _CRLF);
+		src->add("#extension GL_ARB_separate_shader_objects : enable" _CRLF);
 
-	if (shaderContext->analyzer.hasStreamoutWrite || shaderContext->options->usesGeometryShader )
-		src->add("#extension GL_ARB_enhanced_layouts : enable" _CRLF);
+		if (shaderContext->analyzer.hasStreamoutWrite || shaderContext->options->usesGeometryShader )
+			src->add("#extension GL_ARB_enhanced_layouts : enable" _CRLF);
+	}
 	
 	// debug info
 	src->addFmt("// shader {:016x}" _CRLF, shaderContext->shaderBaseHash);

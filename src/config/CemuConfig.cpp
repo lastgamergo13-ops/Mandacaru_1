@@ -141,6 +141,7 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	else
 		vk_graphic_device_uuid = legacy_graphic_device_uuid;
 	mtl_graphic_device_uuid = graphic.get("mtlDevice", 0);
+	android_renderer_mode = graphic.get("AndroidRendererMode", (sint32)kAndroidRendererAuto);
 	vsync = graphic.get("VSync", 0);
 	overrideAppGammaPreference = graphic.get("OverrideAppGammaPreference", false);
 	overrideGammaValue = graphic.get("OverrideGammaValue", 2.2f);
@@ -152,6 +153,7 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	gx2drawdone_sync = graphic.get("GX2DrawdoneSync", true);
 	upscale_filter = graphic.get("UpscaleFilter", kBicubicHermiteFilter);
 	downscale_filter = graphic.get("DownscaleFilter", kLinearFilter);
+	fsr_sharpness = graphic.get("FSRSharpness", 0.2f);
 	fullscreen_scaling = graphic.get("FullscreenScaling", kKeepAspectRatio);
 	async_compile = graphic.get("AsyncCompile", async_compile);
 	vk_accurate_barriers = graphic.get("vkAccurateBarriers", true); // this used to be "VulkanAccurateBarriers" but because we changed the default to true in 1.27.1 the option name had to be changed
@@ -398,6 +400,7 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	graphic.set("device", legacy_graphic_device_uuid);
 	graphic.set("vkDevice", vk_graphic_device_uuid);
 	graphic.set("mtlDevice", mtl_graphic_device_uuid);
+	graphic.set("AndroidRendererMode", android_renderer_mode.GetValue());
 	graphic.set("VSync", vsync);
 	graphic.set("OverrideAppGammaPreference", overrideAppGammaPreference);
 	graphic.set("OverrideGammaValue", overrideGammaValue);
@@ -409,6 +412,7 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	//graphic.set("PrecompiledShaders", precompiled_shaders.GetValue());
 	graphic.set("UpscaleFilter", upscale_filter);
 	graphic.set("DownscaleFilter", downscale_filter);
+	graphic.set("FSRSharpness", fsr_sharpness.GetValue());
 	graphic.set("FullscreenScaling", fullscreen_scaling);
 	graphic.set("AsyncCompile", async_compile.GetValue());
 	graphic.set("vkAccurateBarriers", vk_accurate_barriers);

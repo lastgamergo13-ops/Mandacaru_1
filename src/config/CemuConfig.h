@@ -94,6 +94,7 @@ enum UpscalingFilter
 	kBicubicFilter,
 	kBicubicHermiteFilter,
 	kNearestNeighborFilter,
+	kFsrFilter, // AMD FidelityFX Super Resolution 1.0 (EASU+RCAS), see RendererOutputShader::s_fsr_*_shader
 };
 
 enum FullscreenScaling
@@ -502,10 +503,42 @@ struct CemuConfig
 	std::array<uint8, 16> legacy_graphic_device_uuid{}; // placeholder option for backwards compatibility with settings from 2.6 and before (renamed to "vkDevice")
 	std::array<uint8, 16> vk_graphic_device_uuid;
 	uint64 mtl_graphic_device_uuid{ 0 };
+
+	// Android-only render API picker (Experimental / Hackers -> "Render API"). Deliberately
+	// kept separate from graphic_api/GraphicAPI above instead of adding a 4th enum value
+	// there: that enum's numeric values are already relied upon 1:1 by the desktop wx UI
+	// (dropdown index <-> enum value) and are persisted to disk, so inserting a value would
+	// either break both or force renumbering kMetal, which isn't worth the risk for an
+	// Android-only feature. kAuto currently always resolves to Vulkan (see
+	// NativeEmulation_initializeRenderer) - Vulkan is this project's mature, tested backend;
+	// the OpenGL ES backend is new/experimental (see LatteTextureGL.cpp, OpenGLRenderer.cpp
+	// Android EGL path) and only used when the user explicitly picks it.
+	enum AndroidRendererMode : sint32
+	{
+		kAndroidRendererAuto = 0,
+		kAndroidRendererVulkan = 1,
+		kAndroidRendererOpenGL = 2,
+	};
+	ConfigValue<sint32> android_renderer_mode{ (sint32)kAndroidRendererAuto };
+
 	ConfigValue<int> vsync{ 0 }; // 0 = off, 1+ = depending on render backend
 	ConfigValue<bool> gx2drawdone_sync { true };
 	ConfigValue<bool> render_upside_down{ false };
 	ConfigValue<bool> async_compile{ true };
+
+	// Forces the emulated console to run at half its native vsync rate (e.g. 60 -> 30).
+	// Useful on devices that can't consistently sustain the game's native rate — trades
+	// peak framerate for a steadier one. Has no effect on titles where a graphic pack
+	// already defines its own custom vsync frequency (that takes priority — see
+	// GraphicPack2::ActivateForCurrentTitle / CafeSystem's title launch). Mutually
+	// exclusive with emulation_speed_percent (this takes priority when both are set).
+	ConfigValue<bool> limit_to_half_fps{ false };
+	// Scales the emulated console's own sense of elapsed time (CPU timer + vsync period),
+	// not just how the frames are displayed — 150 genuinely runs the game at 1.5x. 100 is
+	// normal speed. Generalizes limit_to_half_fps to any percentage; ignored while that
+	// option is active (which takes priority), and while a graphic pack owns the vsync
+	// timing for this title.
+	ConfigValue<uint32> emulation_speed_percent{ 100 };
 #ifdef ENABLE_METAL
 	ConfigValue<bool> force_mesh_shaders{ false };
 #endif
@@ -563,6 +596,10 @@ struct CemuConfig
 
 	ConfigValue<sint32> upscale_filter{kBicubicFilter};
 	ConfigValue<sint32> downscale_filter{kLinearFilter};
+	// FSR RCAS sharpening amount, in "stops" (see AMD's FsrRcasCon() in ffx_fsr1.h):
+	// 0.0 = sharpest, higher values = softer/less sharpening. Only meaningful when
+	// upscale_filter == kFsrFilter - see RendererOutputShader::FillUniformBlockBuffer().
+	ConfigValue<float> fsr_sharpness{0.2f};
 	ConfigValue<sint32> fullscreen_scaling{kKeepAspectRatio};
 
 	// audio

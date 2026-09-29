@@ -47,13 +47,26 @@ class GraphicPacksDownloader(private val client: HttpClient = HttpClient()) {
         ignoreUnknownKeys = true
     }
 
-    private fun getCurrentVersion(graphicPacksDir: File): String? {
+    // Não é mais 'private': GraphicPacksViewModel.refreshInstalledVersion() usa isso
+    // para exibir a versão instalada dos graphic packs na tela (rodapé da lista).
+    fun getCurrentVersion(graphicPacksDir: File): String? {
         val graphicPacksVersionFile =
             graphicPacksDir.toPath() / "downloadedGraphicPacks" / "version.txt"
-        return try {
-            graphicPacksVersionFile.readText()
+        try {
+            return graphicPacksVersionFile.readText()
         } catch (_: IOException) {
-            null
+            // Nada baixado ainda pelo GraphicPacksDownloader. Em instalações novas,
+            // porém, os graphic packs pré-embutidos no APK já foram extraídos por
+            // CemuApplication.saveBundledGraphicPacks() direto em graphicPacksDir/,
+            // então caímos de volta para o version.txt gravado por essa extração.
+            // Sem isso, isUpToDate() sempre retornaria false e forçaria um download
+            // mesmo quando os packs pré-embutidos já estão atualizados.
+            val bundledVersionFile = graphicPacksDir.toPath() / "version.txt"
+            return try {
+                bundledVersionFile.readText()
+            } catch (_: IOException) {
+                null
+            }
         }
     }
 

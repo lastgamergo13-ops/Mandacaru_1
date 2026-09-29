@@ -7,8 +7,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.MutableCreationExtras
@@ -16,6 +18,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.common.ui.components.Header
 import info.cemu.cemu.common.ui.components.ScreenContentWithGamePanel
 import info.cemu.cemu.common.ui.components.SingleSelection
+import info.cemu.cemu.common.ui.components.Slider
 import info.cemu.cemu.common.ui.components.Toggle
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.nativeinterface.NativeEmulation
@@ -41,6 +44,9 @@ fun GameProfileEditScreen(
 
     val driverSettingChoices by viewModel.driverSettingChoices.collectAsState()
     val selectedDriverSetting by viewModel.selectedDriverSetting.collectAsState()
+    val graphicPackChoices by viewModel.graphicPackChoices.collectAsState()
+    val limitToHalfFpsOverride by viewModel.limitToHalfFpsOverride.collectAsState()
+    val emulationSpeedPercentOverride by viewModel.emulationSpeedPercentOverride.collectAsState()
 
     val titleId = game.titleId
 
@@ -115,6 +121,62 @@ fun GameProfileEditScreen(
                 choiceToString = ::customDriverSettingChoiceToString,
                 onChoiceChanged = viewModel::setSelectedDriverSetting,
             )
+        }
+
+        // ── Limit to 30 FPS / Emulation speed for this game only ──
+        Header(text = tr("Timing"))
+        SingleSelection(
+            label = tr("Limit to 30 FPS"),
+            choice = limitToHalfFpsOverride,
+            choices = listOf(-1, 0, 1),
+            choiceToString = { triState ->
+                when (triState) {
+                    0 -> tr("Off")
+                    1 -> tr("On")
+                    else -> tr("Use global setting")
+                }
+            },
+            onChoiceChanged = viewModel::setLimitToHalfFpsOverride,
+        )
+        var overrideEmulationSpeed by remember(emulationSpeedPercentOverride) {
+            mutableStateOf(emulationSpeedPercentOverride != -1)
+        }
+        Toggle(
+            label = tr("Override emulation speed for this game"),
+            description = tr("When off, this game follows the global Emulation speed setting instead."),
+            checked = overrideEmulationSpeed,
+            onCheckedChanged = { enabled ->
+                overrideEmulationSpeed = enabled
+                viewModel.setEmulationSpeedPercentOverride(if (enabled) 100 else -1)
+            },
+        )
+        if (overrideEmulationSpeed) {
+            Slider(
+                label = tr("Emulation speed"),
+                initialValue = { if (emulationSpeedPercentOverride == -1) 100 else emulationSpeedPercentOverride },
+                valueFrom = 100,
+                valueTo = 200,
+                steps = 3,
+                labelFormatter = { tr("{0}% - the game genuinely plays at {1}x speed, not just the display", it, "%.2f".format(it / 100f)) },
+                onValueChange = viewModel::setEmulationSpeedPercentOverride,
+            )
+        }
+
+        // ── Graphic packs for this game (saved per-title, not globally) ──
+        if (graphicPackChoices.isNotEmpty()) {
+            Header(text = tr("Graphic packs"))
+            graphicPackChoices.forEach { choice ->
+                Toggle(
+                    label = choice.basicInfo.virtualPath,
+                    checked = choice.selectedForThisGame,
+                    onCheckedChanged = { selected ->
+                        viewModel.setGraphicPackSelectedForGame(
+                            choice.basicInfo.normalizedPath,
+                            selected,
+                        )
+                    },
+                )
+            }
         }
     }
 }

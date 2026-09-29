@@ -301,6 +301,22 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setVsyncMode([[maybe_unused]]
 	GetConfig().vsync = vsync_mode;
 }
 
+// Render API (Experimental/Hackers -> "Render API"): Automatic (Vulkan today - see
+// NativeEmulation_initializeRenderer), Vulkan, or OpenGL ES (Experimental). Only takes
+// effect the next time the renderer is (re)initialized, i.e. next app/emulation launch -
+// same restart caveat as "Limit Shader Compiler Threads" above.
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getRendererMode([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().android_renderer_mode;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setRendererMode([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint mode)
+{
+	GetConfig().android_renderer_mode = mode;
+}
+
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_getAccurateBarriers([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
@@ -329,6 +345,18 @@ extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_getDownscalingFilter([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
 	return GetConfig().downscale_filter;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jfloat JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getFsrSharpness([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().fsr_sharpness;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setFsrSharpness([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jfloat sharpness)
+{
+	GetConfig().fsr_sharpness = sharpness;
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
@@ -714,6 +742,35 @@ extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_setQuickControllerProfileSwitcherEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
 {
 	GetConfig().qol_quick_controller_profile_switcher_enabled = static_cast<bool>(enabled);
+}
+
+// ─── Limit to 30 FPS / Emulation speed (global default) ──────────────────────
+// Lives in Experimental/Hackers, off by default (limit_to_half_fps{false},
+// emulation_speed_percent{100} — see CemuConfig.h). Per-title profiles can
+// override either — see NativeGameTitles' getLimitToHalfFpsForTitle etc.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getLimitToHalfFps([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().limit_to_half_fps.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setLimitToHalfFps([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().limit_to_half_fps = static_cast<bool>(enabled);
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getEmulationSpeedPercent([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return (jint)GetConfig().emulation_speed_percent.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setEmulationSpeedPercent([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint speedPercent)
+{
+	jint clamped = speedPercent < 100 ? 100 : (speedPercent > 200 ? 200 : speedPercent);
+	GetConfig().emulation_speed_percent = (uint32)clamped;
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL

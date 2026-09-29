@@ -1,8 +1,10 @@
 #include "AndroidFilesystemCallbacks.h"
 #include "AndroidInputHelpers.h"
 #include "AndroidMemoryManager.h"
+#include "AndroidOpenGLCanvas.h"
 #include "Cafe/CafeSystem.h"
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
+#include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/OS/libs/snd_core/ax.h"
@@ -10,6 +12,7 @@
 #include "Cafe/TitleList/TitleList.h"
 #include "Cemu/ncrypto/ncrypto.h"
 #include "config/ActiveSettings.h"
+#include "config/CemuConfig.h"
 #include "input/InputManager.h"
 #include "JNIUtils.h"
 #include "WindowSystem.h"
@@ -260,12 +263,34 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_initializeRenderer(JNIEnv* e
 {
 	static std::unique_ptr<NativeEmulation::TestSurface> testSurface;
 
-	InitializeGlobalVulkan();
+	// Render API (Experimental/Hackers -> "Render API"). kAndroidRendererAuto currently
+	// always resolves to Vulkan below - it's this project's mature, tested backend, whereas
+	// the OpenGL ES path is a new/experimental addition (see the OpenGL-on-Android technical
+	// report) only taken when the user explicitly selects it.
+	auto rendererMode = (CemuConfig::AndroidRendererMode)GetConfig().android_renderer_mode.GetValue();
+	bool useOpenGL = (rendererMode == CemuConfig::kAndroidRendererOpenGL);
+
 	JNIUtils::HandleNativeException(env, [&]() {
 		testSurface = std::make_unique<NativeEmulation::TestSurface>();
-
 		WindowSystem::GetWindowInfo().window_main.surface = testSurface->getWindow();
 
+		if (useOpenGL)
+		{
+			g_androidOpenGLCanvas = std::make_unique<AndroidOpenGLCanvas>();
+			if (g_androidOpenGLCanvas->Initialize(testSurface->getWindow()))
+			{
+				SetOpenGLCanvasCallbacks(g_androidOpenGLCanvas.get());
+				g_androidOpenGLCanvas->MakeCurrent(false);
+				g_renderer = std::make_unique<OpenGLRenderer>();
+				return;
+			}
+			// EGL context creation failed (missing/broken GLES 3 driver, no libEGL.so, ...) -
+			// fall back to Vulkan rather than leaving the emulator without any renderer at all.
+			cemuLog_log(LogType::Force, "OpenGL ES initialization failed, falling back to Vulkan");
+			g_androidOpenGLCanvas.reset();
+		}
+
+		InitializeGlobalVulkan();
 		g_renderer = std::make_unique<VulkanRenderer>();
 	});
 }
@@ -280,7 +305,10 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_setDPI([[maybe_unused]] JNIE
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeEmulation_clearPadSurface([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
-	VulkanRenderer::GetInstance()->StopUsingPadAndWait();
+	if (g_androidOpenGLCanvas)
+		g_androidOpenGLCanvas->ClearPadSurface();
+	else
+		VulkanRenderer::GetInstance()->StopUsingPadAndWait();
 	WindowSystem::GetWindowInfo().pad_open = false;
 }
 
@@ -318,6 +346,21 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_initializeSurface(JNIEnv* en
 		{
 			WindowSystem::GetPadWindowPhysSize(width, height);
 			WindowSystem::GetWindowInfo().pad_open = true;
+		}
+
+		if (g_androidOpenGLCanvas)
+		{
+			// setSurface() (above) already stored the real ANativeWindow* in
+			// canvas_main/canvas_pad just before Kotlin calls this - hand it to the EGL
+			// context the same way VulkanRenderer::InitializeSurface consumes it below for
+			// Vulkan (see WindowSystem::GetWindowInfo() usage throughout this file).
+			auto& windowHandleInfo = isMainCanvas ? WindowSystem::GetWindowInfo().canvas_main : WindowSystem::GetWindowInfo().canvas_pad;
+			auto* window = static_cast<ANativeWindow*>(windowHandleInfo.surface.load());
+			if (isMainCanvas)
+				g_androidOpenGLCanvas->SetMainSurface(window);
+			else
+				g_androidOpenGLCanvas->SetPadSurface(window);
+			return;
 		}
 
 		VulkanRenderer::GetInstance()->InitializeSurface({width, height}, isMainCanvas);

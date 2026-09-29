@@ -75,13 +75,34 @@ void LatteTextureViewGL::InitAliasView()
 	}
 
 	catchOpenGLError();
+	GLuint srcMinLevel = (firstMip >= texture->maxPossibleMipLevels) ? (texture->maxPossibleMipLevels - 1) : firstMip;
 	if (firstMip >= texture->maxPossibleMipLevels)
-	{
 		cemuLog_logDebug(LogType::Force, "InitAliasView(): Out of bounds mip level requested");
-		glTextureView(glTexId, glTexTarget, texture->glId_texture, glInternalFormat, texture->maxPossibleMipLevels - 1, numMip, firstSlice, this->numSlice);
+
+	bool hasRealView = glTextureViewWrapper(glTexId, glTexTarget, texture->glId_texture, glInternalFormat, srcMinLevel, numMip, firstSlice, numSlice);
+	if (!hasRealView)
+	{
+		// No glTextureView/OES/EXT on this device (see the wrapper's comment in
+		// GLInclude.h) - fall back to a one-time GPU-side copy of the requested mip/slice
+		// range into the texture object InitAliasView's caller already allocated for us.
+		// glTexId was created via GenerateEmptyTextureFromGX2Dim just above and still needs
+		// real backing storage before glCopyImageSubData can target it.
+		sint32 viewWidth = std::max(1, texture->width >> srcMinLevel);
+		sint32 viewHeight = std::max(1, texture->height >> srcMinLevel);
+		LatteTextureGL::AllocateStorage(glTexId, dim, glInternalFormat, viewWidth, viewHeight, numSlice, numMip);
+		for (sint32 i = 0; i < numMip; i++)
+		{
+			uint32 mipWidth = std::max(1, viewWidth >> i);
+			uint32 mipHeight = std::max(1, viewHeight >> i);
+			if (!glCopyImageSubDataWrapper(texture->glId_texture, texture->glTexTarget, srcMinLevel + i, 0, 0, firstSlice,
+					glTexId, glTexTarget, i, 0, 0, 0,
+					mipWidth, mipHeight, numSlice))
+			{
+				cemuLog_log(LogType::Force, "LatteTextureViewGL: no texture view mechanism (glTextureView/OES/EXT/glCopyImageSubData) available on this GPU driver - this view will be blank");
+				break;
+			}
+		}
 	}
-	else
-		glTextureView(glTexId, glTexTarget, texture->glId_texture, glInternalFormat, firstMip, numMip, firstSlice, numSlice);
 
 	catchOpenGLError();
 

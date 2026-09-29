@@ -76,6 +76,16 @@ public:
 	virtual void DrawBackbufferQuad(LatteTextureView* texView, RendererOutputShader* shader, bool useLinearTexFilter,
 												sint32 imageX, sint32 imageY, sint32 imageWidth, sint32 imageHeight,
 												bool padView, bool clearBackground) = 0;
+
+	// AMD FSR 1.0 (EASU+RCAS) two-pass upscale - see RendererOuputShader.cpp for the shader
+	// source and OpenGLRenderer.cpp / VulkanRenderer.cpp for the intermediate-texture
+	// plumbing. Not pure virtual (unlike DrawBackbufferQuad above) since it's currently only
+	// implemented for OpenGL and Vulkan - the default here is a safe no-op fallback for any
+	// other backend (Metal), matching CanUseFSR() below returning false for those.
+	virtual bool CanUseFSR() const { return false; }
+	virtual void DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 imageX, sint32 imageY, sint32 imageWidth, sint32 imageHeight,
+												bool padView, bool clearBackground, bool renderUpsideDown) {}
+
 	virtual bool BeginFrame(bool mainWindow) = 0;
 
 	// flush control

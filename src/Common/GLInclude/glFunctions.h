@@ -182,6 +182,16 @@ GLFUNC(PFNGLCOMPRESSEDTEXTURESUBIMAGE1DPROC, glCompressedTextureSubImage1D)
 GLFUNC(PFNGLCOMPRESSEDTEXTURESUBIMAGE2DPROC, glCompressedTextureSubImage2D)
 GLFUNC(PFNGLCOMPRESSEDTEXTURESUBIMAGE3DPROC, glCompressedTextureSubImage3D)
 GLFUNC(PFNGLCOPYIMAGESUBDATAPROC, glCopyImageSubData)
+
+// GL_OES_copy_image / GL_EXT_copy_image - same signature as the desktop/GLES-3.2-core
+// glCopyImageSubData above. Needed as a fallback source for texture "views" on GLES 3.0/3.1
+// devices where glTextureView has no OES/EXT equivalent either (see glTextureViewWrapper /
+// InitAliasView's GLES fallback in LatteTextureViewGL.cpp) - a real GPU-side copy is a much
+// safer approximation of a view than aliasing the same GL texture object under two owning
+// LatteTextureViewGL instances would be (that would double-delete it on teardown).
+typedef void (APIENTRYP PFNGLCOPYIMAGESUBDATAAAANDROIDPROC) (GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
+GLFUNC(PFNGLCOPYIMAGESUBDATAAAANDROIDPROC, glCopyImageSubDataOES)
+GLFUNC(PFNGLCOPYIMAGESUBDATAAAANDROIDPROC, glCopyImageSubDataEXT)
 GLFUNC(PFNGLCLEARTEXIMAGEPROC, glClearTexImage)
 GLFUNC(PFNGLCLEARTEXSUBIMAGEPROC, glClearTexSubImage)
 GLFUNC(PFNGLINVALIDATETEXIMAGEPROC, glInvalidateTexImage)
@@ -199,6 +209,14 @@ GLFUNC(PFNGLTEXTURESUBIMAGE3DPROC, glTextureSubImage3D)
 GLFUNC(PFNGLTEXTURESTORAGE1DPROC, glTextureStorage1D)
 GLFUNC(PFNGLTEXTURESTORAGE2DPROC, glTextureStorage2D)
 GLFUNC(PFNGLTEXTURESTORAGE3DPROC, glTextureStorage3D)
+
+// GL_OES_texture_view / GL_EXT_texture_view - same signature as the desktop core
+// glTextureView above, offered by some Android GLES drivers as a fallback for it (see
+// glTextureViewWrapper in GLInclude.h). Not part of glext.h (desktop-only registry), so the
+// function pointer typedef is declared here instead of relying on one already existing.
+typedef void (APIENTRYP PFNGLTEXTUREVIEWOESANDROIDPROC) (GLuint texture, GLenum target, GLuint origtexture, GLenum internalformat, GLuint minlevel, GLuint numlevels, GLuint minlayer, GLuint numlayers);
+GLFUNC(PFNGLTEXTUREVIEWOESANDROIDPROC, glTextureViewOES)
+GLFUNC(PFNGLTEXTUREVIEWOESANDROIDPROC, glTextureViewEXT)
 
 // instancing / draw
 
@@ -301,4 +319,23 @@ GLFUNC(PFNWGLSWAPINTERVALEXTPROC, wglSwapIntervalEXT)
 #if (BOOST_OS_LINUX || BOOST_OS_BSD) && !defined(__ANDROID__)
 EGLFUNC(PFNEGLSWAPINTERVALPROC, eglSwapInterval)
 EGLFUNC(PFNEGLGETCURRENTDISPLAYPROC, eglGetCurrentDisplay)
+
+// Context/surface management for the Android EGL path (AndroidOpenGLCanvas). These are all
+// core EGL 1.4 entry points, real exported symbols in every Android libEGL.so, loaded via
+// dlsym exactly like the two above already are - see LoadOpenGLImports() in
+// OpenGLRenderer.cpp.
+EGLFUNC(PFNEGLGETDISPLAYPROC, eglGetDisplay)
+EGLFUNC(PFNEGLINITIALIZEPROC, eglInitialize)
+EGLFUNC(PFNEGLTERMINATEPROC, eglTerminate)
+EGLFUNC(PFNEGLBINDAPIPROC, eglBindAPI)
+EGLFUNC(PFNEGLCHOOSECONFIGPROC, eglChooseConfig)
+EGLFUNC(PFNEGLGETCONFIGATTRIBPROC, eglGetConfigAttrib)
+EGLFUNC(PFNEGLCREATEWINDOWSURFACEPROC, eglCreateWindowSurface)
+EGLFUNC(PFNEGLDESTROYSURFACEPROC, eglDestroySurface)
+EGLFUNC(PFNEGLCREATECONTEXTPROC, eglCreateContext)
+EGLFUNC(PFNEGLDESTROYCONTEXTPROC, eglDestroyContext)
+EGLFUNC(PFNEGLMAKECURRENTPROC, eglMakeCurrent)
+EGLFUNC(PFNEGLSWAPBUFFERSPROC, eglSwapBuffers)
+EGLFUNC(PFNEGLGETERRORPROC, eglGetError)
+EGLFUNC(PFNEGLQUERYSTRINGPROC, eglQueryString)
 #endif

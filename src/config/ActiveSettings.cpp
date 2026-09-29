@@ -91,6 +91,16 @@ void ActiveSettings::SetTimerShiftFactor(uint8 shiftFactor)
 	s_timer_shift = shiftFactor;
 }
 
+uint32 ActiveSettings::GetGameSpeedPercent()
+{
+	return s_game_speed_percent;
+}
+
+void ActiveSettings::SetGameSpeedPercent(uint32 speedPercent)
+{
+	s_game_speed_percent = speedPercent;
+}
+
 PrecompiledShaderOption ActiveSettings::GetPrecompiledShadersOption()
 {
 	return PrecompiledShaderOption::Auto; // g_current_game_profile->GetPrecompiledShadersState().value_or(GetConfig().precompiled_shaders);

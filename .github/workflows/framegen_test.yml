@@ -1,0 +1,54 @@
+name: framegen_test
+# Workflow leve, separado do build completo do APK (mandacaru_wiiu.yml,
+# que ficou temporariamente so manual enquanto o frame gen esta em
+# desenvolvimento - ver comentario dentro dele).
+#
+# IMPORTANTE - por que isso NAO compila o modulo de verdade:
+# opticalflow_vk.cpp inclui VulkanRenderer.h, que por sua vez depende
+# de boa parte do resto do codigo-fonte do Cemu (headers internos,
+# outras dependencias do vcpkg). Nao da pra compilar esse arquivo
+# isolado sem o projeto inteiro - tentar fazer isso aqui ia falhar por
+# falta de contexto, nao por erro real no codigo novo.
+#
+# Por isso este workflow faz uma CHECAGEM ESTATICA (cppcheck) nos
+# arquivos novos - pega erros de sintaxe grosseiros, uso de variavel
+# nao inicializada, vazamento obvio de recurso, etc, sem precisar
+# compilar o projeto inteiro. E rapido (segundos, nao minutos).
+#
+# A validacao de compilacao DE VERDADE (a integracao com o resto do
+# Cemu) so acontece rodando o build completo, manualmente, via
+# workflow_dispatch no mandacaru_wiiu.yml, quando voce quiser testar
+# de verdade num dispositivo.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "dependencies/ffx-frame-generation/**"
+      - ".github/workflows/framegen_test.yml"
+  pull_request:
+    paths:
+      - "dependencies/ffx-frame-generation/**"
+  workflow_dispatch: {}
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Checagem estatica dos arquivos novos
+        run: |
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 \
+            --suppress=missingIncludeSystem \
+            dependencies/ffx-frame-generation/src/opticalflow_vk.cpp \
+            dependencies/ffx-frame-generation/src/opticalflow_vk.h
+
+      - name: Resultado
+        run: echo "Checagem estatica passou. Lembre-se: isso NAO substitui compilar o projeto completo."

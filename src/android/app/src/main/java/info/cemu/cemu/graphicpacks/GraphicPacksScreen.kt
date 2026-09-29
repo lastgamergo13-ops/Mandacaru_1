@@ -69,12 +69,17 @@ fun GraphicPacksScreen(
     var showGraphicPackSearch by rememberSaveable { mutableStateOf(false) }
     val isDownloading by graphicPacksViewModel.isDownloading.collectAsState()
     val downloadStatus by graphicPacksViewModel.downloadStatus.collectAsState()
+    val installedVersion by graphicPacksViewModel.installedVersion.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val currentNodeState = graphicPacksViewModel.currentNode.collectAsState()
     val currentNode = currentNodeState.value
     val graphicPackDataState = graphicPacksViewModel.currentDataGraphicPack.collectAsState()
     val graphicPackData = graphicPackDataState.value
+
+    LaunchedEffect(Unit) {
+        graphicPacksViewModel.refreshInstalledVersion(context)
+    }
 
     LaunchedEffect(Unit) {
         graphicPacksViewModel.events.collect {
@@ -144,6 +149,9 @@ fun GraphicPacksScreen(
         }
 
         if (currentNode is GraphicPackSectionNode) {
+            if (currentNode.isRoot()) {
+                graphicPacksVersionFooterItem(installedVersion)
+            }
             graphicPackSectionItems(
                 installedOnly = installedOnly,
                 nodes = currentNode.children,
@@ -272,6 +280,22 @@ private fun GraphicPacksRootSectionActions(
                     onCheckedChange = null
                 )
             }
+        )
+    }
+}
+
+private fun LazyListScope.graphicPacksVersionFooterItem(installedVersion: String?) {
+    item {
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            text = if (installedVersion != null)
+                tr("Installed graphic packs version: {0}", installedVersion)
+            else
+                tr("Installed graphic packs version: unknown"),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

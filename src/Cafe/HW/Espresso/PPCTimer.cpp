@@ -160,6 +160,16 @@ uint64 PPCTimer_getFromRDTSC()
 	uint8 timerShiftFactor = ActiveSettings::GetTimerShiftFactor();
 	elapsedTick >>= timerShiftFactor;
 
+	// "Emulation Speed" option (100 = normal). Applied multiplicatively on top of the debug
+	// timer shift above so the console's own notion of elapsed time (OSTime, timers, non-vsync
+	// synced logic) advances at the same rate as the vsync signal that LatteTiming delivers to
+	// the game - otherwise CPU-side timing and GPU-side frame pacing would drift apart at
+	// non-100% speeds. Skipped entirely at the default of 100 to avoid the extra division on
+	// the hot path (this function is called very frequently).
+	uint32 speedPercent = ActiveSettings::GetGameSpeedPercent();
+	if (speedPercent != 100u)
+		elapsedTick = (elapsedTick * (uint64)speedPercent) / 100ull;
+
 	_tickSummary += elapsedTick;
 
 	sTimerSpinlock.unlock();

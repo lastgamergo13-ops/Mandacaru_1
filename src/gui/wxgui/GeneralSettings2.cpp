@@ -483,20 +483,37 @@ wxPanel* GeneralSettings2::AddGraphicsPage(wxNotebook* notebook)
 	}
 
 	{
-		wxString choices[] = { _("Bilinear"), _("Bicubic"), _("Hermite"), _("Nearest Neighbor") };
+		wxString choices[] = { _("Bilinear"), _("Bicubic"), _("Hermite"), _("Nearest Neighbor"), _("FSR") };
 		m_upscale_filter = new wxRadioBox(graphics_panel, wxID_ANY, _("Upscale filter"), wxDefaultPosition, wxDefaultSize, std::size(choices), choices, 5, wxRA_SPECIFY_COLS);
-		m_upscale_filter->SetToolTip(_("Upscaling filters are used when the game resolution is smaller than the window size"));
-		m_upscale_filter->Bind(wxEVT_RADIOBOX, [](wxCommandEvent& event) {
+		m_upscale_filter->SetToolTip(_("Upscaling filters are used when the game resolution is smaller than the window size.\nFSR (AMD FidelityFX Super Resolution) sharpens the image while upscaling and generally looks best, at a small extra performance cost."));
+		m_upscale_filter->Bind(wxEVT_RADIOBOX, [this](wxCommandEvent& event) {
 			GetConfig().upscale_filter = event.GetSelection();
+			m_fsr_sharpness->Enable(event.GetSelection() == kFsrFilter);
 		});
 		graphics_panel_sizer->Add(m_upscale_filter, 0, wxALL | wxEXPAND, 5);
 
-		m_downscale_filter = new wxRadioBox(graphics_panel, wxID_ANY, _("Downscale filter"), wxDefaultPosition, wxDefaultSize, std::size(choices), choices, 5, wxRA_SPECIFY_COLS);
+		// FSR is an upscaling-only algorithm (EASU specifically upsamples) - the downscale
+		// filter list deliberately does NOT include it, unlike the upscale one above.
+		wxString choicesDownscale[] = { _("Bilinear"), _("Bicubic"), _("Hermite"), _("Nearest Neighbor") };
+		m_downscale_filter = new wxRadioBox(graphics_panel, wxID_ANY, _("Downscale filter"), wxDefaultPosition, wxDefaultSize, std::size(choicesDownscale), choicesDownscale, 4, wxRA_SPECIFY_COLS);
 		m_downscale_filter->SetToolTip(_("Downscaling filters are used when the game resolution is bigger than the window size"));
 		m_downscale_filter->Bind(wxEVT_RADIOBOX, [](wxCommandEvent& event) {
 			GetConfig().downscale_filter = event.GetSelection();
 		});
 		graphics_panel_sizer->Add(m_downscale_filter, 0, wxALL | wxEXPAND, 5);
+
+		auto* fsr_sharpness_sizer = new wxBoxSizer(wxHORIZONTAL);
+		fsr_sharpness_sizer->Add(new wxStaticText(graphics_panel, wxID_ANY, _("FSR sharpness")), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+		// 0 (sharpest) .. 200 (softest, effectively disables sharpening) mapped to 0.00-2.00
+		// "stops" - see the field comment on CemuConfig::fsr_sharpness. Lower = sharper.
+		m_fsr_sharpness = new wxSlider(graphics_panel, wxID_ANY, (int)(GetConfig().fsr_sharpness.GetValue() * 100.0f), 0, 200, wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
+		m_fsr_sharpness->SetToolTip(_("Controls how much FSR sharpens the image. Lower is sharper, higher is softer. Only affects the FSR upscale filter."));
+		m_fsr_sharpness->Enable(GetConfig().upscale_filter == kFsrFilter);
+		m_fsr_sharpness->Bind(wxEVT_SLIDER, [](wxCommandEvent& event) {
+			GetConfig().fsr_sharpness = (float)event.GetInt() / 100.0f;
+		});
+		fsr_sharpness_sizer->Add(m_fsr_sharpness, 1, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+		graphics_panel_sizer->Add(fsr_sharpness_sizer, 0, wxALL | wxEXPAND, 5);
 	}
 
 	{
@@ -1923,6 +1940,8 @@ void GeneralSettings2::ApplyConfig()
 #endif
 	m_upscale_filter->SetSelection(config.upscale_filter);
 	m_downscale_filter->SetSelection(config.downscale_filter);
+	m_fsr_sharpness->SetValue((int)(config.fsr_sharpness.GetValue() * 100.0f));
+	m_fsr_sharpness->Enable(config.upscale_filter == kFsrFilter);
 	m_fullscreen_scaling->SetSelection(config.fullscreen_scaling);
 
 	wxASSERT((uint32)config.overlay.position < m_overlay_position->GetCount());

@@ -97,7 +97,15 @@ public:
 	[[nodiscard]] static uint8 GetTimerShiftFactor();
 
 	static void SetTimerShiftFactor(uint8 shiftFactor);
-	
+
+	// "Emulation speed" (100 = normal, e.g. 150 = 1.5x). Applied multiplicatively on top of
+	// the timer shift above, in the console's CPU timer (see PPCTimer_getFromRDTSC) — a
+	// genuine change to how fast the emulated console's own clock advances, not a display
+	// trick. Kept separate from TimerShiftFactor since it needs finer-grained percentage
+	// steps than a power-of-two shift can represent.
+	[[nodiscard]] static uint32 GetGameSpeedPercent();
+	static void SetGameSpeedPercent(uint32 speedPercent);
+
 	// gpu
 	[[nodiscard]] static PrecompiledShaderOption GetPrecompiledShadersOption();
 	[[nodiscard]] static bool RenderUpsideDownEnabled();
@@ -143,6 +151,7 @@ private:
 
 	// timer speed
 	inline static uint8 s_timer_shift = 3; // right shift factor, 0 -> 8x, 3 -> 1x, 4 -> 0.5x
+	inline static uint32 s_game_speed_percent = 100; // 100 = normal speed, e.g. 150 = 1.5x
 
 	// debug
 	inline static bool s_audio_aux_only = false;

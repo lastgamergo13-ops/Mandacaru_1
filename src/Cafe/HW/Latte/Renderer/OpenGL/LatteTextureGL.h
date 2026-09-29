@@ -12,6 +12,7 @@ public:
 	~LatteTextureGL();
 
 	void AllocateOnHost() override;
+	static void AllocateStorage(GLuint texId, Latte::E_DIM dim, GLuint glInternalFormat, sint32 width, sint32 height, sint32 depth, sint32 mipLevels);
 
 	static void GenerateEmptyTextureFromGX2Dim(Latte::E_DIM dim, GLuint& texId, GLint& texTarget, bool createForTargetType);
 

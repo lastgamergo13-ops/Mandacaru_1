@@ -287,4 +287,46 @@ object NativeGameTitles {
 
     @JvmStatic
     external fun cancelTitleCompression()
+
+    // ─── Graphic packs selected per title ──────────────────────────────
+    /**
+     * Returns the normalized paths (see [NativeGraphicPacks.GraphicPackBasicInfo.normalizedPath])
+     * of the graphic packs selected specifically for this title. These are activated in
+     * addition to any globally-enabled packs, only while this title is running — they are
+     * never written to the global graphic pack config, so no other game is affected.
+     */
+    @JvmStatic
+    external fun getSelectedGraphicPacksForTitle(gameTitleId: Long): Array<String>
+
+    /**
+     * Replaces the full set of graphic packs selected for this title.
+     * Pass the [NativeGraphicPacks.GraphicPackBasicInfo.normalizedPath] of each pack
+     * the user checked in the game's profile screen.
+     */
+    @JvmStatic
+    external fun setSelectedGraphicPacksForTitle(gameTitleId: Long, normalizedPaths: Array<String>)
+
+    // ─── Limit to 30 FPS / Emulation speed — per-title override ────────
+    /**
+     * Tri-state: -1 = not set (this title follows the global setting from
+     * Settings → Experimental/Hackers), 0 = off, 1 = on. Overriding this only
+     * affects THIS title — it never touches the global setting or any other game.
+     */
+    @JvmStatic
+    external fun getLimitToHalfFpsForTitle(gameTitleId: Long): Int
+
+    /** Pass 0/1 to override for this title only, or -1 to clear the override. */
+    @JvmStatic
+    external fun setLimitToHalfFpsForTitle(gameTitleId: Long, triState: Int)
+
+    /**
+     * -1 = not set (this title follows the global setting), otherwise the
+     * overridden speed percentage for this title only (100-200).
+     */
+    @JvmStatic
+    external fun getEmulationSpeedPercentForTitle(gameTitleId: Long): Int
+
+    /** Pass 100-200 to override for this title only, or -1 to clear the override. */
+    @JvmStatic
+    external fun setEmulationSpeedPercentForTitle(gameTitleId: Long, speedPercent: Int)
 }

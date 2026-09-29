@@ -130,6 +130,17 @@ bool gameProfile_loadIntegerOption(IniParser& iniParser, const char* optionName,
 	}
 }
 
+// Android/Mandacaru — same temp-then-wrap idiom as the optional<bool> overload above,
+// for an optional<uint32> with range validation (used by emulationSpeedPercent).
+bool gameProfile_loadUint32OptionOptional(IniParser& iniParser, const char* optionName, std::optional<uint32>& option, uint32 minVal, uint32 maxVal)
+{
+	uint32 tmp;
+	const auto result = gameProfile_loadIntegerOption<uint32>(iniParser, optionName, tmp, minVal, maxVal);
+	if (result)
+		option = tmp;
+	return result;
+}
+
 template<typename T>
 bool gameProfile_loadEnumOption(IniParser& iniParser, const char* optionName, T& option)
 {
@@ -275,6 +286,14 @@ bool GameProfile::Load(uint64_t title_id)
 			}
 
 		}
+		// Android/Mandacaru — per-title override for "Limit to 30 FPS" / "Emulation speed".
+		// Cross-platform section (mirrors the global config fields, which aren't
+		// Android-only either) — not set means "use the global setting".
+		else if (boost::iequals(iniParser.GetCurrentSectionName(), "Timing"))
+		{
+			gameProfile_loadBooleanOption2(iniParser, "limitToHalfFps", m_limitToHalfFps);
+			gameProfile_loadUint32OptionOptional(iniParser, "emulationSpeedPercent", m_emulationSpeedPercent, 100u, 200u);
+		}
 #if BOOST_PLAT_ANDROID
 		else if (boost::iequals(iniParser.GetCurrentSectionName(), "AndroidDriver"))
 		{
@@ -283,6 +302,27 @@ bool GameProfile::Load(uint64_t title_id)
 			if (m_driverSetting.mode == DriverSettingMode::Custom)
 			{
 				m_driverSetting.customPath = iniParser.FindOption("customPath");
+			}
+		}
+		// Android/Mandacaru — graphic packs selected specifically for this title.
+		// See GraphicPack2::ActivateForCurrentTitle() for how these get applied.
+		else if (boost::iequals(iniParser.GetCurrentSectionName(), "GraphicPacks"))
+		{
+			m_selectedGraphicPacks.clear();
+			auto option_value = iniParser.FindOption("SelectedGraphicPacks");
+			if (option_value)
+			{
+				std::string_view remaining = *option_value;
+				while (!remaining.empty())
+				{
+					const auto sepPos = remaining.find(';');
+					std::string_view token = (sepPos == std::string_view::npos) ? remaining : remaining.substr(0, sepPos);
+					if (!token.empty())
+						m_selectedGraphicPacks.emplace_back(token);
+					if (sepPos == std::string_view::npos)
+						break;
+					remaining = remaining.substr(sepPos + 1);
+				}
 			}
 		}
 #endif
@@ -340,11 +380,38 @@ void GameProfile::Save(uint64_t title_id)
 
 	fs->writeLine("");
 
+	// Android/Mandacaru — per-title override for "Limit to 30 FPS" / "Emulation speed".
+	// Only written when actually set (not nullopt) — an empty/absent [Timing] section
+	// simply means this title uses the global setting, matching the default state.
+	fs->writeLine("[Timing]");
+	if (m_limitToHalfFps.has_value())
+		fs->writeLine(fmt::format("{} = {}", "limitToHalfFps", m_limitToHalfFps.value() ? "true" : "false").c_str());
+	if (m_emulationSpeedPercent.has_value())
+		fs->writeLine(fmt::format("{} = {}", "emulationSpeedPercent", m_emulationSpeedPercent.value()).c_str());
+	fs->writeLine("");
+
 #if BOOST_PLAT_ANDROID
 	fs->writeLine("[AndroidDriver]");
 	fs->writeLine(fmt::format("{} = {}", "mode", m_driverSetting.mode).c_str());
 	if (m_driverSetting.mode == DriverSettingMode::Custom && m_driverSetting.customPath.has_value())
 		fs->writeLine(fmt::format("{} = {}", "customPath", m_driverSetting.customPath.value()).c_str());
+	fs->writeLine("");
+
+	// Android/Mandacaru — graphic packs selected specifically for this title.
+	// Intentionally NOT written to the global config, so other games/the global
+	// Graphic Packs browser are never affected by a per-title selection.
+	fs->writeLine("[GraphicPacks]");
+	if (!m_selectedGraphicPacks.empty())
+	{
+		std::string joined;
+		for (size_t i = 0; i < m_selectedGraphicPacks.size(); ++i)
+		{
+			if (i > 0)
+				joined += ';';
+			joined += m_selectedGraphicPacks[i];
+		}
+		fs->writeLine(fmt::format("{} = {}", "SelectedGraphicPacks", joined).c_str());
+	}
 	fs->writeLine("");
 #endif
 
@@ -378,6 +445,11 @@ void GameProfile::ResetOptional()
 	// controller settings
 	for (auto& profile : m_controllerProfile)
 		profile.reset();
+	// graphic packs selected for this title (Android/Mandacaru)
+	m_selectedGraphicPacks.clear();
+	// per-title "Limit to 30 FPS" / "Emulation speed" override (Android/Mandacaru)
+	m_limitToHalfFps.reset();
+	m_emulationSpeedPercent.reset();
 }
 
 void GameProfile::Reset()
@@ -404,4 +476,9 @@ void GameProfile::Reset()
 	// controller settings
 	for (auto& profile : m_controllerProfile)
 		profile.reset();
+	// graphic packs selected for this title (Android/Mandacaru)
+	m_selectedGraphicPacks.clear();
+	// per-title "Limit to 30 FPS" / "Emulation speed" override (Android/Mandacaru)
+	m_limitToHalfFps.reset();
+	m_emulationSpeedPercent.reset();
 }

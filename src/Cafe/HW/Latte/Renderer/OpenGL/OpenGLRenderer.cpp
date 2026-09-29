@@ -147,6 +147,11 @@ OpenGLRenderer::~OpenGLRenderer()
 		glDeleteProgramPipelines(1, &m_pipeline);
 
 	glDeleteBuffers(1, &m_backbufferBlit_uniformBuffer);
+
+	if (m_fsrIntermediateFBO)
+		glDeleteFramebuffers(1, &m_fsrIntermediateFBO);
+	if (m_fsrIntermediateTexture)
+		glDeleteTextures(1, &m_fsrIntermediateTexture);
 }
 
 OpenGLRenderer* OpenGLRenderer::GetInstance()
@@ -287,10 +292,50 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 }
 
 #elif defined(__ANDROID__)
-// the OpenGL backend is not implemented/used on Android (ENABLE_OPENGL is off; Vulkan is the only backend), so this is just a stub to satisfy the linker
+#include <dlfcn.h>
+
+// Mirrors the Linux/BSD dlopen+dlsym approach above, but against libEGL.so/libGLESv3.so
+// instead of libGL.so/libGLX. Unlike desktop GLX, eglGetProcAddress is guaranteed by the
+// EGL spec to resolve ALL GLES functions, core and extension alike (there is no
+// "must already be in libGLESv3.so's export table" restriction the way there historically
+// was on some desktop GL drivers) - so it's tried first, with a dlsym fallback for
+// robustness on drivers that are stricter about what eglGetProcAddress accepts before a
+// context is current. Note that this is expected to return nullptr for every desktop-only
+// entry point that plain doesn't exist on GLES (DSA functions, 1D textures, glGetTexImage,
+// etc.) - that's by design, see the DSA fallback wrappers in GLInclude.h and the dedicated
+// GLES codepaths in LatteTextureGL.cpp/TextureReadbackGL.cpp for how those are handled.
+static void* g_libGLESv3 = nullptr;
+static void* g_libEGL = nullptr;
+
+GL_IMPORT _GetOpenGLFunction(void* libGLESv3, const char* name)
+{
+	GL_IMPORT r = nullptr;
+	if (g_libEGL)
+	{
+		using PFNEGLGETPROCADDRESS = void* (*)(const char*);
+		static auto _eglGetProcAddress = (PFNEGLGETPROCADDRESS)dlsym(g_libEGL, "eglGetProcAddress");
+		if (_eglGetProcAddress)
+			r = (GL_IMPORT)_eglGetProcAddress(name);
+	}
+	if (!r && libGLESv3)
+		r = (GL_IMPORT)dlsym(libGLESv3, name);
+	return r;
+}
+
 void LoadOpenGLImports()
 {
-	cemu_assert_unimplemented();
+	g_libGLESv3 = dlopen("libGLESv3.so", RTLD_NOW | RTLD_GLOBAL);
+	if (!g_libGLESv3)
+		cemuLog_log(LogType::Force, "Failed to dlopen libGLESv3.so");
+	g_libEGL = dlopen("libEGL.so", RTLD_NOW | RTLD_GLOBAL);
+	if (!g_libEGL)
+		cemuLog_log(LogType::Force, "Failed to dlopen libEGL.so");
+
+#define GLFUNC(__type, __name)	__name = (__type)_GetOpenGLFunction(g_libGLESv3, STRINGIFY(__name));
+#define EGLFUNC(__type, __name)	__name = (__type)dlsym(g_libEGL, STRINGIFY(__name));
+#include "Common/GLInclude/glFunctions.h"
+#undef GLFUNC
+#undef EGLFUNC
 }
 
 #elif BOOST_OS_MACOS
@@ -485,6 +530,7 @@ void OpenGLRenderer::QuerySupportedFormats()
 {
 	const char* glVersionString = (const char*)glGetString(GL_VERSION);
 	bool isGLES = glVersionString && boost::icontains(glVersionString, "OpenGL ES");
+	s_isGLES = isGLES;
 	int versionMajor = 0, versionMinor = 0;
 	if (glVersionString)
 	{
@@ -719,6 +765,103 @@ void OpenGLRenderer::DrawBackbufferQuad(LatteTextureView* texView, RendererOutpu
 	glViewportIndexedf(0, prevViewportX, prevViewportY, prevViewportWidth, prevViewportHeight);
 
 	// switch back to TV context
+	if (padView)
+		GLCanvas_MakeCurrent(false);
+}
+
+void OpenGLRenderer::DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 imageX, sint32 imageY, sint32 imageWidth, sint32 imageHeight, bool padView, bool clearBackground, bool renderUpsideDown)
+{
+	if (padView && !IsPadWindowActive())
+		return;
+
+	catchOpenGLError();
+	GLCanvas_MakeCurrent(padView);
+
+	renderstate_resetColorControl();
+	renderstate_resetDepthControl();
+	attributeStream_reset();
+
+	// (re)create the EASU->RCAS intermediate texture if the output size changed
+	if (m_fsrIntermediateWidth != imageWidth || m_fsrIntermediateHeight != imageHeight || m_fsrIntermediateTexture == 0)
+	{
+		if (m_fsrIntermediateFBO)
+			glDeleteFramebuffers(1, &m_fsrIntermediateFBO);
+		if (m_fsrIntermediateTexture)
+			glDeleteTextures(1, &m_fsrIntermediateTexture);
+		m_fsrIntermediateTexture = glCreateTextureWrapper(GL_TEXTURE_2D);
+		glTextureStorage2DWrapper(GL_TEXTURE_2D, m_fsrIntermediateTexture, 1, GL_RGBA8, imageWidth, imageHeight);
+		glTextureParameteriWrapper(GL_TEXTURE_2D, m_fsrIntermediateTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTextureParameteriWrapper(GL_TEXTURE_2D, m_fsrIntermediateTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTextureParameteriWrapper(GL_TEXTURE_2D, m_fsrIntermediateTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTextureParameteriWrapper(GL_TEXTURE_2D, m_fsrIntermediateTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glGenFramebuffers(1, &m_fsrIntermediateFBO);
+		GLint prevFBO;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+		glBindFramebuffer(GL_FRAMEBUFFER, m_fsrIntermediateFBO);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_fsrIntermediateTexture, 0);
+		glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+		m_fsrIntermediateWidth = imageWidth;
+		m_fsrIntermediateHeight = imageHeight;
+	}
+
+	// shared uniform values (same for both passes - only textureSrc/the render target differ)
+	auto uniformBuffer = RendererOutputShader::s_fsr_easu_shader->FillUniformBlockBuffer(*texView, {imageWidth, imageHeight}, padView);
+	glBindBufferBase(GL_UNIFORM_BUFFER, 0, m_backbufferBlit_uniformBuffer);
+	uint16 indexData[6] = { 0,1,2,3,4,5 };
+
+	// --- pass 1: EASU, game texture (native res) -> intermediate texture (output res) ---
+	glBindFramebuffer(GL_FRAMEBUFFER, m_fsrIntermediateFBO);
+	glViewportIndexedf(0, 0, 0, (float)imageWidth, (float)imageHeight);
+	glDisable(GL_FRAMEBUFFER_SRGB); // EASU/RCAS both operate on raw values; sRGB encode (if any) is applied by RCAS's shared preamble, same as every other filter
+	shader_unbind(RendererShader::ShaderType::kGeometry);
+	shader_bind(RendererOutputShader::s_fsr_easu_shader->GetVertexShader());
+	shader_bind(RendererOutputShader::s_fsr_easu_shader->GetFragmentShader());
+	glNamedBufferSubData(m_backbufferBlit_uniformBuffer, 0, sizeof(uniformBuffer), &uniformBuffer);
+
+	LatteTextureViewGL* texViewGL = (LatteTextureViewGL*)texView;
+	texture_bindAndActivate(texView, 0);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	texViewGL->samplerState.clampS = texViewGL->samplerState.clampT = 0xFF;
+	// EASU samples via textureGather, which ignores min/mag filter entirely - NEAREST is set
+	// here purely so nothing accidentally relies on mip filtering; it has no effect on gather.
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	texViewGL->samplerState.filterMin = texViewGL->samplerState.filterMag = 0xFFFFFFFF;
+	glDrawRangeElements(GL_TRIANGLES, 0, 5, 6, GL_UNSIGNED_SHORT, indexData);
+	texture_bindAndActivate(nullptr, 0);
+	catchOpenGLError();
+
+	// --- pass 2: RCAS, intermediate texture (output res) -> real backbuffer ---
+	rendertarget_bindFramebufferObject(nullptr);
+	if (clearBackground)
+	{
+		int windowWidth, windowHeight;
+		if (padView)
+			WindowSystem::GetPadWindowPhysSize(windowWidth, windowHeight);
+		else
+			WindowSystem::GetWindowPhysSize(windowWidth, windowHeight);
+		g_renderer->renderTarget_setViewport(0, 0, windowWidth, windowHeight, 0.0f, 1.0f);
+		g_renderer->ClearColorbuffer(padView);
+	}
+	glViewportIndexedf(0, imageX, imageY, imageWidth, imageHeight);
+	RendererOutputShader* rcasShader = renderUpsideDown ? RendererOutputShader::s_fsr_rcas_shader_ud : RendererOutputShader::s_fsr_rcas_shader;
+	shader_bind(rcasShader->GetVertexShader());
+	shader_bind(rcasShader->GetFragmentShader());
+	glNamedBufferSubData(m_backbufferBlit_uniformBuffer, 0, sizeof(uniformBuffer), &uniformBuffer);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, m_fsrIntermediateTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glDrawRangeElements(GL_TRIANGLES, 0, 5, 6, GL_UNSIGNED_SHORT, indexData);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glEnable(GL_FRAMEBUFFER_SRGB);
+	catchOpenGLError();
+
+	// restore viewport
+	glViewportIndexedf(0, prevViewportX, prevViewportY, prevViewportWidth, prevViewportHeight);
+
 	if (padView)
 		GLCanvas_MakeCurrent(false);
 }
@@ -1177,7 +1320,17 @@ void OpenGLRenderer_texture_loadSlice_normal(LatteTexture* hostTextureGeneric, s
 	}
 	else if (hostTexture->dim == Latte::E_DIM::DIM_1D)
 	{
-		if (glFormatInfo.glIsCompressed)
+		if (OpenGLRenderer::IsGLES())
+		{
+			// hostTexture->glTexTarget is already GL_TEXTURE_2D here (redirected in
+			// GenerateEmptyTextureFromGX2Dim - GLES has no GL_TEXTURE_1D), so upload through
+			// the matching 2D entry points instead, height fixed at 1.
+			if (glFormatInfo.glIsCompressed)
+				glCompressedTextureSubImage2DWrapper(hostTexture->glTexTarget, hostTexture->glId_texture, mipIndex, 0, 0, width, 1, glFormatInfo.glInternalFormat, imageSize, pixelData);
+			else
+				glTextureSubImage2DWrapper(hostTexture->glTexTarget, hostTexture->glId_texture, mipIndex, 0, 0, width, 1, glFormatInfo.glSuppliedFormat, glFormatInfo.glSuppliedFormatType, pixelData);
+		}
+		else if (glFormatInfo.glIsCompressed)
 			glCompressedTextureSubImage1DWrapper(hostTexture->glTexTarget, hostTexture->glId_texture, mipIndex, 0, width, glFormatInfo.glInternalFormat, imageSize, pixelData);
 		else
 			glTextureSubImage1DWrapper(hostTexture->glTexTarget, hostTexture->glId_texture, mipIndex, 0, width, glFormatInfo.glSuppliedFormat, glFormatInfo.glSuppliedFormatType, pixelData);

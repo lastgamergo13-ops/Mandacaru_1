@@ -618,3 +618,87 @@ Java_info_cemu_cemu_nativeinterface_NativeGameTitles_cancelTitleCompression([[ma
 		return;
 	NativeGameTitles::g_wuaConverter.reset();
 }
+
+// Android/Mandacaru — graphic packs selected specifically for this title.
+// Stored in gameProfiles/<titleId>.ini under [GraphicPacks], never touching
+// the global graphic_pack_entries config (see GraphicPack2::ActivateForCurrentTitle).
+extern "C" [[maybe_unused]] JNIEXPORT jobjectArray JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_getSelectedGraphicPacksForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	return JNIUtils::CreateStringObjectArray(env, NativeGameTitles::g_currentGameProfile.GetSelectedGraphicPacks());
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_setSelectedGraphicPacksForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id, jobjectArray normalized_paths)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	std::vector<std::string> selected;
+	if (normalized_paths != nullptr)
+	{
+		const jsize count = env->GetArrayLength(normalized_paths);
+		selected.reserve(static_cast<size_t>(count));
+		for (jsize i = 0; i < count; ++i)
+		{
+			auto jpath = static_cast<jstring>(env->GetObjectArrayElement(normalized_paths, i));
+			if (jpath == nullptr)
+				continue;
+			selected.emplace_back(JNIUtils::FromJString(env, jpath));
+			env->DeleteLocalRef(jpath);
+		}
+	}
+	NativeGameTitles::g_currentGameProfile.SetSelectedGraphicPacks(std::move(selected));
+	NativeGameTitles::g_currentGameProfile.Save(game_title_id);
+}
+
+// Android/Mandacaru — per-title override for "Limit to 30 FPS" / "Emulation speed".
+// Tri-state via sentinel: -1 means "not set / use the global setting", matching
+// GameProfile's std::optional<bool>/std::optional<uint32> semantics on the C++ side.
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_getLimitToHalfFpsForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	const auto& value = NativeGameTitles::g_currentGameProfile.GetLimitToHalfFps();
+	if (!value.has_value())
+		return -1;
+	return value.value() ? 1 : 0;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_setLimitToHalfFpsForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id, jint tri_state)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	std::optional<bool> value;
+	if (tri_state == 0)
+		value = false;
+	else if (tri_state == 1)
+		value = true;
+	// any other value (e.g. -1) leaves value as nullopt -> clears the override
+	NativeGameTitles::g_currentGameProfile.SetLimitToHalfFps(value);
+	NativeGameTitles::g_currentGameProfile.Save(game_title_id);
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_getEmulationSpeedPercentForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	const auto& value = NativeGameTitles::g_currentGameProfile.GetEmulationSpeedPercent();
+	if (!value.has_value())
+		return -1;
+	return static_cast<jint>(value.value());
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_setEmulationSpeedPercentForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id, jint speed_percent)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	std::optional<uint32> value;
+	if (speed_percent >= 0)
+	{
+		jint clamped = speed_percent < 100 ? 100 : (speed_percent > 200 ? 200 : speed_percent);
+		value = static_cast<uint32>(clamped);
+	}
+	// negative speed_percent (e.g. -1) leaves value as nullopt -> clears the override
+	NativeGameTitles::g_currentGameProfile.SetEmulationSpeedPercent(value);
+	NativeGameTitles::g_currentGameProfile.Save(game_title_id);
+}

@@ -212,17 +212,26 @@ namespace LatteDecompiler
 			src->addFmt("TEXTURE_LAYOUT({}, {}, {}) ", (sint32)shaderContext->output->resourceMappingGL.textureUnitToBindingPoint[i], (sint32)shaderContext->output->resourceMappingVK.setIndex, (sint32)shaderContext->output->resourceMappingVK.textureUnitToBindingPoint[i]);
 
 			src->add("uniform ");
+			// Note: DIM_1D is intentionally folded into the sampler2D/usampler2D case when
+			// targeting GLES (see OpenGLRenderer::IsGLES()) - GLSL ES has no sampler1D type at
+			// all (not even via extension), matching the GL_TEXTURE_2D-height-1 host texture
+			// this port already allocates for 1D surfaces on GLES (see
+			// LatteTextureGL::GenerateEmptyTextureFromGX2Dim / AllocateStorage). The actual
+			// texture-fetch call sites for DIM_1D in LatteDecompilerEmitGLSL.cpp still assume
+			// a 1-component texture coordinate either way - see the matching v/vec2(coord,0)
+			// wrapping added there for the GLES case.
+			bool foldDim1DInto2D = OpenGLRenderer::IsGLES() && shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_1D;
 			if (shaderContext->shader->textureIsIntegerFormat[i])
 			{
 				// integer samplers
-				if (shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_1D)
+				if (shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_1D && !foldDim1DInto2D)
 					src->add("usampler1D");
-				else if (shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D || shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D_MSAA)
+				else if (foldDim1DInto2D || shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D || shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D_MSAA)
 					src->add("usampler2D");
 				else
 					cemu_assert_unimplemented();
 			}
-			else if (shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D || shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D_MSAA)
+			else if (foldDim1DInto2D || shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D || shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_2D_MSAA)
 				src->add("sampler2D");
 			else if (shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_1D)
 				src->add("sampler1D");
@@ -232,11 +241,6 @@ namespace LatteDecompiler
 				src->add("samplerCubeArray");
 			else if (shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_3D)
 				src->add("sampler3D");
-			else if (shaderContext->shader->textureUnitDim[i] == Latte::E_DIM::DIM_1D)
-			{
-				cemu_assert_unimplemented();
-				src->add("sampler2D");
-			}
 			else
 			{
 				cemu_assert_unimplemented();
@@ -542,7 +546,13 @@ namespace LatteDecompiler
 			{
 				if (decompilerContext->analyzer.useSSBOForStreamout && decompilerContext->analyzer.hasStreamoutWrite)
 				{
-					src->addFmt("layout(set = {}, binding = {}) buffer StreamoutBuffer" _CRLF, decompilerContext->output->resourceMappingVK.setIndex, decompilerContext->output->resourceMappingVK.getTFStorageBufferBindingPoint());
+					// GLSL ES has no descriptor sets - only Vulkan gets the set= qualifier
+					// (glslang requires it there); native GL/GLES just gets a plain binding,
+					// same as the uniform buffer block above.
+					if (rendererType == RendererAPI::Vulkan)
+						src->addFmt("layout(set = {}, binding = {}) buffer StreamoutBuffer" _CRLF, decompilerContext->output->resourceMappingVK.setIndex, decompilerContext->output->resourceMappingVK.getTFStorageBufferBindingPoint());
+					else
+						src->addFmt("layout(std430, binding = {}) buffer StreamoutBuffer" _CRLF, decompilerContext->output->resourceMappingGL.getTFStorageBufferBindingPoint());
 					src->add("{" _CRLF);
 					src->add("int sb_buffer[];" _CRLF);
 					src->add("};" _CRLF);
