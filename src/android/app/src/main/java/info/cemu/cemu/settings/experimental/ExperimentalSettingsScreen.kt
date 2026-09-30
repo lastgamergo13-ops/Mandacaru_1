@@ -26,9 +26,9 @@ private fun memoryCeilingToString(ceilingMB: Int) = when (ceilingMB) {
 }
 
 private fun rendererModeToString(mode: Int) = when (mode) {
-    NativeSettings.RendererMode.AUTOMATIC -> tr("Automatic")
+    NativeSettings.RendererMode.AUTOMATIC -> tr("Auto")
     NativeSettings.RendererMode.VULKAN -> tr("Vulkan")
-    NativeSettings.RendererMode.OPENGL -> tr("OpenGL (Experimental)")
+    NativeSettings.RendererMode.OPENGL -> tr("OpenGL")
     else -> throw IllegalArgumentException("Invalid renderer mode: $mode")
 }
 
@@ -71,23 +71,24 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
         InfoDialogButton(
             title = tr("Render API"),
             explanation = tr(
-                "What this actually does, honestly: this picks which graphics API the emulator " +
-                        "talks to your GPU driver through. \"Automatic\" lets Mandacaru choose for you - " +
-                        "right now that always means Vulkan, since it's this project's mature, tested " +
-                        "backend. \"Vulkan\" forces that same backend explicitly. \"OpenGL (Experimental)\" " +
-                        "switches to a brand new OpenGL ES backend built specifically for this port, " +
-                        "talking directly to your GPU's own GLES driver (libEGL/libGLESv3) - no Mesa, no " +
-                        "translation layer.\n\n" +
-                        "Honest limitations: the OpenGL path is new and far less tested than Vulkan. Some " +
-                        "older Mali GPUs (Midgard-generation) don't expose geometry/tessellation shaders " +
-                        "in GLES at all, so games that depend on those stages simply won't render " +
-                        "correctly on this path on those devices - that's a real hardware gap, not a bug " +
-                        "to be fixed later. A handful of texture-view and readback edge cases also fall " +
-                        "back to best-effort approximations on GLES where the driver has no exact " +
-                        "equivalent to the desktop OpenGL feature Cemu was originally written against. " +
-                        "If a game looks wrong or crashes on OpenGL, switching back to Vulkan is always " +
-                        "safe and is still the recommended default. Takes effect the next time you " +
-                        "(re)launch a game."
+                "This picks which graphics API the emulator uses to talk to your GPU driver.\n\n" +
+                        "Auto: the emulator chooses between Vulkan and OpenGL for each game when you " +
+                        "start it. It uses the game's own profile or the built-in preference list if " +
+                        "the game has one, otherwise Vulkan (the most tested backend), and OpenGL if " +
+                        "Vulkan isn't available on your device. If the chosen API fails to start, it " +
+                        "automatically tries the other one.\n\n" +
+                        "Vulkan: only ever uses Vulkan. If Vulkan can't start, the game won't start " +
+                        "(it will not fall back to OpenGL).\n\n" +
+                        "OpenGL: only ever uses OpenGL ES, talking directly to your GPU's own GLES " +
+                        "driver (libEGL/libGLESv3). If it can't start, the game won't start (it will " +
+                        "not fall back to Vulkan).\n\n" +
+                        "Honest limitations: the OpenGL path is newer and less tested than Vulkan. " +
+                        "Some older Mali GPUs (Midgard-generation) don't expose geometry/tessellation " +
+                        "shaders in GLES at all, so games that depend on those stages won't render " +
+                        "correctly there - that's a hardware gap, not a bug. A few texture-view and " +
+                        "readback edge cases use best-effort approximations on GLES. If a game looks " +
+                        "wrong or crashes on OpenGL, switch to Vulkan or Auto. Takes effect the next " +
+                        "time you launch a game."
             ),
         )
         SingleSelection(

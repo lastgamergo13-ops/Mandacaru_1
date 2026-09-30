@@ -3,6 +3,7 @@
 #include "AndroidMemoryManager.h"
 #include "AndroidOpenGLCanvas.h"
 #include "Cafe/CafeSystem.h"
+#include "Cafe/GameProfile/GameProfile.h"
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
@@ -20,6 +21,10 @@
 #if HAS_CUBEB
 #include "audio/CubebAPI.h"
 #endif // HAS_CUBEB
+
+#include <algorithm>
+#include <vector>
+#include <stdexcept>
 
 #include <android/native_window_jni.h>
 
@@ -258,40 +263,190 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_initializeEmulation([[maybe_
 		GetConfig().memory_usage_brake.GetValue() ? (uint64_t)GetConfig().memory_ceiling_mb.GetValue() : 0);
 }
 
+namespace NativeEmulation
+{
+	enum class RenderBackend
+	{
+		Vulkan,
+		OpenGL,
+	};
+
+	// ============================================================================================
+	// COMO ESCOLHER A API GRAFICA DE UM JOGO NO MODO "AUTO"
+	//
+	// Quando voce descobrir que um jogo roda melhor em OpenGL ou em Vulkan, ha 2 formas de
+	// dizer isso ao emulador (as duas so valem com "Render API" = Auto nas configuracoes; nos
+	// modos Vulkan e OpenGL fixos a API escolhida la sempre vence):
+	//
+	//  1) PERFIL DO JOGO (funciona para OpenGL e para Vulkan, tem PRIORIDADE sobre a lista abaixo).
+	//     Crie/edite o arquivo  <pasta do app>/gameProfiles/<TitleID com 16 digitos>.ini
+	//     (no aparelho: Android/data/info.mandacarucemu.cemu/files/gameProfiles/) com:
+	//         [Graphics]
+	//         graphics_api = 0      <- 0 = OpenGL ES | 1 = Vulkan
+	//     ATENCAO: se ja existir um perfil padrao desse jogo em data/gameProfiles/default/,
+	//     copie-o para gameProfiles/ e so acrescente a linha - o perfil do usuario SUBSTITUI o
+	//     padrao, nao e somado a ele.
+	//
+	//  2) LISTA ABAIXO (somente para preferir OpenGL; o padrao do Auto ja e Vulkan, entao para
+	//     Vulkan nao precisa de entrada). Acrescente o Title ID como numero hexadecimal de 64 bits,
+	//     por exemplo:   0x0005000010101a00ull,
+	//     Para descobrir o Title ID: o log do emulador mostra "TitleId: 00050000-10101a00"
+	//     (junte as duas metades: 0x0005000010101a00).
+	//
+	// A lista comeca VAZIA de proposito: nao ha (ainda) dados medidos de compatibilidade por
+	// jogo, e inventar entradas aqui seria chutar. Guia completo: docs/RENDER_API_AUTO.md
+	// ============================================================================================
+	inline const std::vector<TitleId> kAutoPreferOpenGLTitleIds = {
+		// 0x0005000010101a00ull, // exemplo de formato (nome do jogo)
+	};
+
+	// Modo Automatico: escolhe a API preferida para o jogo que esta sendo iniciado. O titulo
+	// ja foi preparado (PrepareForegroundTitle) antes do renderer ser criado, entao o Title ID e
+	// o game profile dele ja estao disponiveis aqui.
+	//   1) game profile do jogo com graphics_api definido (OpenGL/Vulkan);
+	//   2) tabela kAutoPreferOpenGLTitleIds;
+	//   3) sem loader Vulkan no aparelho -> OpenGL;
+	//   4) padrao: Vulkan (backend mais maduro).
+	// Se a API escolhida falhar ao inicializar, o chamador tenta a outra.
+	RenderBackend ChooseAutoRenderBackend()
+	{
+		if (g_current_game_profile)
+		{
+			const auto& profileApi = g_current_game_profile->GetGraphicsAPI();
+			if (profileApi.has_value())
+			{
+				if (*profileApi == kOpenGL)
+				{
+					cemuLog_log(LogType::Force, "Render API (Auto): OpenGL ES (game profile)");
+					return RenderBackend::OpenGL;
+				}
+				if (*profileApi == kVulkan)
+				{
+					cemuLog_log(LogType::Force, "Render API (Auto): Vulkan (game profile)");
+					return RenderBackend::Vulkan;
+				}
+			}
+		}
+
+		const TitleId titleId = CafeSystem::GetForegroundTitleId();
+		if (std::find(kAutoPreferOpenGLTitleIds.begin(), kAutoPreferOpenGLTitleIds.end(), titleId) != kAutoPreferOpenGLTitleIds.end())
+		{
+			cemuLog_log(LogType::Force, "Render API (Auto): OpenGL ES (title {:016x} na lista de preferencia)", titleId);
+			return RenderBackend::OpenGL;
+		}
+
+		if (!InitializeGlobalVulkan())
+		{
+			cemuLog_log(LogType::Force, "Render API (Auto): OpenGL ES (Vulkan indisponivel neste aparelho)");
+			return RenderBackend::OpenGL;
+		}
+
+		cemuLog_log(LogType::Force, "Render API (Auto): Vulkan");
+		return RenderBackend::Vulkan;
+	}
+} // namespace NativeEmulation
+
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeEmulation_initializeRenderer(JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
 	static std::unique_ptr<NativeEmulation::TestSurface> testSurface;
 
-	// Render API (Experimental/Hackers -> "Render API"). kAndroidRendererAuto currently
-	// always resolves to Vulkan below - it's this project's mature, tested backend, whereas
-	// the OpenGL ES path is a new/experimental addition (see the OpenGL-on-Android technical
-	// report) only taken when the user explicitly selects it.
-	auto rendererMode = (CemuConfig::AndroidRendererMode)GetConfig().android_renderer_mode.GetValue();
-	bool useOpenGL = (rendererMode == CemuConfig::kAndroidRendererOpenGL);
+	// Render API (Experimental/Hackers -> "Render API"), 3 modos:
+	//   Automatico - o emulador escolhe Vulkan ou OpenGL ES para cada jogo na hora de entrar
+	//                (ver ChooseAutoRenderBackend) e, se a escolhida falhar ao inicializar,
+	//                tenta a outra;
+	//   Vulkan     - so usa Vulkan; se nao inicializar, da erro (sem cair para OpenGL);
+	//   OpenGL     - so usa OpenGL ES; se nao inicializar, da erro (sem cair para Vulkan).
+	using NativeEmulation::RenderBackend;
+	const auto rendererMode = (CemuConfig::AndroidRendererMode)GetConfig().android_renderer_mode.GetValue();
 
 	JNIUtils::HandleNativeException(env, [&]() {
-		testSurface = std::make_unique<NativeEmulation::TestSurface>();
-		WindowSystem::GetWindowInfo().window_main.surface = testSurface->getWindow();
+		auto createTestSurface = [&]() {
+			// recria a surface de teste: se uma tentativa anterior (ex.: Vulkan) chegou a
+			// conectar a janela a uma API, a proxima API nao consegue usar a mesma janela
+			testSurface.reset();
+			testSurface = std::make_unique<NativeEmulation::TestSurface>();
+			WindowSystem::GetWindowInfo().window_main.surface = testSurface->getWindow();
+		};
 
-		if (useOpenGL)
-		{
-			g_androidOpenGLCanvas = std::make_unique<AndroidOpenGLCanvas>();
-			if (g_androidOpenGLCanvas->Initialize(testSurface->getWindow()))
+		auto tryVulkan = [&](std::string& error) -> bool {
+			try
 			{
+				if (!InitializeGlobalVulkan())
+				{
+					error = "Vulkan nao esta disponivel neste aparelho (loader Vulkan nao encontrado)";
+					return false;
+				}
+				g_renderer = std::make_unique<VulkanRenderer>();
+				return true;
+			}
+			catch (const std::exception& e)
+			{
+				g_renderer.reset();
+				error = std::string("Falha ao inicializar o Vulkan: ") + e.what();
+				return false;
+			}
+		};
+
+		auto tryOpenGL = [&](std::string& error) -> bool {
+			try
+			{
+				g_androidOpenGLCanvas = std::make_unique<AndroidOpenGLCanvas>();
+				if (!g_androidOpenGLCanvas->Initialize(testSurface->getWindow()))
+				{
+					SetOpenGLCanvasCallbacks(nullptr);
+					g_androidOpenGLCanvas.reset();
+					error = "Falha ao inicializar o OpenGL ES (driver GLES 3 / EGL indisponivel ou incompativel)";
+					return false;
+				}
 				SetOpenGLCanvasCallbacks(g_androidOpenGLCanvas.get());
 				g_androidOpenGLCanvas->MakeCurrent(false);
 				g_renderer = std::make_unique<OpenGLRenderer>();
-				return;
+				return true;
 			}
-			// EGL context creation failed (missing/broken GLES 3 driver, no libEGL.so, ...) -
-			// fall back to Vulkan rather than leaving the emulator without any renderer at all.
-			cemuLog_log(LogType::Force, "OpenGL ES initialization failed, falling back to Vulkan");
-			g_androidOpenGLCanvas.reset();
-		}
+			catch (const std::exception& e)
+			{
+				g_renderer.reset();
+				SetOpenGLCanvasCallbacks(nullptr);
+				g_androidOpenGLCanvas.reset();
+				error = std::string("Falha ao inicializar o OpenGL ES: ") + e.what();
+				return false;
+			}
+		};
 
-		InitializeGlobalVulkan();
-		g_renderer = std::make_unique<VulkanRenderer>();
+		createTestSurface();
+
+		std::string error;
+		switch (rendererMode)
+		{
+		case CemuConfig::kAndroidRendererVulkan:
+			if (!tryVulkan(error))
+				throw std::runtime_error(error);
+			return;
+
+		case CemuConfig::kAndroidRendererOpenGL:
+			if (!tryOpenGL(error))
+				throw std::runtime_error(error);
+			return;
+
+		case CemuConfig::kAndroidRendererAuto:
+		default:
+		{
+			const RenderBackend preferred = NativeEmulation::ChooseAutoRenderBackend();
+			const bool vulkanFirst = (preferred == RenderBackend::Vulkan);
+
+			if (vulkanFirst ? tryVulkan(error) : tryOpenGL(error))
+				return;
+			cemuLog_log(LogType::Force, "Render API (Auto): {} - tentando a outra API", error);
+
+			createTestSurface();
+			std::string fallbackError;
+			if (vulkanFirst ? tryOpenGL(fallbackError) : tryVulkan(fallbackError))
+				return;
+
+			throw std::runtime_error(error + "; " + fallbackError);
+		}
+		}
 	});
 }
 

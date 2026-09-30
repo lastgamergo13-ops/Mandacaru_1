@@ -50,9 +50,10 @@ object NativeSettings {
     external fun setVsyncMode(value: Int)
 
     // Render API (Experimental/Hackers tab): which graphics backend the emulator uses.
-    // Automatic currently always resolves to Vulkan under the hood - see the native
-    // NativeEmulation_initializeRenderer comment - since Vulkan is this project's mature,
-    // tested backend and the OpenGL ES backend is new/experimental.
+    // AUTOMATIC: the emulator picks Vulkan or OpenGL ES for each game when it is launched
+    // (and tries the other one if the first fails to initialize). VULKAN / OPENGL: only that
+    // API - if it fails to initialize, the game does not start. See the native
+    // NativeEmulation_initializeRenderer.
     object RendererMode {
         const val AUTOMATIC: Int = 0
         const val VULKAN: Int = 1

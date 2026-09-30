@@ -3,7 +3,7 @@ add_library(imguiImpl
 	imgui_extension.h
 )
 
-if (ENABLE_OPENGL)
+if (ENABLE_OPENGL OR ANDROID)
 	target_sources(imguiImpl PRIVATE
 		imgui_impl_opengl3.cpp
 		imgui_impl_opengl3.h

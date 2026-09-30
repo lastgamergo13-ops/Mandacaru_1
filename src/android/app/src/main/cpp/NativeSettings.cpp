@@ -301,8 +301,9 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setVsyncMode([[maybe_unused]]
 	GetConfig().vsync = vsync_mode;
 }
 
-// Render API (Experimental/Hackers -> "Render API"): Automatic (Vulkan today - see
-// NativeEmulation_initializeRenderer), Vulkan, or OpenGL ES (Experimental). Only takes
+// Render API (Experimental/Hackers -> "Render API"): Auto (o emulador escolhe Vulkan ou
+// OpenGL ES por jogo - see NativeEmulation_initializeRenderer), Vulkan (somente) ou
+// OpenGL ES (somente). Only takes
 // effect the next time the renderer is (re)initialized, i.e. next app/emulation launch -
 // same restart caveat as "Limit Shader Compiler Threads" above.
 extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL

@@ -144,7 +144,7 @@ android {
                     "-DVCPKG_TARGET_TRIPLET=arm64-android-release",
                     "-DENABLE_SDL=OFF",
                     "-DENABLE_WXWIDGETS=OFF",
-                    "-DENABLE_OPENGL=OFF",
+                    "-DENABLE_OPENGL=ON",
                     "-DENABLE_BLUEZ=OFF",
                     "-DBUNDLE_SPEEX=ON",
                     "-DENABLE_DISCORD_RPC=OFF",

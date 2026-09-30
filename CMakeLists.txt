@@ -256,7 +256,11 @@ if (ENABLE_VULKAN)
 endif()
 
 if (ENABLE_OPENGL)
-	find_package(OpenGL REQUIRED)
+	# No Android o OpenGL ES e carregado em runtime (dlopen libEGL.so/libGLESv3.so), entao nao ha
+	# biblioteca OpenGL para o CMake encontrar - find_package(OpenGL) falharia no NDK.
+	if (NOT ANDROID)
+		find_package(OpenGL REQUIRED)
+	endif()
 	add_compile_definitions(ENABLE_OPENGL)
 endif()
 

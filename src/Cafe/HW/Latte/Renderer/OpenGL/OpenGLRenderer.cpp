@@ -440,7 +440,11 @@ void OpenGLRenderer::Initialize()
 	catchOpenGLError();
 
 	// imgui
+#if defined(__ANDROID__)
+	ImGui_ImplOpenGL3_Init("#version 300 es");
+#else
 	ImGui_ImplOpenGL3_Init("#version 130");
+#endif
 }
 
 bool OpenGLRenderer::IsPadWindowActive()
