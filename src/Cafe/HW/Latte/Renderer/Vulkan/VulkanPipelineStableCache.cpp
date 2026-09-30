@@ -57,7 +57,7 @@ uint32 VulkanPipelineStableCache::BeginLoading(uint64 cacheTitleId)
 	// driver workaround below on purpose: that workaround exists to avoid a driver bug, so it
 	// must always have the final say (1 thread) regardless of what this option requests.
 	if (GetConfig().limit_shader_compiler_threads)
-		m_numCompilationThreads = std::min(m_numCompilationThreads, 2u);
+		m_numCompilationThreads = std::min<uint32>(m_numCompilationThreads.load(), 2u);
 
 	if (VulkanRenderer::GetInstance()->GetDisableMultithreadedCompilation())
 		m_numCompilationThreads = 1;
