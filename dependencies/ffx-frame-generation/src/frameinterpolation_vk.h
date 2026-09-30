@@ -24,6 +24,10 @@
 
 #pragma once
 
+#if defined(__ANDROID__) && !defined(VK_USE_PLATFORM_ANDROID_KHR)
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
+
 #include <vulkan/vulkan.h>
 #include <cstdint>
 

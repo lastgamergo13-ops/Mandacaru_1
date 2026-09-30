@@ -5,7 +5,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR // todo - define in CMakeLists.txt
 #endif
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(VK_USE_PLATFORM_ANDROID_KHR)
 #define VK_USE_PLATFORM_ANDROID_KHR
 #endif
 
@@ -121,6 +121,7 @@ VKFUNC_DEVICE(vkBeginCommandBuffer);
 VKFUNC_DEVICE(vkResetCommandBuffer);
 VKFUNC_DEVICE(vkEndCommandBuffer);
 VKFUNC_DEVICE(vkQueueSubmit);
+VKFUNC_DEVICE(vkQueueWaitIdle);
 
 // pipeline
 VKFUNC_DEVICE(vkCreatePipelineCache);
@@ -130,6 +131,7 @@ VKFUNC_DEVICE(vkDestroyPipelineCache);
 VKFUNC_DEVICE(vkCreatePipelineLayout);
 VKFUNC_DEVICE(vkDestroyPipelineLayout);
 VKFUNC_DEVICE(vkCreateGraphicsPipelines);
+VKFUNC_DEVICE(vkCreateComputePipelines);
 VKFUNC_DEVICE(vkDestroyPipeline);
 VKFUNC_DEVICE(vkCmdBindPipeline);
 
@@ -170,6 +172,7 @@ VKFUNC_DEVICE(vkDestroyFence);
 
 // cmd
 VKFUNC_DEVICE(vkCmdDraw);
+VKFUNC_DEVICE(vkCmdDispatch);
 VKFUNC_DEVICE(vkCmdCopyBufferToImage);
 VKFUNC_DEVICE(vkCmdCopyImageToBuffer);
 VKFUNC_DEVICE(vkCmdClearColorImage);

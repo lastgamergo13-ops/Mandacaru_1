@@ -17,6 +17,10 @@
 
 #pragma once
 
+#if defined(__ANDROID__) && !defined(VK_USE_PLATFORM_ANDROID_KHR)
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
+
 #include <vulkan/vulkan.h>
 #include <cstdint>
 
@@ -27,6 +31,19 @@ class VKRMemoryManager;
 class OpticalFlowVk
 {
 public:
+	// --- os 7 passes, na ordem do enum FfxOpticalflowPass original ---
+	enum class Pass : uint32_t
+	{
+		PrepareLuma = 0,
+		ComputeLuminancePyramid,     // TODO: hoje so 1 nivel, falta piramide de 6 niveis
+		GenerateScdHistogram,
+		ComputeScdDivergence,
+		ComputeOpticalFlowAdvancedV5, // nucleo do algoritmo, mais pesado
+		FilterOpticalFlowV5,
+		ScaleOpticalFlowAdvancedV5,
+		Count
+	};
+
 	// resolutionWidth/Height: resolucao do backbuffer do jogo (a
 	// mesma resolucao que o Cemu esta renderizando internamente).
 	OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth, uint32_t resolutionHeight);
@@ -72,19 +89,6 @@ private:
 
 	uint32_t m_width = 0;
 	uint32_t m_height = 0;
-
-	// --- os 7 passes, na ordem do enum FfxOpticalflowPass original ---
-	enum class Pass : uint32_t
-	{
-		PrepareLuma = 0,
-		ComputeLuminancePyramid,     // TODO: hoje so 1 nivel, falta piramide de 6 niveis
-		GenerateScdHistogram,
-		ComputeScdDivergence,
-		ComputeOpticalFlowAdvancedV5, // nucleo do algoritmo, mais pesado
-		FilterOpticalFlowV5,
-		ScaleOpticalFlowAdvancedV5,
-		Count
-	};
 
 	bool m_resourcesTransitioned = false; // controla a transicao de layout (ver Dispatch())
 

@@ -248,6 +248,11 @@ if (ENABLE_VULKAN)
 	include_directories("dependencies/Vulkan-Headers/include")
 	add_compile_definitions(ENABLE_VULKAN)
 	add_compile_definitions(VK_NO_PROTOTYPES)
+	if(ANDROID)
+		# Precisa estar definido ANTES de qualquer #include <vulkan/vulkan.h> (inclusive os headers do
+		# frame-generation, que incluem vulkan.h antes de VulkanAPI.h) senao vulkan_android.h nao entra.
+		add_compile_definitions(VK_USE_PLATFORM_ANDROID_KHR)
+	endif()
 endif()
 
 if (ENABLE_OPENGL)
