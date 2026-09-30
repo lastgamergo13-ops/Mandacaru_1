@@ -91,10 +91,12 @@ private:
 			bufferCount--;
 
 		if (bufferCount == 0)
+		{
 			// glDrawBuffer (singular) has no core GLES equivalent - glDrawBuffers (plural)
 			// exists on both desktop GL and GLES 3.0+ and is used unconditionally here now.
 			GLenum none = GL_NONE;
 			glDrawBuffers(1, &none);
+		}
 		else
 			glDrawBuffers(bufferCount, buffers);
 	}

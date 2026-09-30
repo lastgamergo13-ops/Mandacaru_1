@@ -548,11 +548,12 @@ namespace LatteDecompiler
 				{
 					// GLSL ES has no descriptor sets - only Vulkan gets the set= qualifier
 					// (glslang requires it there); native GL/GLES just gets a plain binding,
-					// same as the uniform buffer block above.
-					if (rendererType == RendererAPI::Vulkan)
-						src->addFmt("layout(set = {}, binding = {}) buffer StreamoutBuffer" _CRLF, decompilerContext->output->resourceMappingVK.setIndex, decompilerContext->output->resourceMappingVK.getTFStorageBufferBindingPoint());
-					else
-						src->addFmt("layout(std430, binding = {}) buffer StreamoutBuffer" _CRLF, decompilerContext->output->resourceMappingGL.getTFStorageBufferBindingPoint());
+					// same as the uniform buffer block above. Header is shared by both APIs, so pick via #ifdef VULKAN.
+					src->add("#ifdef VULKAN" _CRLF);
+					src->addFmt("layout(set = {}, binding = {}) buffer StreamoutBuffer" _CRLF, decompilerContext->output->resourceMappingVK.setIndex, decompilerContext->output->resourceMappingVK.getTFStorageBufferBindingPoint());
+					src->add("#else" _CRLF);
+					src->addFmt("layout(std430, binding = {}) buffer StreamoutBuffer" _CRLF, decompilerContext->output->resourceMappingGL.getTFStorageBufferBindingPoint());
+					src->add("#endif" _CRLF);
 					src->add("{" _CRLF);
 					src->add("int sb_buffer[];" _CRLF);
 					src->add("};" _CRLF);
