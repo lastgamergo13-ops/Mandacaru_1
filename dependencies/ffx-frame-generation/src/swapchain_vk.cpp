@@ -11,7 +11,7 @@
 
 #include <stdexcept>
 
-SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex)
+SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex, VkFormat backbufferFormat)
 	: m_renderer(renderer), m_width(width), m_height(height)
 {
 	m_memoryManager = renderer->GetMemoryManager();
@@ -19,7 +19,7 @@ SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t widt
 	m_opticalFlow = std::make_unique<OpticalFlowVk>(renderer, width, height);
 	m_frameInterpolation = std::make_unique<FrameInterpolationVk>(renderer, width, height);
 
-	CreateBackbufferCopies(width, height);
+	CreateBackbufferCopies(width, height, backbufferFormat);
 
 	VkCommandPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -34,7 +34,7 @@ SwapchainFrameGenVk::~SwapchainFrameGenVk()
 	DestroyAll();
 }
 
-void SwapchainFrameGenVk::CreateBackbufferCopies(uint32_t width, uint32_t height)
+void SwapchainFrameGenVk::CreateBackbufferCopies(uint32_t width, uint32_t height, VkFormat backbufferFormat)
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
 
@@ -46,11 +46,7 @@ void SwapchainFrameGenVk::CreateBackbufferCopies(uint32_t width, uint32_t height
 		imageInfo.extent = { width, height, 1 };
 		imageInfo.mipLevels = 1;
 		imageInfo.arrayLayers = 1;
-		// TODO: confirme que o formato do swapchain do Cemu e mesmo
-		// B8G8R8A8_UNORM antes de compilar - se for outro formato
-		// (ex. sRGB), troque aqui para bater exatamente, ou o
-		// vkCmdCopyImage abaixo vai falhar validacao.
-		imageInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+		imageInfo.format = backbufferFormat; // agora vem do chainInfo.m_surfaceFormat.format real, nao mais um palpite fixo
 		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -79,7 +75,7 @@ void SwapchainFrameGenVk::CreateBackbufferCopies(uint32_t width, uint32_t height
 		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		viewInfo.image = m_backbufferCopyImages[i];
 		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		viewInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+		viewInfo.format = backbufferFormat;
 		viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 		if (vkCreateImageView(device, &viewInfo, nullptr, &m_backbufferCopyViews[i]) != VK_SUCCESS)
 			throw std::runtime_error("SwapchainFrameGenVk: falha ao criar image view da copia");

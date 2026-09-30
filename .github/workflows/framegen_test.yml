@@ -21,15 +21,20 @@ name: framegen_test
 # de verdade num dispositivo.
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "dependencies/ffx-frame-generation/**"
-      - ".github/workflows/framegen_test.yml"
-  pull_request:
-    paths:
-      - "dependencies/ffx-frame-generation/**"
+  # DESATIVADO - o build completo (mandacaru_wiiu.yml) ja esta sendo
+  # usado diretamente agora, entao essa checagem rapida deixou de ser
+  # necessaria. Deixado aqui, so manual, caso queira reativar no futuro
+  # (ex: se voltar a mexer bastante no modulo de frame gen e quiser um
+  # feedback mais rapido que o build completo antes de commitar).
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - "dependencies/ffx-frame-generation/**"
+  #     - ".github/workflows/framegen_test.yml"
+  # pull_request:
+  #   paths:
+  #     - "dependencies/ffx-frame-generation/**"
   workflow_dispatch: {}
 
 jobs:

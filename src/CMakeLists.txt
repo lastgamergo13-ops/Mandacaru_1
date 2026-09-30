@@ -231,6 +231,7 @@ target_link_libraries(CemuBin PRIVATE
 	CemuGui
 	CemuInput
 	CemuUtil
+	ffxFrameGeneration
 )
 
 if(UNIX AND NOT APPLE)

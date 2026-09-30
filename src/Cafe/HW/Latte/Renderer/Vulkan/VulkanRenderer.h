@@ -8,6 +8,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/CachedFBOVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/SwapchainInfoVk.h"
+#include "dependencies/ffx-frame-generation/src/swapchain_vk.h"
 #include "util/math/vector2.h"
 #include "util/helpers/Semaphore.h"
 #include "util/containers/flat_hash_map.hpp"
@@ -167,6 +168,14 @@ public:
 	// memory management
 	std::unique_ptr<VKRMemoryManager> memoryManager;
 	VKRMemoryManager* GetMemoryManager() const { return memoryManager.get(); };
+
+	// FSR3 Frame Generation - criado sob demanda dentro de SwapBuffer()
+	// na primeira vez que a swapchain da janela principal estiver valida
+	// (ver SwapBuffer() em VulkanRenderer.cpp) - nao no construtor,
+	// porque a extensao/tamanho real da swapchain so existe depois que
+	// a janela e criada.
+	std::unique_ptr<SwapchainFrameGenVk> m_frameGen;
+	bool m_frameGenIsFirstFrame = true;
 
 	VkSupportedFormatInfo_t m_supportedFormatInfo;
 

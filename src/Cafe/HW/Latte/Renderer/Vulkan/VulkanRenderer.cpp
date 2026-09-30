@@ -3489,6 +3489,19 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 
 	auto& chainInfo = GetChainInfo(mainWindow);
 
+	// FSR3 Frame Generation - so na janela principal (TV), criado sob
+	// demanda na primeira vez que chegamos aqui com uma swapchain
+	// valida (nao da pra criar antes, porque so aqui sabemos o
+	// tamanho/formato reais da swapchain desta janela).
+	if (mainWindow && !m_frameGen)
+	{
+		VkExtent2D extent = chainInfo.getExtent();
+		m_frameGen = std::make_unique<SwapchainFrameGenVk>(
+			this, extent.width, extent.height,
+			m_indices.graphicsFamily,
+			chainInfo.m_surfaceFormat.format);
+	}
+
 	if (!chainInfo.hasDefinedSwapchainImage)
 	{
 		// set the swapchain image to a defined state
@@ -3497,6 +3510,12 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 	}
 
 	const size_t currentFrameCmdBufferID = GetCurrentCommandBufferId();
+
+	// Captura o backbuffer atual pro par atual/anterior do Optical Flow,
+	// gravado no MESMO command buffer que sera submetido logo abaixo -
+	// tem que ser antes do SubmitCommandBuffer(), nao depois.
+	if (mainWindow && m_frameGen)
+		m_frameGen->CaptureBackbuffer(getCurrentCommandBuffer(), chainInfo.m_swapchainImages[chainInfo.swapchainImageIndex]);
 
 	VkSemaphore presentSemaphore = chainInfo.m_presentSemaphores[chainInfo.swapchainImageIndex];
 	SubmitCommandBuffer(presentSemaphore); // submit all command and signal semaphore
@@ -3550,6 +3569,20 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 	{
 		chainInfo.m_queueDepth++;
 		chainInfo.m_presentId++;
+	}
+
+	// Gera e apresenta o frame interpolado extra, entre este frame real
+	// e o proximo - so na janela principal, e so se o present real
+	// acima deu certo.
+	if (mainWindow && m_frameGen && result >= 0)
+	{
+		float deltaTime = 1.0f / 60.0f; // TODO: usar o delta real entre
+		                                 // frames em vez de um valor fixo -
+		                                 // procure por um contador de
+		                                 // frame timing ja existente no
+		                                 // Cemu antes de inventar um novo
+		m_frameGen->GenerateAndPresentInterpolatedFrame(chainInfo, m_presentQueue, deltaTime, m_frameGenIsFirstFrame);
+		m_frameGenIsFirstFrame = false;
 	}
 
 	chainInfo.hasDefinedSwapchainImage = false;

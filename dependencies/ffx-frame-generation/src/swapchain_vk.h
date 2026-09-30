@@ -39,7 +39,7 @@ struct SwapchainInfoVk;
 class SwapchainFrameGenVk
 {
 public:
-	SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex);
+	SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex, VkFormat backbufferFormat);
 	~SwapchainFrameGenVk();
 
 	SwapchainFrameGenVk(const SwapchainFrameGenVk&) = delete;
@@ -75,7 +75,7 @@ public:
 	bool GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, float deltaTimeSeconds, bool reset);
 
 private:
-	void CreateBackbufferCopies(uint32_t width, uint32_t height);
+	void CreateBackbufferCopies(uint32_t width, uint32_t height, VkFormat backbufferFormat);
 	void DestroyAll();
 
 	VulkanRenderer* m_renderer = nullptr;
