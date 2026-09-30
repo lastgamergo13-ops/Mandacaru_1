@@ -280,7 +280,8 @@ endif()
 
 # FSR3 Frame Generation - incondicional (roda em qualquer plataforma
 # com Vulkan, incluindo Android)
-add_subdirectory(dependencies/ffx-frame-generation)
+# (os fontes de dependencies/ffx-frame-generation/src sao compilados direto dentro do CemuCafe,
+# ver src/Cafe/CMakeLists.txt - como static lib separada eles nao enxergam os headers do Cemu)
 
 if (ENABLE_WXWIDGETS)
 	find_package(wxWidgets 3.3 REQUIRED COMPONENTS base core gl propgrid xrc)

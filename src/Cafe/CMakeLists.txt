@@ -633,6 +633,24 @@ cemu_use_precompiled_header(CemuCafe)
 
 target_include_directories(CemuCafe PUBLIC "../")
 
+# FSR3 Frame Generation: compilado dentro do CemuCafe (usa VulkanRenderer.h etc.)
+# e a raiz do projeto entra no include path para o
+# #include "dependencies/ffx-frame-generation/src/swapchain_vk.h" do VulkanRenderer.h
+set(FFX_FG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../dependencies/ffx-frame-generation")
+target_sources(CemuCafe PRIVATE
+  ${FFX_FG_DIR}/src/opticalflow_vk.cpp
+  ${FFX_FG_DIR}/src/opticalflow_vk.h
+  ${FFX_FG_DIR}/src/frameinterpolation_vk.cpp
+  ${FFX_FG_DIR}/src/frameinterpolation_vk.h
+  ${FFX_FG_DIR}/src/swapchain_vk.cpp
+  ${FFX_FG_DIR}/src/swapchain_vk.h
+)
+target_include_directories(CemuCafe PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+  "${FFX_FG_DIR}/include"
+  "${FFX_FG_DIR}/src"
+)
+
 if (glslang_VERSION VERSION_LESS "15.0.0")
 	set(glslang_target "glslang::SPIRV")
 else()
