@@ -322,7 +322,9 @@ GLFUNC(PFNWGLSWAPINTERVALEXTPROC, wglSwapIntervalEXT)
 #if (BOOST_OS_LINUX || BOOST_OS_BSD) && !defined(__ANDROID__)
 EGLFUNC(PFNEGLSWAPINTERVALPROC, eglSwapInterval)
 EGLFUNC(PFNEGLGETCURRENTDISPLAYPROC, eglGetCurrentDisplay)
+#endif
 
+#if defined(__ANDROID__)
 // Context/surface management for the Android EGL path (AndroidOpenGLCanvas). These are all
 // core EGL 1.4 entry points, real exported symbols in every Android libEGL.so, loaded via
 // dlsym exactly like the two above already are - see LoadOpenGLImports() in
