@@ -3389,6 +3389,7 @@ void VulkanRenderer::DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 ima
 	chainInfo.hasDefinedSwapchainImage = true;
 }
 
+bool VulkanRenderer::AcquireNextSwapchainImage(bool mainWindow)
 {
 	if(!IsSwapchainInfoValid(mainWindow))
 		return false;
