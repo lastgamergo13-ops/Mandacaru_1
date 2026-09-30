@@ -32,6 +32,11 @@ cemu_use_precompiled_header(imguiImpl)
 
 target_include_directories(imguiImpl PUBLIC "../")
 
+# VulkanRenderer.h (incluido por imgui_impl_vulkan.cpp) faz
+# #include "dependencies/ffx-frame-generation/src/swapchain_vk.h",
+# que e relativo a raiz do projeto.
+target_include_directories(imguiImpl PUBLIC "../../")
+
 # imgui source files
 target_sources(imguiImpl PRIVATE
 "../../dependencies/imgui/imgui.cpp"
