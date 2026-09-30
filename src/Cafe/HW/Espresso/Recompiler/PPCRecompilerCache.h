@@ -2,6 +2,7 @@
 
 #include "PPCRecompiler.h"
 #include "PPCFunctionBoundaryTracker.h"
+#include "Cafe/TitleList/TitleId.h"
 
 // AOT (ahead-of-time) disk cache for the PPC recompiler.
 //
