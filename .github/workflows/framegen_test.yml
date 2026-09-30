@@ -49,10 +49,7 @@ jobs:
             --std=c++20 \
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
-            dependencies/ffx-frame-generation/src/opticalflow_vk.cpp \
-            dependencies/ffx-frame-generation/src/opticalflow_vk.h \
-            dependencies/ffx-frame-generation/src/frameinterpolation_vk.cpp \
-            dependencies/ffx-frame-generation/src/frameinterpolation_vk.h
+            dependencies/ffx-frame-generation/src/
 
       - name: Resultado
         run: echo "Checagem estatica passou. Lembre-se - isso NAO substitui compilar o projeto completo."
