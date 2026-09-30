@@ -61,6 +61,7 @@ public:
 	// View do frame interpolado gerado - e o que o swapchain_vk vai
 	// apresentar entre dois frames reais.
 	VkImageView GetInterpolatedFrameView() const { return m_interpolatedFrameView; }
+	VkImage GetInterpolatedFrameImage() const { return m_interpolatedFrameImage; }
 
 	// --- os 7 passes confirmados, NA ORDEM REAL de dispatch (ver aviso no topo) ---
 	// Publico porque o .cpp precisa dele fora da classe (tamanho de array).
