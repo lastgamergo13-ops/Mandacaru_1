@@ -129,7 +129,7 @@ add_library(CemuCafe
   HW/Latte/Core/LatteShaderCache.cpp
   HW/Latte/Core/LatteShaderCache.h
   HW/Latte/Core/LatteShader.cpp
-  HW/Latte/Core/LatteShaderGL.cpp
+  HW/Latte/Renderer/OpenGL/LatteShaderGL.cpp
   HW/Latte/Core/LatteShader.h
   HW/Latte/Core/LatteSoftware.cpp
   HW/Latte/Core/LatteSoftware.h
