@@ -86,7 +86,7 @@ fun GraphicsSettingsScreen(navigateBack: () -> Unit, goToCustomDriversSettings: 
             choices = UpscalingFilterChoices,
         )
         Slider(
-            label = tr("FSR sharpness"),
+            label = tr("FSR1 sharpness"),
             initialValue = { (NativeSettings.getFsrSharpness() * 100f).toInt() },
             valueFrom = 0,
             valueTo = 200,
@@ -109,7 +109,7 @@ private fun scalingFilterToString(scalingFilter: Int) = when (scalingFilter) {
     NativeSettings.ScalingFilter.BICUBIC_FILTER -> tr("Bicubic")
     NativeSettings.ScalingFilter.BICUBIC_HERMITE_FILTER -> tr("Hermite")
     NativeSettings.ScalingFilter.NEAREST_NEIGHBOR_FILTER -> tr("Nearest neighbor")
-    NativeSettings.ScalingFilter.FSR_FILTER -> tr("FSR")
+    NativeSettings.ScalingFilter.FSR_FILTER -> tr("FSR1")
     else -> throw IllegalArgumentException("Invalid scaling filter:  $scalingFilter")
 }
 

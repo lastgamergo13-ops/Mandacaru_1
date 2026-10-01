@@ -7,6 +7,7 @@
 #include "opticalflow_vk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
+#include "config/ActiveSettings.h"
 
 #include <fstream>
 #include <vector>
@@ -52,11 +53,21 @@ namespace
 		return (value + divisor - 1) / divisor;
 	}
 
-	// Caminho relativo onde os .spv ficam dentro do pacote da dependencia.
-	// Ajuste aqui se voce mover a pasta shaders_spv/ de lugar.
-	std::string GetShaderPath(const char* fileName)
+	// Caminho real do .spv no dispositivo. Em Android nao existe um
+	// "diretorio de trabalho" com a arvore de pastas do projeto - os
+	// arquivos ficam empacotados em assets/ dentro do APK e sao
+	// extraidos na primeira execucao para uma pasta de dados real
+	// (ver CemuApplication.kt -> saveDataFiles(), que so extrai o que
+	// bate com "resources/.*" - por isso os .spv ficam dentro de
+	// assets/resources/ffx-frame-generation/shaders_spv/ no projeto
+	// Android, e aqui usamos ActiveSettings::GetDataPath() pra achar
+	// esse mesmo caminho ja extraido, de forma identica ao que o
+	// resto do Cemu ja faz pra outros recursos). No PC (Windows/Linux)
+	// isso tambem funciona sem alteracao, apontando pra pasta
+	// resources/ ao lado do executavel.
+	fs::path GetShaderPath(const char* fileName)
 	{
-		return std::string("dependencies/ffx-frame-generation/shaders_spv/") + fileName;
+		return ActiveSettings::GetDataPath("resources/ffx-frame-generation/shaders_spv/{}", fileName);
 	}
 }
 
@@ -79,10 +90,10 @@ OpticalFlowVk::~OpticalFlowVk()
 
 VkShaderModule OpticalFlowVk::LoadShaderModule(const char* spvFileName) const
 {
-	std::string path = GetShaderPath(spvFileName);
+	fs::path path = GetShaderPath(spvFileName);
 	std::ifstream file(path, std::ios::ate | std::ios::binary);
 	if (!file.is_open())
-		throw std::runtime_error(std::string("OpticalFlowVk: nao consegui abrir o shader ") + path);
+		throw std::runtime_error(std::string("OpticalFlowVk: nao consegui abrir o shader ") + path.string());
 
 	size_t fileSize = (size_t)file.tellg();
 	std::vector<char> buffer(fileSize);

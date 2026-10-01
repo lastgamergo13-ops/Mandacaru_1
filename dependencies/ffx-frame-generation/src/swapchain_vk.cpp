@@ -27,6 +27,21 @@ SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t widt
 	poolInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
 	if (vkCreateCommandPool(m_renderer->GetLogicalDevice(), &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS)
 		throw std::runtime_error("SwapchainFrameGenVk: falha ao criar command pool");
+
+	// Fence comeca SINALIZADA de proposito - na primeira chamada de
+	// GenerateAndPresentInterpolatedFrame() nao existe frame anterior
+	// pra esperar, entao o vkWaitForFences() ali precisa retornar na
+	// hora em vez de travar esperando algo que nunca vai acontecer.
+	VkFenceCreateInfo fenceInfo{};
+	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+	if (vkCreateFence(m_renderer->GetLogicalDevice(), &fenceInfo, nullptr, &m_inFlightFence) != VK_SUCCESS)
+		throw std::runtime_error("SwapchainFrameGenVk: falha ao criar fence");
+
+	VkSemaphoreCreateInfo semaphoreInfo{};
+	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+	if (vkCreateSemaphore(m_renderer->GetLogicalDevice(), &semaphoreInfo, nullptr, &m_renderFinishedSemaphore) != VK_SUCCESS)
+		throw std::runtime_error("SwapchainFrameGenVk: falha ao criar semaforo");
 }
 
 SwapchainFrameGenVk::~SwapchainFrameGenVk()
@@ -92,30 +107,30 @@ void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkIma
 	m_currentCopyIndex = 1 - m_currentCopyIndex;
 	VkImage destImage = m_backbufferCopyImages[m_currentCopyIndex];
 
-	// Transiciona a imagem de destino para TRANSFER_DST antes da copia
-	// (na primeira chamada ela esta UNDEFINED; nas seguintes, ja fica
-	// em SHADER_READ_ONLY de quando foi lida pelo Optical Flow - ver
-	// TODO abaixo sobre isso nao estar 100% coberto ainda).
+	// Transiciona a imagem de destino para TRANSFER_DST antes da copia.
+	// Na primeira vez que este slot e usado ela esta UNDEFINED; nas
+	// vezes seguintes ja fica em SHADER_READ_ONLY_OPTIMAL (de quando
+	// foi lida como textura pelo Optical Flow no frame anterior) -
+	// m_backbufferCopyInitialized[] rastreia qual dos dois casos vale
+	// pra cada slot.
+	bool slotAlreadyUsed = m_backbufferCopyInitialized[m_currentCopyIndex];
+
 	VkImageMemoryBarrier toDst{};
 	toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-	toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; // TODO: deveria alternar entre UNDEFINED (1a vez) e
-	                                              // SHADER_READ_ONLY_OPTIMAL (demais vezes) - simplificado
-	                                              // aqui usando UNDEFINED sempre, o que descarta o
-	                                              // conteudo anterior da imagem em vez de preservar;
-	                                              // como estamos SOBRESCREVENDO com vkCmdCopyImage logo
-	                                              // em seguida mesmo, isso e inofensivo na pratica, so
-	                                              // nao e o mais "correto" em termos de sincronizacao.
+	toDst.oldLayout = slotAlreadyUsed ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
 	toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	toDst.image = destImage;
 	toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-	toDst.srcAccessMask = 0;
+	toDst.srcAccessMask = slotAlreadyUsed ? VK_ACCESS_SHADER_READ_BIT : 0;
 	toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
 	vkCmdPipelineBarrier(commandBuffer,
-		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		(slotAlreadyUsed ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT), VK_PIPELINE_STAGE_TRANSFER_BIT,
 		0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+	m_backbufferCopyInitialized[m_currentCopyIndex] = true;
 
 	VkImageCopy copyRegion{};
 	copyRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
@@ -149,12 +164,47 @@ void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkIma
 		m_hasPreviousFrame = true; // depois de 2 capturas (indices 0 e 1), ja temos par completo
 }
 
-bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, float deltaTimeSeconds, bool reset)
+bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset)
 {
 	if (!m_enabled || !m_hasPreviousFrame)
 		return false;
 
 	VkDevice device = m_renderer->GetLogicalDevice();
+
+	// Calcula o tempo real (relogio de parede) desde a ultima vez que
+	// geramos um frame - isso e o que da ao Frame Interpolation uma
+	// nocao correta de "quanto tempo passou", em vez do valor fixo
+	// 1/60 chutado nas versoes anteriores.
+	auto now = std::chrono::steady_clock::now();
+	float deltaTimeSeconds = 1.0f / 60.0f; // chute inicial, so usado na toa primeira chamada (sem referencia anterior)
+	if (m_hasLastGeneratedFrameTime)
+	{
+		deltaTimeSeconds = std::chrono::duration<float>(now - m_lastGeneratedFrameTime).count();
+		// Protecao contra valores absurdos (ex: app ficou em pausa/
+		// background por varios segundos entre um frame e outro) -
+		// sem isso, o Frame Interpolation tentaria "preencher" um
+		// buraco de varios segundos como se fosse 1 frame, o que nao
+		// faz sentido nenhum.
+		if (deltaTimeSeconds <= 0.0f || deltaTimeSeconds > 0.5f)
+			deltaTimeSeconds = 1.0f / 60.0f;
+	}
+	m_lastGeneratedFrameTime = now;
+	m_hasLastGeneratedFrameTime = true;
+
+	// 0) Espera a GPU terminar o command buffer do frame GERADO
+	// anterior (se houver) antes de reutilizar/liberar ele - isto e o
+	// que substitui o vkQueueWaitIdle antigo: em vez de travar a fila
+	// inteira TODA VEZ, so esperamos (na pior das hipoteses) o
+	// trabalho do frame gerado anterior, e normalmente nem isso, ja
+	// que a GPU costuma ter terminado havia tempo quando chegamos
+	// aqui de novo.
+	if (m_pendingCommandBuffer != VK_NULL_HANDLE)
+	{
+		vkWaitForFences(device, 1, &m_inFlightFence, VK_TRUE, UINT64_MAX);
+		vkFreeCommandBuffers(device, m_commandPool, 1, &m_pendingCommandBuffer);
+		m_pendingCommandBuffer = VK_NULL_HANDLE;
+	}
+	vkResetFences(device, 1, &m_inFlightFence);
 
 	// 1) Adquire uma NOVA imagem do swapchain pro frame interpolado
 	//    (reaproveita o metodo que o proprio Cemu ja usa pro frame real)
@@ -203,6 +253,25 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 		0, 0, nullptr, 0, nullptr, 1, &toDst);
 
+	// Transiciona a imagem interpolada de GENERAL (layout de storage
+	// image, onde o ultimo pass do FrameInterpolationVk a deixou apos
+	// escrever nela) para TRANSFER_SRC_OPTIMAL, exigido como origem de
+	// um vkCmdBlitImage.
+	VkImageMemoryBarrier interpolatedToSrc{};
+	interpolatedToSrc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	interpolatedToSrc.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+	interpolatedToSrc.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	interpolatedToSrc.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	interpolatedToSrc.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	interpolatedToSrc.image = m_frameInterpolation->GetInterpolatedFrameImage();
+	interpolatedToSrc.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+	interpolatedToSrc.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+	interpolatedToSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+	vkCmdPipelineBarrier(cb,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0, 0, nullptr, 0, nullptr, 1, &interpolatedToSrc);
+
 	// 4) Blita o frame interpolado (RGBA16F) pra dentro da imagem do
 	// swapchain (normalmente B8G8R8A8_UNORM) - usa blit em vez de copy
 	// porque os formatos sao diferentes; se os formatos baterem no seu
@@ -217,13 +286,19 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 		m_frameInterpolation->GetInterpolatedFrameImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 		targetImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		1, &blitRegion, VK_FILTER_LINEAR);
-	// TODO: isto assume que a imagem interpolada ja esta em
-	// VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL no momento deste blit. No
-	// FrameInterpolationVk::Dispatch() ela fica em GENERAL (layout de
-	// storage image) apos o ultimo pass escrever nela - falta uma
-	// transicao de GENERAL -> TRANSFER_SRC_OPTIMAL entre o Dispatch()
-	// acima e este vkCmdBlitImage. Adicione essa barreira aqui antes de
-	// testar em hardware real, ou o Vulkan Validation Layer vai acusar.
+
+	// Devolve a imagem interpolada pra GENERAL, pronta pro proximo
+	// Dispatch() do FrameInterpolationVk escrever nela de novo no
+	// proximo frame gerado.
+	VkImageMemoryBarrier interpolatedBackToGeneral = interpolatedToSrc;
+	interpolatedBackToGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	interpolatedBackToGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	interpolatedBackToGeneral.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	interpolatedBackToGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+	vkCmdPipelineBarrier(cb,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		0, 0, nullptr, 0, nullptr, 1, &interpolatedBackToGeneral);
 
 	VkImageMemoryBarrier toPresent = toDst;
 	toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -237,7 +312,9 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 
 	vkEndCommandBuffer(cb);
 
-	// 5) Submete e apresenta
+	// 5) Submete (sinalizando m_renderFinishedSemaphore e m_inFlightFence
+	// em vez de bloquear a CPU esperando a GPU) e apresenta assim que o
+	// present() puder (esperando so o semaforo, nao a fila inteira).
 	VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	VkSubmitInfo submitInfo{};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -249,23 +326,26 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 		submitInfo.pWaitSemaphores = &acquireSemaphore;
 		submitInfo.pWaitDstStageMask = &waitStage;
 	}
+	submitInfo.signalSemaphoreCount = 1;
+	submitInfo.pSignalSemaphores = &m_renderFinishedSemaphore;
 
-	// TODO: usar uma fence/semaforo proprio em vez de vkQueueWaitIdle -
-	// isto FUNCIONA mas serializa a GPU (espera tudo terminar antes de
-	// continuar), custando performance. Deixado simples de proposito
-	// nesta primeira versao pra reduzir chance de bug de sincronizacao;
-	// otimizar depois que estiver funcionando corretamente.
-	vkQueueSubmit(presentQueue, 1, &submitInfo, VK_NULL_HANDLE);
-	vkQueueWaitIdle(presentQueue);
+	vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
 
 	VkPresentInfoKHR presentInfo{};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	presentInfo.waitSemaphoreCount = 1;
+	presentInfo.pWaitSemaphores = &m_renderFinishedSemaphore;
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &chainInfo.m_swapchain;
 	presentInfo.pImageIndices = &imageIndex;
 
 	VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
-	vkFreeCommandBuffers(device, m_commandPool, 1, &cb);
+
+	// NAO libera o command buffer agora - a GPU pode ainda estar
+	// executando ele. Guarda ele em m_pendingCommandBuffer e libera no
+	// INICIO da proxima chamada (passo 0 acima), depois de confirmar
+	// via m_inFlightFence que a GPU realmente terminou.
+	m_pendingCommandBuffer = cb;
 
 	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
 		chainInfo.m_shouldRecreate = true;
@@ -277,7 +357,15 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 void SwapchainFrameGenVk::DestroyAll()
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
-	vkDeviceWaitIdle(device);
+	vkDeviceWaitIdle(device); // garante que a GPU ja terminou tudo, inclusive o ultimo m_pendingCommandBuffer
+
+	if (m_pendingCommandBuffer != VK_NULL_HANDLE)
+	{
+		vkFreeCommandBuffers(device, m_commandPool, 1, &m_pendingCommandBuffer);
+		m_pendingCommandBuffer = VK_NULL_HANDLE;
+	}
+	if (m_inFlightFence) vkDestroyFence(device, m_inFlightFence, nullptr);
+	if (m_renderFinishedSemaphore) vkDestroySemaphore(device, m_renderFinishedSemaphore, nullptr);
 
 	m_frameInterpolation.reset();
 	m_opticalFlow.reset();

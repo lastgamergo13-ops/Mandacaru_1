@@ -33,6 +33,7 @@
 #include <vulkan/vulkan.h>
 #include <cstdint>
 #include <memory>
+#include <chrono>
 
 class VulkanRenderer;
 class VKRMemoryManager;
@@ -72,11 +73,15 @@ public:
 	//                       acabou de apresentar o frame real
 	//   presentQueue      - a fila de apresentacao (m_presentQueue do
 	//                       VulkanRenderer)
-	//   deltaTimeSeconds  - tempo entre o frame anterior e este
 	//   reset             - true no primeiro frame ou corte de cena
+	// O tempo entre frames (deltaTime) e calculado internamente via
+	// relogio de parede (std::chrono) - nao precisa ser passado pelo
+	// chamador, e assim reflete o tempo REAL de tela, nao o tempo
+	// emulado do console (que e o que o resto do Cemu usa pra outras
+	// coisas, mas nao e o que importa pro pacing da interpolacao).
 	// Retorna false se pulou a geracao (desabilitado, ou ainda nao tem
 	// 2 frames reais capturados pra interpolar entre eles).
-	bool GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, float deltaTimeSeconds, bool reset);
+	bool GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset);
 
 private:
 	void CreateBackbufferCopies(uint32_t width, uint32_t height, VkFormat backbufferFormat);
@@ -103,7 +108,27 @@ private:
 	VkImageView m_backbufferCopyViews[2] = {};
 	uint32_t m_currentCopyIndex = 0; // alterna entre 0 e 1 a cada captura
 
+	// Controla se cada slot ja recebeu uma captura antes - usado pra
+	// saber o layout de ORIGEM correto na transicao de CaptureBackbuffer:
+	// UNDEFINED na primeira vez que o slot e usado, SHADER_READ_ONLY_OPTIMAL
+	// nas vezes seguintes (ja que o Optical Flow leu dele como textura
+	// no meio tempo).
+	bool m_backbufferCopyInitialized[2] = { false, false };
+
 	// comando reutilizavel pra fazer o blit do resultado interpolado
 	// dentro da imagem recem-adquirida do swapchain
 	VkCommandPool m_commandPool = VK_NULL_HANDLE;
+
+	// Sincronizacao SEM bloquear a GPU inteira (ver GenerateAndPresentInterpolatedFrame):
+	// fence sinaliza quando a GPU terminou de executar o command buffer
+	// do frame gerado; semaforo e o que o present() espera antes de
+	// mostrar a imagem na tela, no lugar de um vkQueueWaitIdle.
+	VkFence m_inFlightFence = VK_NULL_HANDLE;
+	VkSemaphore m_renderFinishedSemaphore = VK_NULL_HANDLE;
+	VkCommandBuffer m_pendingCommandBuffer = VK_NULL_HANDLE; // liberado no INICIO da proxima chamada, depois de confirmar que a GPU ja terminou com ele
+
+	// Relogio de parede pra calcular o deltaTime real entre dois
+	// frames gerados (ver GenerateAndPresentInterpolatedFrame).
+	std::chrono::steady_clock::time_point m_lastGeneratedFrameTime{};
+	bool m_hasLastGeneratedFrameTime = false;
 };

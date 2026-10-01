@@ -8,6 +8,7 @@
 #include "opticalflow_vk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
+#include "config/ActiveSettings.h"
 
 #include <fstream>
 #include <vector>
@@ -80,9 +81,12 @@ namespace
 		return (value + divisor - 1) / divisor;
 	}
 
-	std::string GetShaderPath(const char* fileName)
+	// Mesmo mecanismo do opticalflow_vk.cpp - ver o comentario detalhado
+	// la (ActiveSettings::GetDataPath(), extraido de assets/resources/
+	// no Android via CemuApplication.kt -> saveDataFiles()).
+	fs::path GetShaderPath(const char* fileName)
 	{
-		return std::string("dependencies/ffx-frame-generation/shaders_spv/") + fileName;
+		return ActiveSettings::GetDataPath("resources/ffx-frame-generation/shaders_spv/{}", fileName);
 	}
 
 	// Helper generico de criacao de imagem 2D - repete o padrao usado
@@ -156,10 +160,10 @@ FrameInterpolationVk::~FrameInterpolationVk()
 
 VkShaderModule FrameInterpolationVk::LoadShaderModule(const char* spvFileName) const
 {
-	std::string path = GetShaderPath(spvFileName);
+	fs::path path = GetShaderPath(spvFileName);
 	std::ifstream file(path, std::ios::ate | std::ios::binary);
 	if (!file.is_open())
-		throw std::runtime_error(std::string("FrameInterpolationVk: nao consegui abrir o shader ") + path);
+		throw std::runtime_error(std::string("FrameInterpolationVk: nao consegui abrir o shader ") + path.string());
 
 	size_t fileSize = (size_t)file.tellg();
 	std::vector<char> buffer(fileSize);

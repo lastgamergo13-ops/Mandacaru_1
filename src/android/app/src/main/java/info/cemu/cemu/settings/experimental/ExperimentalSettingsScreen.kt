@@ -102,6 +102,57 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
                 NativeSettings.RendererMode.OPENGL,
             ),
         )
+        InfoDialogButton(
+            title = tr("FSR3 Upscale"),
+            explanation = tr(
+                "AMD FSR3 Upscale renders the game at a lower internal resolution and uses an " +
+                        "algorithm to reconstruct detail when scaling up to your display's resolution - " +
+                        "similar in purpose to Nvidia's DLSS, but running on any GPU. The goal is better " +
+                        "image quality than simple bilinear/bicubic upscaling at the same performance cost, " +
+                        "or the same quality at a lower performance cost.\n\n" +
+                        "Status: NOT ported yet. This toggle is a placeholder for the feature that's " +
+                        "planned - turning it on currently does nothing in-game. Not to be confused with " +
+                        "the existing \"FSR1\" choice in the Graphics settings screen, which is a different, " +
+                        "already-working, older AMD filter."
+            ),
+        )
+        var fsr3UpscaleEnabled by rememberSaveable { mutableStateOf(false) }
+        Toggle(
+            label = tr("FSR3 Upscale"),
+            description = tr(
+                "FSR3 Upscale ainda nao portado - este botao ainda nao faz nada no jogo.\n" +
+                        "Resumo: reconstroi a imagem ao escalar de uma resolucao interna menor para a " +
+                        "tela, tentando preservar mais detalhe que um escalonamento simples, no mesmo " +
+                        "espirito do DLSS."
+            ),
+            initialCheckedState = { fsr3UpscaleEnabled },
+            onCheckedChanged = { fsr3UpscaleEnabled = it },
+        )
+        InfoDialogButton(
+            title = tr("FSR3 Frame Gen"),
+            explanation = tr(
+                "AMD FSR3 Frame Generation inserts an extra, AI-generated frame between two frames " +
+                        "the game actually rendered, estimating motion between them (Optical Flow) to " +
+                        "synthesize what the in-between frame should look like. This raises the number of " +
+                        "frames shown per second without the GPU having to fully render each one, making " +
+                        "motion look smoother.\n\n" +
+                        "Status: still being ported/finished (Optical Flow + Frame Interpolation on " +
+                        "Vulkan). This toggle is a placeholder ahead of that work landing - turning it on " +
+                        "currently does nothing in-game yet."
+            ),
+        )
+        var fsr3FrameGenEnabled by rememberSaveable { mutableStateOf(false) }
+        Toggle(
+            label = tr("FSR3 Frame Gen"),
+            description = tr(
+                "Ainda portando o Frame Gen - este botao ainda nao faz nada no jogo.\n" +
+                        "Resumo: gera um frame extra entre dois frames reais, estimando o movimento " +
+                        "entre eles, pra deixar o movimento na tela mais suave sem a GPU ter que " +
+                        "renderizar cada frame por completo."
+            ),
+            initialCheckedState = { fsr3FrameGenEnabled },
+            onCheckedChanged = { fsr3FrameGenEnabled = it },
+        )
         Button(
             label = tr("Quality of Life"),
             description = tr("Convenience features ported from an older branch, kept separate from everything else here. Off by default."),

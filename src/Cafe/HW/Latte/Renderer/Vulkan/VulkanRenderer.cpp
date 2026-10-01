@@ -3574,15 +3574,12 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 
 	// Gera e apresenta o frame interpolado extra, entre este frame real
 	// e o proximo - so na janela principal, e so se o present real
-	// acima deu certo.
+	// acima deu certo. O tempo entre frames agora e calculado
+	// internamente pelo proprio SwapchainFrameGenVk (relogio de
+	// parede real, via std::chrono) - nao precisa mais passar aqui.
 	if (mainWindow && m_frameGen && result >= 0)
 	{
-		float deltaTime = 1.0f / 60.0f; // TODO: usar o delta real entre
-		                                 // frames em vez de um valor fixo -
-		                                 // procure por um contador de
-		                                 // frame timing ja existente no
-		                                 // Cemu antes de inventar um novo
-		m_frameGen->GenerateAndPresentInterpolatedFrame(chainInfo, m_presentQueue, deltaTime, m_frameGenIsFirstFrame);
+		m_frameGen->GenerateAndPresentInterpolatedFrame(chainInfo, m_presentQueue, m_frameGenIsFirstFrame);
 		m_frameGenIsFirstFrame = false;
 	}
 
