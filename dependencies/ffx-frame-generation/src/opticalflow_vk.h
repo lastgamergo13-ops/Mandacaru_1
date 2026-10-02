@@ -1,87 +1,83 @@
 // opticalflow_vk.h
 //
-// Backend Vulkan "escrito na mao" (sem o backend oficial da AMD, que
-// so existe pra DX12) para o componente Optical Flow do FSR3.
+// Backend Vulkan "escrito na mao" para o componente Optical Flow do FSR3.
 //
-// ESCOPO DESTA PRIMEIRA VERSAO (leia antes de usar):
-//   - Implementa os 7 passes do Optical Flow, na ordem correta.
-//   - Roda em UMA UNICA resolucao (sem a piramide de mip de 6 niveis
-//     que a estrutura interna original da AMD usa para robustez em
-//     movimento rapido). Ver TODO no .cpp.
-//   - Objetivo desta versao: validar que os .spv carregam, os
-//     descriptor sets batem com os shaders, e o pipeline roda sem
-//     erro de validacao do Vulkan. Depois disso funcionando, a
-//     proxima iteracao adiciona a piramide de mip completa.
+// VERSAO 2 - REESCRITA APOS CRASH REAL EM HARDWARE (Adreno 650, signal 6,
+// "falha ao criar pipeline para pass 1"). A V1 usava um layout de
+// descriptor set GENERICO e UNICO para os 7 passes - isso quebrou porque
+// cada pass real da AMD tem um conjunto de recursos (SRV/UAV/CB) e um
+// tamanho de thread group DIFERENTE, confirmado lendo os #define no topo
+// de cada um dos 7 arquivos .hlsl. Essa versao da a cada pass seu proprio
+// VkDescriptorSetLayout e VkPipelineLayout, batendo com o que o .spv de
+// cada um realmente espera.
+//
+// ESCOPO DESTA VERSAO (leia antes de usar):
+//   - Bindings de cada pass: fieis ao .hlsl real (tabela completa no .cpp).
+//   - Pirmide de mip (pass 1, Luminance Pyramid): o shader EXIGE 6
+//     bindings de nivel de mip pra compilar (senao da o mesmo crash de
+//     antes) - todos os 6 sao criados, mas niveis 2-6 apontam pra
+//     imagens pequenas "dummy" sem dado util (continuamos na
+//     simplificacao de "1 nivel" decidida desde o inicio do projeto,
+//     agora sem quebrar o pipeline).
+//   - Dispatch: as formulas reais da AMD (ffx_opticalflow.cpp) fazem um
+//     LACO sobre varios niveis de piramide pros passes 4/5/6
+//     (compute_optical_flow_advanced, filter, scale). Esta versao
+//     despacha cada um UMA VEZ SO, na resolucao cheia (consistente com
+//     "sem piramide completa") - ver comentario detalhado em cada
+//     Dispatch*() no .cpp.
+//   - Buffers de histograma SCD dimensionados com as constantes reais
+//     da AMD (HistogramBins=256, HistogramsPerDim=3) - antes estava
+//     chutado em 256 elementos, o certo e 256*9=2304.
 //
 // Local no projeto: dependencies/ffx-frame-generation/src/
 
 #pragma once
 
-#if defined(__ANDROID__) && !defined(VK_USE_PLATFORM_ANDROID_KHR)
-#define VK_USE_PLATFORM_ANDROID_KHR
-#endif
-
 #include <vulkan/vulkan.h>
 #include <cstdint>
 
-// Forward-declare para nao acoplar este header ao VulkanRenderer inteiro
 class VulkanRenderer;
 class VKRMemoryManager;
 
 class OpticalFlowVk
 {
 public:
-	// --- os 7 passes, na ordem do enum FfxOpticalflowPass original ---
+	OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth, uint32_t resolutionHeight);
+	~OpticalFlowVk();
+
+	OpticalFlowVk(const OpticalFlowVk&) = delete;
+	OpticalFlowVk& operator=(const OpticalFlowVk&) = delete;
+
+	void Dispatch(VkCommandBuffer commandBuffer, VkImageView currentColorView, VkImageView previousColorView, bool reset);
+
+	VkImageView GetOpticalFlowVectorView() const { return m_opticalFlowVectorView; }
+
+	// Os 7 passes, na ordem real de dispatch (ver ffx_opticalflow.cpp:
+	// PrepareLuma -> ComputeLuminancePyramid -> GenerateSCDHistogram ->
+	// ComputeSCDDivergence -> ComputeOpticalFlowAdvancedV5 ->
+	// FilterOpticalFlowV5 -> ScaleOpticalFlowAdvancedV5)
 	enum class Pass : uint32_t
 	{
 		PrepareLuma = 0,
-		ComputeLuminancePyramid,     // TODO: hoje so 1 nivel, falta piramide de 6 niveis
+		ComputeLuminancePyramid,
 		GenerateScdHistogram,
 		ComputeScdDivergence,
-		ComputeOpticalFlowAdvancedV5, // nucleo do algoritmo, mais pesado
+		ComputeOpticalFlowAdvancedV5,
 		FilterOpticalFlowV5,
 		ScaleOpticalFlowAdvancedV5,
 		Count
 	};
 
-	// resolutionWidth/Height: resolucao do backbuffer do jogo (a
-	// mesma resolucao que o Cemu esta renderizando internamente).
-	OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth, uint32_t resolutionHeight);
-	~OpticalFlowVk();
-
-	// Nao copiavel (possui handles Vulkan)
-	OpticalFlowVk(const OpticalFlowVk&) = delete;
-	OpticalFlowVk& operator=(const OpticalFlowVk&) = delete;
-
-	// Executa o pipeline completo de Optical Flow para o frame atual.
-	//   commandBuffer   - command buffer ja em estado "recording"
-	//   currentColorView  - VkImageView do backbuffer atual (cor, sRGB/UNORM)
-	//   previousColorView - VkImageView do backbuffer do frame anterior
-	//   reset           - true no primeiro frame ou apos um corte de cena
-	//                      (troca de fase, carregamento, etc.) - o Optical
-	//                      Flow ignora o frame anterior nesse caso.
-	// Resultado fica em GetOpticalFlowVectorView() apos a chamada,
-	// pronto para ser consumido pelo Frame Interpolation.
-	void Dispatch(VkCommandBuffer commandBuffer, VkImageView currentColorView, VkImageView previousColorView, bool reset);
-
-	// View do buffer de vetores de movimento gerado - e o que o
-	// FrameInterpolationVk vai consumir como entrada.
-	VkImageView GetOpticalFlowVectorView() const { return m_opticalFlowVectorView; }
-
 private:
 	void CreateShaderModules();
-	void CreatePipelines();
 	void CreateIntermediateResources(uint32_t width, uint32_t height);
-	void CreateDescriptorSets();
+	void CreatePerPassLayoutsAndPipelines();
+	void CreateDescriptorPoolAndSets();
 	void CreateSampler();
-	void UpdateDescriptorSets(VkImageView currentColorView);
+	void UpdateDescriptorSets(VkImageView currentColorView, VkImageView previousColorView);
 	void DestroyAll();
 
-	// Helper: cria um VkShaderModule a partir de um .spv em shaders_spv/
 	VkShaderModule LoadShaderModule(const char* spvFileName) const;
-
-	// Helper: barreira de memoria generica entre passes de compute
-	// (leitura apos escrita de uma imagem/buffer em outro dispatch)
 	static void ComputeToComputeBarrier(VkCommandBuffer cb);
 
 	VulkanRenderer* m_renderer = nullptr;
@@ -89,37 +85,59 @@ private:
 
 	uint32_t m_width = 0;
 	uint32_t m_height = 0;
-
-	bool m_resourcesTransitioned = false; // controla a transicao de layout (ver Dispatch())
+	bool m_resourcesTransitioned = false;
 
 	VkShaderModule m_shaderModules[(uint32_t)Pass::Count] = {};
+	// Um layout/pipeline POR PASS agora, nao mais compartilhado.
+	VkDescriptorSetLayout m_descriptorSetLayouts[(uint32_t)Pass::Count] = {};
+	VkPipelineLayout m_pipelineLayouts[(uint32_t)Pass::Count] = {};
 	VkPipeline m_pipelines[(uint32_t)Pass::Count] = {};
-	VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-	VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
-	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-	// um descriptor set por pass (cada shader le/escreve um conjunto
-	// diferente de recursos - ver ffx_opticalflow_callbacks_hlsl.h)
 	VkDescriptorSet m_descriptorSets[(uint32_t)Pass::Count] = {};
+	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+	VkSampler m_colorSampler = VK_NULL_HANDLE;
 
-	// --- recursos intermediarios (versao simplificada, 1 nivel) ---
-	// luma preparado a partir da cor de entrada
+	// --- recursos intermediarios ---
+	// luma preparado (pass 0 escreve, pass 1 le/escreve)
 	VkImage m_lumaImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_lumaMemory = VK_NULL_HANDLE;
 	VkImageView m_lumaView = VK_NULL_HANDLE;
 
-	// histograma de scene-change-detection (buffer, nao imagem)
+	// niveis 1-6 da piramide de luminancia (pass 1 escreve). Niveis
+	// 2-6 sao imagens pequenas "dummy" 4x4 - ver aviso no topo do
+	// arquivo sobre a simplificacao de 1 nivel.
+	static constexpr int kPyramidLevels = 6;
+	VkImage m_pyramidImages[kPyramidLevels] = {};
+	VkDeviceMemory m_pyramidMemory[kPyramidLevels] = {};
+	VkImageView m_pyramidViews[kPyramidLevels] = {};
+
+	// buffers do histograma SCD - tamanho real: 256 bins * 9 (3x3
+	// regioes) = 2304 elementos (antes estava errado, 256 fixo)
+	static constexpr uint32_t kHistogramElementCount = 256 * 3 * 3;
 	VkBuffer m_scdHistogramBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_scdHistogramMemory = VK_NULL_HANDLE;
+	VkBuffer m_scdPreviousHistogramBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_scdPreviousHistogramMemory = VK_NULL_HANDLE;
+	VkBuffer m_scdTempBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_scdTempMemory = VK_NULL_HANDLE;
+	VkBuffer m_scdOutputBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_scdOutputMemory = VK_NULL_HANDLE;
 
-	// saida final: vetores de movimento (RG16F tipicamente)
+	// saida final: vetores de movimento
 	VkImage m_opticalFlowVectorImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_opticalFlowVectorMemory = VK_NULL_HANDLE;
 	VkImageView m_opticalFlowVectorView = VK_NULL_HANDLE;
 
-	// buffer de constantes (equivalente ao cbuffer CB_COMMON do HLSL)
+	// copia do optical flow do "nivel anterior" - os passes 5/6 leem
+	// isso como SRV (FILTER le OPTICAL_FLOW_PREVIOUS, SCALE le
+	// OPTICAL_FLOW) alem de escrever o resultado do frame atual.
+	// Simplificado pra apontar pro mesmo buffer de saida em varios
+	// pontos, ja que nao fazemos o laco multi-nivel real.
+	VkImageView m_opticalFlowPreviousView = VK_NULL_HANDLE; // alias de m_opticalFlowVectorView nesta versao simplificada
+
 	VkBuffer m_constantBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_constantBufferMemory = VK_NULL_HANDLE;
 
-	// sampler usado para ler a imagem de cor de entrada (binding 1)
-	VkSampler m_colorSampler = VK_NULL_HANDLE;
+	// CB_SPD - segundo constant buffer, so usado pelo pass 1
+	VkBuffer m_spdConstantBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_spdConstantBufferMemory = VK_NULL_HANDLE;
 };
