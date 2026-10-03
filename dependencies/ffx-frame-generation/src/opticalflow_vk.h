@@ -2,14 +2,24 @@
 //
 // Backend Vulkan "escrito na mao" para o componente Optical Flow do FSR3.
 //
-// VERSAO 2 - REESCRITA APOS CRASH REAL EM HARDWARE (Adreno 650, signal 6,
-// "falha ao criar pipeline para pass 1"). A V1 usava um layout de
-// descriptor set GENERICO e UNICO para os 7 passes - isso quebrou porque
-// cada pass real da AMD tem um conjunto de recursos (SRV/UAV/CB) e um
-// tamanho de thread group DIFERENTE, confirmado lendo os #define no topo
-// de cada um dos 7 arquivos .hlsl. Essa versao da a cada pass seu proprio
-// VkDescriptorSetLayout e VkPipelineLayout, batendo com o que o .spv de
-// cada um realmente espera.
+// VERSAO 3 - REESCRITA APOS INSPECIONAR O BINARIO .spv REAL (nao so o
+// codigo-fonte .hlsl). A V2 ainda deu crash porque derivar bindings do
+// #define do .hlsl nao e confiavel: o dxc (1) elimina por otimizacao
+// qualquer constant buffer cujos campos acabem nao afetando o resultado
+// final de um pass especifico (passes 1, 3 e 5 NAO TEM cbOF nenhum,
+// mesmo o .hlsl declarando), e (2) sem flags de "shift" na compilacao,
+// numera bindings de tipos HLSL diferentes (b/t/u) INDEPENDENTEMENTE,
+// causando colisao (ex: cbOF, uma textura SRV e uma imagem UAV podem
+// todos cair em "binding 0" ao mesmo tempo). Essa versao:
+//   1. Exige recompilar os .spv com shift flags (ver .cpp de comando),
+//      pra cada tipo de registro HLSL cair numa faixa de binding
+//      separada: b+0, t+100, u+200.
+//   2. Usa o layout EXATO de cada pass, extraido inspecionando o
+//      binario .spv compilado (nao o .hlsl), incluindo quais passes
+//      NAO tem o constant buffer comum.
+//   3. Remove o VkSampler por completo - confirmado que os 7 passes
+//      usam Load() (OpImageFetch), nao Sample(), entao a textura e
+//      SAMPLED_IMAGE puro, sem sampler nenhum.
 //
 // ESCOPO DESTA VERSAO (leia antes de usar):
 //   - Bindings de cada pass: fieis ao .hlsl real (tabela completa no .cpp).
@@ -73,7 +83,6 @@ private:
 	void CreateIntermediateResources(uint32_t width, uint32_t height);
 	void CreatePerPassLayoutsAndPipelines();
 	void CreateDescriptorPoolAndSets();
-	void CreateSampler();
 	void UpdateDescriptorSets(VkImageView currentColorView, VkImageView previousColorView);
 	void DestroyAll();
 
@@ -93,14 +102,28 @@ private:
 	VkPipelineLayout m_pipelineLayouts[(uint32_t)Pass::Count] = {};
 	VkPipeline m_pipelines[(uint32_t)Pass::Count] = {};
 	VkDescriptorSet m_descriptorSets[(uint32_t)Pass::Count] = {};
+	// Descriptor set EXTRA, so pra segunda chamada do pass PrepareLuma
+	// (luma do frame anterior) - usa o MESMO layout/pipeline de
+	// Pass::PrepareLuma, so que com recursos diferentes (cor anterior
+	// -> luma anterior, em vez de cor atual -> luma atual).
+	VkDescriptorSet m_descriptorSetPrepareLumaPrevious = VK_NULL_HANDLE;
 	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-	VkSampler m_colorSampler = VK_NULL_HANDLE;
+	// SEM VkSampler - confirmado via inspecao do .spv que os 7 passes
+	// usam Load() (OpImageFetch), nunca Sample(). Nenhuma textura
+	// precisa de sampler nesta versao.
 
 	// --- recursos intermediarios ---
-	// luma preparado (pass 0 escreve, pass 1 le/escreve)
+	// luma do frame ATUAL (pass 0 escreve a partir de currentColorView)
 	VkImage m_lumaImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_lumaMemory = VK_NULL_HANDLE;
 	VkImageView m_lumaView = VK_NULL_HANDLE;
+
+	// luma do frame ANTERIOR (pass 0 roda DE NOVO, a partir de
+	// previousColorView - os bindings r_optical_flow_previous_input
+	// esperam luma ja processado, nao cor crua)
+	VkImage m_lumaPreviousImage = VK_NULL_HANDLE;
+	VkDeviceMemory m_lumaPreviousMemory = VK_NULL_HANDLE;
+	VkImageView m_lumaPreviousView = VK_NULL_HANDLE;
 
 	// niveis 1-6 da piramide de luminancia (pass 1 escreve). Niveis
 	// 2-6 sao imagens pequenas "dummy" 4x4 - ver aviso no topo do
@@ -122,22 +145,26 @@ private:
 	VkBuffer m_scdOutputBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_scdOutputMemory = VK_NULL_HANDLE;
 
-	// saida final: vetores de movimento
-	VkImage m_opticalFlowVectorImage = VK_NULL_HANDLE;
+	// Pipeline de 3 estagios do calculo do flow em si - imagens
+	// SEPARADAS (nao dava pra ler e escrever a mesma, ver pass
+	// 4/5/6 no .cpp):
+	//   pass 4 escreve RAW -> pass 5 le RAW, escreve FILTERED ->
+	//   pass 6 le FILTERED, escreve FINAL (exposto por GetOpticalFlowVectorView())
+	VkImage m_opticalFlowRawImage = VK_NULL_HANDLE;
+	VkDeviceMemory m_opticalFlowRawMemory = VK_NULL_HANDLE;
+	VkImageView m_opticalFlowRawView = VK_NULL_HANDLE;
+
+	VkImage m_opticalFlowFilteredImage = VK_NULL_HANDLE;
+	VkDeviceMemory m_opticalFlowFilteredMemory = VK_NULL_HANDLE;
+	VkImageView m_opticalFlowFilteredView = VK_NULL_HANDLE;
+
+	VkImage m_opticalFlowVectorImage = VK_NULL_HANDLE; // FINAL
 	VkDeviceMemory m_opticalFlowVectorMemory = VK_NULL_HANDLE;
 	VkImageView m_opticalFlowVectorView = VK_NULL_HANDLE;
 
-	// copia do optical flow do "nivel anterior" - os passes 5/6 leem
-	// isso como SRV (FILTER le OPTICAL_FLOW_PREVIOUS, SCALE le
-	// OPTICAL_FLOW) alem de escrever o resultado do frame atual.
-	// Simplificado pra apontar pro mesmo buffer de saida em varios
-	// pontos, ja que nao fazemos o laco multi-nivel real.
-	VkImageView m_opticalFlowPreviousView = VK_NULL_HANDLE; // alias de m_opticalFlowVectorView nesta versao simplificada
-
+	// Constant buffer unico (cbOF) - confirmado que cbOF_SPD nao e
+	// usado por NENHUM dos 7 passes no binario real (sempre otimizado
+	// pra fora pelo dxc), entao nao existe mais um segundo CB aqui.
 	VkBuffer m_constantBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_constantBufferMemory = VK_NULL_HANDLE;
-
-	// CB_SPD - segundo constant buffer, so usado pelo pass 1
-	VkBuffer m_spdConstantBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory m_spdConstantBufferMemory = VK_NULL_HANDLE;
 };
