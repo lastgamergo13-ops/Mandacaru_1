@@ -293,8 +293,10 @@ void OpticalFlowVk::CreatePerPassLayoutsAndPipelines()
 		pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
 		pipelineInfo.stage = stageInfo;
 		pipelineInfo.layout = m_pipelineLayouts[i];
-		if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipelines[i]) != VK_SUCCESS)
-			throw std::runtime_error(std::string("OpticalFlowVk: falha ao criar pipeline para pass ") + std::to_string(i));
+		VkResult pipelineResult = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipelines[i]);
+		if (pipelineResult != VK_SUCCESS)
+			throw std::runtime_error(std::string("OpticalFlowVk: falha ao criar pipeline para pass ")
+				+ std::to_string(i) + " (VkResult=" + std::to_string((int)pipelineResult) + ")");
 	}
 }
 
