@@ -2,6 +2,20 @@
 //
 // Backend Vulkan "escrito na mao" para o componente Optical Flow do FSR3.
 //
+// VERSAO 4 - Pass::ComputeLuminancePyramid REMOVIDO POR COMPLETO. O
+// shader original da AMD usa SPD com operacoes de quad que
+// FFX_SPD_NO_WAVE_OPERATIONS nao elimina de verdade (confirmado via
+// disassembly real - 8 chamadas de OpGroupNonUniformQuadSwap
+// sobrevivem mesmo com a flag). Escrevemos um shader customizado
+// nosso, sem SPD, sem quad ops - mesmo assim o driver do Adreno 650
+// devolveu VK_ERROR_UNKNOWN (VkResult=-13) na criacao do pipeline, sem
+// explicar o motivo. Como confirmamos que NENHUM outro pass consome a
+// saida da piramide de luminancia na nossa arquitetura simplificada
+// de 1 nivel (nunca implementamos o laco multi-nivel real da AMD), a
+// solucao foi simplesmente REMOVER o pass inteiro - nao ha perda
+// funcional, so a economia de tempo de nao brigar mais com um driver
+// por um resultado que nada usava.
+//
 // VERSAO 3 - REESCRITA APOS INSPECIONAR O BINARIO .spv REAL (nao so o
 // codigo-fonte .hlsl). A V2 ainda deu crash porque derivar bindings do
 // #define do .hlsl nao e confiavel: o dxc (1) elimina por otimizacao
@@ -125,13 +139,13 @@ private:
 	VkDeviceMemory m_lumaPreviousMemory = VK_NULL_HANDLE;
 	VkImageView m_lumaPreviousView = VK_NULL_HANDLE;
 
-	// niveis 1-6 da piramide de luminancia (pass 1 escreve). Niveis
-	// 2-6 sao imagens pequenas "dummy" 4x4 - ver aviso no topo do
-	// arquivo sobre a simplificacao de 1 nivel.
-	static constexpr int kPyramidLevels = 6;
-	VkImage m_pyramidImages[kPyramidLevels] = {};
-	VkDeviceMemory m_pyramidMemory[kPyramidLevels] = {};
-	VkImageView m_pyramidViews[kPyramidLevels] = {};
+	// Pass::ComputeLuminancePyramid REMOVIDO (ver aviso grande no topo
+	// deste arquivo e no .cpp): depois de confirmar via VkResult=-13
+	// (VK_ERROR_UNKNOWN) que o driver Adreno rejeita a criacao do
+	// pipeline mesmo com um shader customizado sem quad ops, e
+	// confirmar que NENHUM outro pass consome a saida da piramide na
+	// nossa arquitetura simplificada de 1 nivel, o pass inteiro foi
+	// removido - sem imagens de piramide, sem pipeline, sem dispatch.
 
 	// buffers do histograma SCD - tamanho real: 256 bins * 9 (3x3
 	// regioes) = 2304 elementos (antes estava errado, 256 fixo)

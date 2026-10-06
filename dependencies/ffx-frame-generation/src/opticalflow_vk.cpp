@@ -179,7 +179,19 @@ VkShaderModule OpticalFlowVk::LoadShaderModule(const char* spvFileName) const
 void OpticalFlowVk::CreateShaderModules()
 {
 	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
+	{
+		// Pass::ComputeLuminancePyramid REMOVIDO da ativa: depois de
+		// extensa investigacao (quad ops nao eliminaveis pelo SDK da
+		// AMD, depois um shader customizado nosso que ainda assim deu
+		// VK_ERROR_UNKNOWN especifico do driver Adreno), confirmamos
+		// que NENHUM outro pass consome a saida dele na nossa
+		// arquitetura simplificada de 1 nivel - entao o jeito mais
+		// limpo e nao rodar esse pass, em vez de seguir brigando com
+		// o driver por um resultado que ninguem usa.
+		if (Pass(i) == Pass::ComputeLuminancePyramid)
+			continue;
 		m_shaderModules[i] = LoadShaderModule(kPassShaderFiles[i]);
+	}
 }
 
 void OpticalFlowVk::CreateIntermediateResources(uint32_t width, uint32_t height)
@@ -187,13 +199,9 @@ void OpticalFlowVk::CreateIntermediateResources(uint32_t width, uint32_t height)
 	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_SFLOAT, m_lumaImage, m_lumaMemory, m_lumaView);
 	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_SFLOAT, m_lumaPreviousImage, m_lumaPreviousMemory, m_lumaPreviousView);
 
-	for (int i = 0; i < kPyramidLevels; i++)
-	{
-		uint32_t levelW = (i == 0) ? std::max(1u, width / 2) : 4u;
-		uint32_t levelH = (i == 0) ? std::max(1u, height / 2) : 4u;
-		CreateImage2D(m_renderer, m_memoryManager, levelW, levelH, VK_FORMAT_R32_SFLOAT,
-			m_pyramidImages[i], m_pyramidMemory[i], m_pyramidViews[i]);
-	}
+	// Pass::ComputeLuminancePyramid removido (ver aviso em
+	// CreateShaderModules) - as imagens de pirâmide nao sao mais
+	// criadas, ninguem as consome.
 
 	const VkDeviceSize histogramSize = kHistogramElementCount * sizeof(uint32_t);
 	auto makeBuffer = [&](VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize size)
@@ -234,11 +242,7 @@ void OpticalFlowVk::CreatePerPassLayoutsAndPipelines()
 		{ 0 + kShiftU, ST },    // rw_optical_flow_input
 	});
 
-	m_descriptorSetLayouts[(uint32_t)Pass::ComputeLuminancePyramid] = MakeLayout(device, {
-		{ 0 + kShiftU, ST }, { 1 + kShiftU, ST }, { 2 + kShiftU, ST }, { 3 + kShiftU, ST },
-		{ 4 + kShiftU, ST }, { 5 + kShiftU, ST }, { 6 + kShiftU, ST },
-		// SEM constant buffer - confirmado que o dxc eliminou cbOF e cbOF_SPD deste pass
-	});
+	// Pass::ComputeLuminancePyramid removido - sem layout, sem pipeline.
 
 	m_descriptorSetLayouts[(uint32_t)Pass::GenerateScdHistogram] = MakeLayout(device, {
 		{ 0 + kShiftB, UB },    // cbOF
@@ -276,6 +280,9 @@ void OpticalFlowVk::CreatePerPassLayoutsAndPipelines()
 
 	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
 	{
+		if (Pass(i) == Pass::ComputeLuminancePyramid)
+			continue; // removido - ver aviso em CreateShaderModules
+
 		VkPipelineLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		layoutInfo.setLayoutCount = 1;
@@ -321,6 +328,9 @@ void OpticalFlowVk::CreateDescriptorPoolAndSets()
 
 	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
 	{
+		if (Pass(i) == Pass::ComputeLuminancePyramid)
+			continue; // removido - ver aviso em CreateShaderModules
+
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocInfo.descriptorPool = m_descriptorPool;
@@ -354,8 +364,6 @@ void OpticalFlowVk::UpdateDescriptorSets(VkImageView currentColorView, VkImageVi
 	VkDescriptorImageInfo lumaPreviousStorageInfo{ VK_NULL_HANDLE, m_lumaPreviousView, VK_IMAGE_LAYOUT_GENERAL };
 	VkDescriptorImageInfo lumaSampledInfo{ VK_NULL_HANDLE, m_lumaView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	VkDescriptorImageInfo lumaPreviousSampledInfo{ VK_NULL_HANDLE, m_lumaPreviousView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-	VkDescriptorImageInfo pyramidInfo[kPyramidLevels];
-	for (int i = 0; i < kPyramidLevels; i++) pyramidInfo[i] = { VK_NULL_HANDLE, m_pyramidViews[i], VK_IMAGE_LAYOUT_GENERAL };
 	VkDescriptorImageInfo rawStorageInfo{ VK_NULL_HANDLE, m_opticalFlowRawView, VK_IMAGE_LAYOUT_GENERAL };
 	VkDescriptorImageInfo rawSampledInfo{ VK_NULL_HANDLE, m_opticalFlowRawView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	VkDescriptorImageInfo filteredStorageInfo{ VK_NULL_HANDLE, m_opticalFlowFilteredView, VK_IMAGE_LAYOUT_GENERAL };
@@ -392,10 +400,7 @@ void OpticalFlowVk::UpdateDescriptorSets(VkImageView currentColorView, VkImageVi
 	write(s, 0 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &previousColorInfo);
 	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &lumaPreviousStorageInfo);
 
-	s = m_descriptorSets[(uint32_t)Pass::ComputeLuminancePyramid];
-	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &lumaStorageInfo);
-	for (int i = 0; i < kPyramidLevels; i++)
-		write(s, (1 + i) + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &pyramidInfo[i]);
+	// Pass::ComputeLuminancePyramid removido - sem descriptor set pra escrever.
 
 	s = m_descriptorSets[(uint32_t)Pass::GenerateScdHistogram];
 	write(s, 0 + kShiftB, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &cbInfo, nullptr);
@@ -442,7 +447,7 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 	if (!m_resourcesTransitioned)
 	{
 		std::vector<VkImage> images = { m_lumaImage, m_lumaPreviousImage, m_opticalFlowRawImage, m_opticalFlowFilteredImage, m_opticalFlowVectorImage };
-		for (int i = 0; i < kPyramidLevels; i++) images.push_back(m_pyramidImages[i]);
+		// Pass::ComputeLuminancePyramid removido - imagens de piramide nao existem mais, nada a transicionar aqui.
 
 		std::vector<VkImageMemoryBarrier> barriers(images.size());
 		for (size_t i = 0; i < images.size(); i++)
@@ -502,7 +507,7 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 	dispatchPass(Pass::PrepareLuma, tgPrepareLuma_x, tgPrepareLuma_y);
 	dispatchWithSet(Pass::PrepareLuma, m_descriptorSetPrepareLumaPrevious, tgPrepareLuma_x, tgPrepareLuma_y);
 
-	dispatchPass(Pass::ComputeLuminancePyramid, DivRoundUp(m_width, 64), DivRoundUp(m_height, 64));
+	// Pass::ComputeLuminancePyramid removido - nao despachado (ver aviso em CreateShaderModules).
 
 	{
 		const uint32_t strataWidth = (m_width / 4) / kHistogramsPerDim;
@@ -545,7 +550,7 @@ void OpticalFlowVk::DestroyAll()
 	};
 	destroyImage(m_lumaImage, m_lumaMemory, m_lumaView);
 	destroyImage(m_lumaPreviousImage, m_lumaPreviousMemory, m_lumaPreviousView);
-	for (int i = 0; i < kPyramidLevels; i++) destroyImage(m_pyramidImages[i], m_pyramidMemory[i], m_pyramidViews[i]);
+	// Pass::ComputeLuminancePyramid removido - imagens de piramide nunca sao criadas, nada a destruir aqui.
 	destroyImage(m_opticalFlowRawImage, m_opticalFlowRawMemory, m_opticalFlowRawView);
 	destroyImage(m_opticalFlowFilteredImage, m_opticalFlowFilteredMemory, m_opticalFlowFilteredView);
 	destroyImage(m_opticalFlowVectorImage, m_opticalFlowVectorMemory, m_opticalFlowVectorView);
