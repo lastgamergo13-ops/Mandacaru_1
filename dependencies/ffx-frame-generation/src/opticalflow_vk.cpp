@@ -57,6 +57,7 @@ namespace
 	};
 
 	// Esquema de shift usado na recompilacao - ver aviso no topo do arquivo.
+	constexpr uint32_t kOpticalFlowBlockSize = OpticalFlowVk::kBlockSize;
 	constexpr uint32_t kShiftB = 0;
 	constexpr uint32_t kShiftT = 100;
 	constexpr uint32_t kShiftU = 200;
@@ -101,7 +102,8 @@ namespace
 
 	void CreateImage2D(VulkanRenderer* renderer, VKRMemoryManager* memoryManager,
 		uint32_t width, uint32_t height, VkFormat format,
-		VkImage& outImage, VkDeviceMemory& outMemory, VkImageView& outView)
+		VkImage& outImage, VkDeviceMemory& outMemory, VkImageView& outView,
+		VkImageUsageFlags extraUsage = 0)
 	{
 		VkDevice device = renderer->GetLogicalDevice();
 		VkImageCreateInfo imageInfo{};
@@ -113,7 +115,7 @@ namespace
 		imageInfo.format = format;
 		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | extraUsage;
 		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 		if (vkCreateImage(device, &imageInfo, nullptr, &outImage) != VK_SUCCESS)
@@ -196,28 +198,27 @@ void OpticalFlowVk::CreateShaderModules()
 
 void OpticalFlowVk::CreateIntermediateResources(uint32_t width, uint32_t height)
 {
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_SFLOAT, m_lumaImage, m_lumaMemory, m_lumaView);
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_SFLOAT, m_lumaPreviousImage, m_lumaPreviousMemory, m_lumaPreviousView);
+	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_UINT, m_lumaImage, m_lumaMemory, m_lumaView);
+	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_UINT, m_lumaPreviousImage, m_lumaPreviousMemory, m_lumaPreviousView);
 
 	// Pass::ComputeLuminancePyramid removido (ver aviso em
 	// CreateShaderModules) - as imagens de pirâmide nao sao mais
 	// criadas, ninguem as consome.
 
-	const VkDeviceSize histogramSize = kHistogramElementCount * sizeof(uint32_t);
-	auto makeBuffer = [&](VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize size)
-	{
-		if (!m_memoryManager->CreateBuffer(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buf, mem))
-			throw std::runtime_error("OpticalFlowVk: falha ao criar buffer SCD");
-	};
-	makeBuffer(m_scdHistogramBuffer, m_scdHistogramMemory, histogramSize);
-	makeBuffer(m_scdPreviousHistogramBuffer, m_scdPreviousHistogramMemory, histogramSize);
-	makeBuffer(m_scdTempBuffer, m_scdTempMemory, histogramSize);
-	makeBuffer(m_scdOutputBuffer, m_scdOutputMemory, histogramSize);
+	// (V5) SCD no HLSL real sao RWTexture2D, NAO buffers (ver
+	// ffx_opticalflow_callbacks_hlsl.h): histogram/temp/output = R32_UINT,
+	// previous_histogram = R32_SFLOAT. Acessados como (indice, 0).
+	CreateImage2D(m_renderer, m_memoryManager, kHistogramElementCount, 1, VK_FORMAT_R32_UINT, m_scdHistogramImage, m_scdHistogramMemory, m_scdHistogramView, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	CreateImage2D(m_renderer, m_memoryManager, kHistogramElementCount, 1, VK_FORMAT_R32_SFLOAT, m_scdPreviousHistogramImage, m_scdPreviousHistogramMemory, m_scdPreviousHistogramView, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	CreateImage2D(m_renderer, m_memoryManager, kHistogramElementCount, 1, VK_FORMAT_R32_UINT, m_scdTempImage, m_scdTempMemory, m_scdTempView, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	CreateImage2D(m_renderer, m_memoryManager, kHistogramElementCount, 1, VK_FORMAT_R32_UINT, m_scdOutputImage, m_scdOutputMemory, m_scdOutputView, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 
+	// Tamanho da textura de flow = ceil(w/8) x ceil(h/8) (GetOpticalFlowTextureSize do SDK)
+	const uint32_t flowW = DivRoundUp(width, kOpticalFlowBlockSize), flowH = DivRoundUp(height, kOpticalFlowBlockSize);
 	// 3 estagios do calculo do flow em si: raw (pass4) -> filtered (pass5) -> final (pass6)
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R16G16_SFLOAT, m_opticalFlowRawImage, m_opticalFlowRawMemory, m_opticalFlowRawView);
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R16G16_SFLOAT, m_opticalFlowFilteredImage, m_opticalFlowFilteredMemory, m_opticalFlowFilteredView);
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R16G16_SFLOAT, m_opticalFlowVectorImage, m_opticalFlowVectorMemory, m_opticalFlowVectorView);
+	CreateImage2D(m_renderer, m_memoryManager, flowW, flowH, VK_FORMAT_R32G32_SINT, m_opticalFlowRawImage, m_opticalFlowRawMemory, m_opticalFlowRawView);
+	CreateImage2D(m_renderer, m_memoryManager, flowW, flowH, VK_FORMAT_R32G32_SINT, m_opticalFlowFilteredImage, m_opticalFlowFilteredMemory, m_opticalFlowFilteredView);
+	CreateImage2D(m_renderer, m_memoryManager, flowW, flowH, VK_FORMAT_R32G32_SINT, m_opticalFlowVectorImage, m_opticalFlowVectorMemory, m_opticalFlowVectorView);
 
 	if (!m_memoryManager->CreateBuffer(sizeof(OpticalFlowConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, m_constantBuffer, m_constantBufferMemory))
@@ -230,7 +231,7 @@ void OpticalFlowVk::CreatePerPassLayoutsAndPipelines()
 	constexpr auto UB = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	constexpr auto SI = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;   // SEM sampler - Load() puro
 	constexpr auto ST = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	constexpr auto SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	constexpr auto SB = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // SCD e RWTexture2D, nao buffer (V5)
 
 	// Layouts EXATOS confirmados via inspecao binaria. Os numeros de
 	// binding usam o esquema de shift (b+0, t+100, u+200) - ver aviso
@@ -312,7 +313,7 @@ void OpticalFlowVk::CreateDescriptorPoolAndSets()
 	VkDevice device = m_renderer->GetLogicalDevice();
 	VkDescriptorPoolSize poolSizes[3] = {
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 16 },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 16 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 32 },
 		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16 },
 	};
 	// UNIFORM_BUFFER somado a parte pra nao exagerar na contagem (so 4 passes usam)
@@ -369,10 +370,10 @@ void OpticalFlowVk::UpdateDescriptorSets(VkImageView currentColorView, VkImageVi
 	VkDescriptorImageInfo filteredStorageInfo{ VK_NULL_HANDLE, m_opticalFlowFilteredView, VK_IMAGE_LAYOUT_GENERAL };
 	VkDescriptorImageInfo filteredSampledInfo{ VK_NULL_HANDLE, m_opticalFlowFilteredView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	VkDescriptorImageInfo finalStorageInfo{ VK_NULL_HANDLE, m_opticalFlowVectorView, VK_IMAGE_LAYOUT_GENERAL };
-	VkDescriptorBufferInfo histInfo{ m_scdHistogramBuffer, 0, VK_WHOLE_SIZE };
-	VkDescriptorBufferInfo prevHistInfo{ m_scdPreviousHistogramBuffer, 0, VK_WHOLE_SIZE };
-	VkDescriptorBufferInfo tempInfo{ m_scdTempBuffer, 0, VK_WHOLE_SIZE };
-	VkDescriptorBufferInfo outHistInfo{ m_scdOutputBuffer, 0, VK_WHOLE_SIZE };
+	VkDescriptorImageInfo histInfo{ VK_NULL_HANDLE, m_scdHistogramView, VK_IMAGE_LAYOUT_GENERAL };
+	VkDescriptorImageInfo prevHistInfo{ VK_NULL_HANDLE, m_scdPreviousHistogramView, VK_IMAGE_LAYOUT_GENERAL };
+	VkDescriptorImageInfo tempInfo{ VK_NULL_HANDLE, m_scdTempView, VK_IMAGE_LAYOUT_GENERAL };
+	VkDescriptorImageInfo outHistInfo{ VK_NULL_HANDLE, m_scdOutputView, VK_IMAGE_LAYOUT_GENERAL };
 
 	auto write = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type,
 		const VkDescriptorBufferInfo* buf, const VkDescriptorImageInfo* img)
@@ -405,24 +406,24 @@ void OpticalFlowVk::UpdateDescriptorSets(VkImageView currentColorView, VkImageVi
 	s = m_descriptorSets[(uint32_t)Pass::GenerateScdHistogram];
 	write(s, 0 + kShiftB, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &cbInfo, nullptr);
 	write(s, 0 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &lumaSampledInfo);
-	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &histInfo, nullptr);
+	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &histInfo);
 
 	s = m_descriptorSets[(uint32_t)Pass::ComputeScdDivergence];
-	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &histInfo, nullptr);
-	write(s, 1 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &prevHistInfo, nullptr);
-	write(s, 2 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &tempInfo, nullptr);
-	write(s, 3 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &outHistInfo, nullptr);
+	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &histInfo);
+	write(s, 1 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &prevHistInfo);
+	write(s, 2 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &tempInfo);
+	write(s, 3 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &outHistInfo);
 
 	s = m_descriptorSets[(uint32_t)Pass::ComputeOpticalFlowAdvancedV5];
 	write(s, 0 + kShiftB, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &cbInfo, nullptr);
 	write(s, 0 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &lumaSampledInfo);
 	write(s, 1 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &lumaPreviousSampledInfo);
 	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &rawStorageInfo);
-	write(s, 1 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &outHistInfo, nullptr);
+	write(s, 1 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &outHistInfo);
 
 	s = m_descriptorSets[(uint32_t)Pass::FilterOpticalFlowV5];
 	write(s, 0 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &rawSampledInfo);
-	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &filteredStorageInfo);
+	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &finalStorageInfo);
 
 	s = m_descriptorSets[(uint32_t)Pass::ScaleOpticalFlowAdvancedV5];
 	write(s, 0 + kShiftB, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &cbInfo, nullptr);
@@ -430,7 +431,7 @@ void OpticalFlowVk::UpdateDescriptorSets(VkImageView currentColorView, VkImageVi
 	write(s, 1 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &lumaPreviousSampledInfo);
 	write(s, 2 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &filteredSampledInfo);
 	write(s, 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &finalStorageInfo);
-	write(s, 1 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &outHistInfo, nullptr);
+	write(s, 1 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &outHistInfo);
 }
 
 void OpticalFlowVk::ComputeToComputeBarrier(VkCommandBuffer cb)
@@ -446,7 +447,8 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 {
 	if (!m_resourcesTransitioned)
 	{
-		std::vector<VkImage> images = { m_lumaImage, m_lumaPreviousImage, m_opticalFlowRawImage, m_opticalFlowFilteredImage, m_opticalFlowVectorImage };
+		std::vector<VkImage> images = { m_lumaImage, m_lumaPreviousImage, m_opticalFlowRawImage, m_opticalFlowFilteredImage, m_opticalFlowVectorImage,
+			m_scdHistogramImage, m_scdPreviousHistogramImage, m_scdTempImage, m_scdOutputImage };
 		// Pass::ComputeLuminancePyramid removido - imagens de piramide nao existem mais, nada a transicionar aqui.
 
 		std::vector<VkImageMemoryBarrier> barriers(images.size());
@@ -486,6 +488,25 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 
 	UpdateDescriptorSets(currentColorView, previousColorView);
 
+	// Zera os acumuladores do SCD (InterlockedAdd) a cada frame; o
+	// "previous histogram" so no primeiro frame (SDK faz o mesmo no reset).
+	{
+		VkClearColorValue zero{};
+		VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		vkCmdClearColorImage(commandBuffer, m_scdHistogramImage, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+		vkCmdClearColorImage(commandBuffer, m_scdTempImage, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+		vkCmdClearColorImage(commandBuffer, m_scdOutputImage, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+		if (m_frameCounter == 0 || reset)
+			vkCmdClearColorImage(commandBuffer, m_scdPreviousHistogramImage, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+		m_frameCounter++;
+
+		VkMemoryBarrier mb{};
+		mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+		mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+	}
+
 	auto dispatchWithSet = [&](Pass pass, VkDescriptorSet set, uint32_t gx, uint32_t gy, uint32_t gz = 1)
 	{
 		uint32_t idx = (uint32_t)pass;
@@ -516,14 +537,15 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 
 	dispatchPass(Pass::ComputeScdDivergence, kHistogramsPerDim * kHistogramsPerDim, kHistogramShifts);
 
-	dispatchPass(Pass::ComputeOpticalFlowAdvancedV5, DivRoundUp(DivRoundUp(m_width, 4), 64), m_height);
-
-	dispatchPass(Pass::FilterOpticalFlowV5, DivRoundUp(m_width, 16), DivRoundUp(m_height, 4));
-
-	dispatchPass(Pass::ScaleOpticalFlowAdvancedV5, DivRoundUp(m_width, 4), DivRoundUp(m_height, 4));
-
-	VkBufferCopy copyRegion{ 0, 0, kHistogramElementCount * sizeof(uint32_t) };
-	vkCmdCopyBuffer(commandBuffer, m_scdHistogramBuffer, m_scdPreviousHistogramBuffer, 1, &copyRegion);
+	// Formulas de ffx_opticalflow.cpp (nivel 0): compute = ((ceil(w/4)*16+63)/64, ceil(h/16));
+	// filter = (ceil(flowW/16), ceil(flowH/4)) escrevendo direto o vetor FINAL.
+	// O pass Scale so roda ENTRE niveis da piramide - nao no nivel 0.
+	{
+		const uint32_t flowW = DivRoundUp(m_width, kOpticalFlowBlockSize);
+		const uint32_t flowH = DivRoundUp(m_height, kOpticalFlowBlockSize);
+		dispatchPass(Pass::ComputeOpticalFlowAdvancedV5, (DivRoundUp(m_width, 4) * 16 + 63) / 64, DivRoundUp(m_height, 16));
+		dispatchPass(Pass::FilterOpticalFlowV5, DivRoundUp(flowW, 16), DivRoundUp(flowH, 4));
+	}
 
 	(void)reset; // TODO: usar reset pra zerar o historico SCD no corte de cena
 }
@@ -560,9 +582,9 @@ void OpticalFlowVk::DestroyAll()
 		if (buf) vkDestroyBuffer(device, buf, nullptr);
 		if (mem) vkFreeMemory(device, mem, nullptr);
 	};
-	destroyBuffer(m_scdHistogramBuffer, m_scdHistogramMemory);
-	destroyBuffer(m_scdPreviousHistogramBuffer, m_scdPreviousHistogramMemory);
-	destroyBuffer(m_scdTempBuffer, m_scdTempMemory);
-	destroyBuffer(m_scdOutputBuffer, m_scdOutputMemory);
+	destroyImage(m_scdHistogramImage, m_scdHistogramMemory, m_scdHistogramView);
+	destroyImage(m_scdPreviousHistogramImage, m_scdPreviousHistogramMemory, m_scdPreviousHistogramView);
+	destroyImage(m_scdTempImage, m_scdTempMemory, m_scdTempView);
+	destroyImage(m_scdOutputImage, m_scdOutputMemory, m_scdOutputView);
 	destroyBuffer(m_constantBuffer, m_constantBufferMemory);
 }

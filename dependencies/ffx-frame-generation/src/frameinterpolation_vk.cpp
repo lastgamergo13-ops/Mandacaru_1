@@ -1,8 +1,4 @@
-// frameinterpolation_vk.cpp
-//
-// Ver o comentario no topo de frameinterpolation_vk.h antes de mexer
-// aqui - esta e uma PRIMEIRA VERSAO, com os mesmos avisos de escopo
-// do opticalflow_vk.cpp.
+// frameinterpolation_vk.cpp  (V6 - ver frameinterpolation_vk.h)
 
 #include "frameinterpolation_vk.h"
 #include "opticalflow_vk.h"
@@ -13,131 +9,40 @@
 #include <fstream>
 #include <vector>
 #include <stdexcept>
+#include <string>
 #include <cstring>
 
-// Estrutura do cbuffer cbFI (FFX_FRAMEINTERPOLATION_BIND_CB_FRAMEINTERPOLATION),
-// copiada campo a campo de ffx_frameinterpolation_callbacks_hlsl.h -
-// se a AMD mudar esse layout numa atualizacao do SDK, atualize aqui tambem.
-struct FrameInterpolationConstants
+// Espelha o cbuffer cbInterp de mandacaru_frameinterpolation_simple.hlsl (48 bytes).
+struct InterpConstants
 {
-	int32_t  renderSize[2];
-	int32_t  displaySize[2];
-
-	float    displaySizeRcp[2];
-	float    cameraNear;
-	float    cameraFar;
-
-	int32_t  upscalerTargetSize[2];
-	int32_t  mode;
-	int32_t  reset;
-
-	float    deviceToViewDepth[4];
-
-	float    deltaTime;
-	int32_t  hudLessAttachedFactor;
-	int32_t  distortionFieldSize[2];
-
-	float    opticalFlowScale[2];
-	int32_t  opticalFlowBlockSize;
-	uint32_t dispatchFlags;
-
-	int32_t  maxRenderSize[2];
-	int32_t  opticalFlowHalfResMode;
-	int32_t  numInstances;
-
-	int32_t  interpolationRectBase[2];
-	int32_t  interpolationRectSize[2];
-
-	float    debugBarColor[3];
-	uint32_t backBufferTransferFunction;
-
-	float    minMaxLuminance[2];
-	float    tanHalfFov;
-	int32_t  pad1;
-
-	float    jitter[2];
-	float    motionVectorScale[2];
+	int32_t iSize[2];
+	int32_t iFlowSize[2];
+	float   fFlowSign;      // +1: vetor aponta do frame ATUAL para o ANTERIOR. Se o resultado
+	                        // aparecer "ao contrario" (objetos andando pra tras), troque pra -1.
+	float   fFlowScale;
+	float   fT;
+	float   fErrThreshold;
+	int32_t iBlock;
+	int32_t pad[3];
 };
+static_assert(sizeof(InterpConstants) == 48, "cbInterp deve ter 48 bytes");
 
 namespace
 {
-	constexpr const char* kPassShaderFiles[(uint32_t)FrameInterpolationVk::Pass::Count] = {
-		"ffx_frameinterpolation_setup_pass.spv",
-		"ffx_frameinterpolation_reconstruct_previous_depth_pass.spv",
-		"ffx_frameinterpolation_optical_flow_vector_field_pass.spv",
-		"ffx_frameinterpolation_disocclusion_mask_pass.spv",
-		"ffx_frameinterpolation_pass.spv",
-		"ffx_frameinterpolation_compute_inpainting_pyramid_pass.spv",
-		"ffx_frameinterpolation_inpainting_pass.spv",
-	};
+	constexpr const char* kShaderFile = "mandacaru_frameinterpolation_simple.spv";
 
-	// TODO: mesmo aviso do opticalflow_vk.cpp - confirme o tamanho real
-	// do thread group abrindo o header do SDK antes de usar em producao.
-	constexpr uint32_t kThreadGroupWidth = 8;
-	constexpr uint32_t kThreadGroupHeight = 8;
+	// Esquema de shift (dxc -fvk-b-shift 0 / -fvk-t-shift 100 / -fvk-u-shift 200)
+	constexpr uint32_t kBindCb = 0;
+	constexpr uint32_t kBindPrev = 100;
+	constexpr uint32_t kBindCur = 101;
+	constexpr uint32_t kBindFlow = 102;
+	constexpr uint32_t kBindOut = 200;
 
-	uint32_t DivRoundUp(uint32_t value, uint32_t divisor)
-	{
-		return (value + divisor - 1) / divisor;
-	}
+	uint32_t DivRoundUp(uint32_t v, uint32_t d) { return (v + d - 1) / d; }
 
-	// Mesmo mecanismo do opticalflow_vk.cpp - ver o comentario detalhado
-	// la (ActiveSettings::GetDataPath(), extraido de assets/resources/
-	// no Android via CemuApplication.kt -> saveDataFiles()).
 	fs::path GetShaderPath(const char* fileName)
 	{
 		return ActiveSettings::GetDataPath("resources/ffx-frame-generation/shaders_spv/{}", fileName);
-	}
-
-	// Helper generico de criacao de imagem 2D - repete o padrao usado
-	// varias vezes no opticalflow_vk.cpp; se voce ja fatorou isso num
-	// lugar comum durante a integracao, use essa versao compartilhada
-	// no lugar desta copia local.
-	void CreateImage2D(VulkanRenderer* renderer, VKRMemoryManager* memoryManager,
-		uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
-		VkImage& outImage, VkDeviceMemory& outMemory, VkImageView& outView)
-	{
-		VkDevice device = renderer->GetLogicalDevice();
-
-		VkImageCreateInfo imageInfo{};
-		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		imageInfo.imageType = VK_IMAGE_TYPE_2D;
-		imageInfo.extent = { width, height, 1 };
-		imageInfo.mipLevels = 1;
-		imageInfo.arrayLayers = 1;
-		imageInfo.format = format;
-		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		imageInfo.usage = usage;
-		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-
-		if (vkCreateImage(device, &imageInfo, nullptr, &outImage) != VK_SUCCESS)
-			throw std::runtime_error("FrameInterpolationVk: falha ao criar imagem intermediaria");
-
-		VkMemoryRequirements memReq;
-		vkGetImageMemoryRequirements(device, outImage, &memReq);
-
-		uint32_t memoryTypeIndex = 0;
-		if (!memoryManager->FindMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memoryTypeIndex))
-			throw std::runtime_error("FrameInterpolationVk: nao achei memory type compativel");
-
-		VkMemoryAllocateInfo allocInfo{};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memReq.size;
-		allocInfo.memoryTypeIndex = memoryTypeIndex;
-		if (vkAllocateMemory(device, &allocInfo, nullptr, &outMemory) != VK_SUCCESS)
-			throw std::runtime_error("FrameInterpolationVk: vkAllocateMemory falhou");
-		vkBindImageMemory(device, outImage, outMemory, 0);
-
-		VkImageViewCreateInfo viewInfo{};
-		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		viewInfo.image = outImage;
-		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		viewInfo.format = format;
-		viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-		if (vkCreateImageView(device, &viewInfo, nullptr, &outView) != VK_SUCCESS)
-			throw std::runtime_error("FrameInterpolationVk: falha ao criar image view");
 	}
 }
 
@@ -145,259 +50,141 @@ FrameInterpolationVk::FrameInterpolationVk(VulkanRenderer* renderer, uint32_t re
 	: m_renderer(renderer), m_width(resolutionWidth), m_height(resolutionHeight)
 {
 	m_memoryManager = renderer->GetMemoryManager();
-
-	CreateShaderModules();
-	CreateIntermediateResources(resolutionWidth, resolutionHeight);
-	CreatePipelines();
-	CreateDescriptorSets();
-	CreateSampler();
+	CreateResources();
+	CreatePipeline();
+	CreateDescriptors();
 }
 
-FrameInterpolationVk::~FrameInterpolationVk()
+FrameInterpolationVk::~FrameInterpolationVk() { DestroyAll(); }
+
+void FrameInterpolationVk::CreateResources()
 {
-	DestroyAll();
-}
+	VkDevice device = m_renderer->GetLogicalDevice();
 
-VkShaderModule FrameInterpolationVk::LoadShaderModule(const char* spvFileName) const
-{
-	fs::path path = GetShaderPath(spvFileName);
-	std::ifstream file(path, std::ios::ate | std::ios::binary);
-	if (!file.is_open())
-		throw std::runtime_error(std::string("FrameInterpolationVk: nao consegui abrir o shader ") + path.string());
+	VkImageCreateInfo imageInfo{};
+	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	imageInfo.imageType = VK_IMAGE_TYPE_2D;
+	imageInfo.extent = { m_width, m_height, 1 };
+	imageInfo.mipLevels = 1;
+	imageInfo.arrayLayers = 1;
+	imageInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+	imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+	if (vkCreateImage(device, &imageInfo, nullptr, &m_interpolatedFrameImage) != VK_SUCCESS)
+		throw std::runtime_error("FrameInterpolationVk: falha ao criar imagem de saida");
 
-	size_t fileSize = (size_t)file.tellg();
-	std::vector<char> buffer(fileSize);
-	file.seekg(0);
-	file.read(buffer.data(), fileSize);
-	file.close();
+	VkMemoryRequirements memReq;
+	vkGetImageMemoryRequirements(device, m_interpolatedFrameImage, &memReq);
+	uint32_t memoryTypeIndex = 0;
+	if (!m_memoryManager->FindMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memoryTypeIndex))
+		throw std::runtime_error("FrameInterpolationVk: nao achei memory type compativel");
+	VkMemoryAllocateInfo allocInfo{};
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	allocInfo.allocationSize = memReq.size;
+	allocInfo.memoryTypeIndex = memoryTypeIndex;
+	if (vkAllocateMemory(device, &allocInfo, nullptr, &m_interpolatedFrameMemory) != VK_SUCCESS)
+		throw std::runtime_error("FrameInterpolationVk: vkAllocateMemory falhou");
+	vkBindImageMemory(device, m_interpolatedFrameImage, m_interpolatedFrameMemory, 0);
 
-	VkShaderModuleCreateInfo createInfo{};
-	createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-	createInfo.codeSize = buffer.size();
-	createInfo.pCode = reinterpret_cast<const uint32_t*>(buffer.data());
+	VkImageViewCreateInfo viewInfo{};
+	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	viewInfo.image = m_interpolatedFrameImage;
+	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	viewInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+	viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+	if (vkCreateImageView(device, &viewInfo, nullptr, &m_interpolatedFrameView) != VK_SUCCESS)
+		throw std::runtime_error("FrameInterpolationVk: falha ao criar image view");
 
-	VkShaderModule module;
-	if (vkCreateShaderModule(m_renderer->GetLogicalDevice(), &createInfo, nullptr, &module) != VK_SUCCESS)
-		throw std::runtime_error(std::string("FrameInterpolationVk: vkCreateShaderModule falhou para ") + spvFileName);
-
-	return module;
-}
-
-void FrameInterpolationVk::CreateShaderModules()
-{
-	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
-		m_shaderModules[i] = LoadShaderModule(kPassShaderFiles[i]);
-}
-
-void FrameInterpolationVk::CreateIntermediateResources(uint32_t width, uint32_t height)
-{
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		m_reconstructedPrevDepthImage, m_reconstructedPrevDepthMemory, m_reconstructedPrevDepthView);
-
-	// TODO: ver aviso no .h - esta imagem nao e escrita por nenhum
-	// dispatch nesta versao, ja que RECONSTRUCT_AND_DILATE nao esta
-	// sendo chamado. Fica alocada e zerada (VK_IMAGE_LAYOUT_UNDEFINED
-	// -> GENERAL, sem conteudo util) ate isso ser resolvido.
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R16G16_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		m_dilatedVelocityImage, m_dilatedVelocityMemory, m_dilatedVelocityView);
-
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		m_disocclusionMaskImage, m_disocclusionMaskMemory, m_disocclusionMaskView);
-
-	// TODO: piramide completa (varios niveis de mip) - 1 nivel aqui,
-	// mesma simplificacao do luminance pyramid no OpticalFlowVk.
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32G32B32A32_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		m_inpaintingPyramidImage, m_inpaintingPyramidMemory, m_inpaintingPyramidView);
-
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R32_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		m_inpaintingMaskImage, m_inpaintingMaskMemory, m_inpaintingMaskView);
-
-	CreateImage2D(m_renderer, m_memoryManager, width, height, VK_FORMAT_R16G16B16A16_SFLOAT,
-		VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-		m_interpolatedFrameImage, m_interpolatedFrameMemory, m_interpolatedFrameView);
-	// VK_IMAGE_USAGE_TRANSFER_SRC_BIT acima porque o swapchain_vk (proxima
-	// etapa) vai precisar copiar/blitar isso pra dentro do swapchain.
-
-	bool ok = m_memoryManager->CreateBuffer(
-		sizeof(FrameInterpolationConstants),
-		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+	if (!m_memoryManager->CreateBuffer(sizeof(InterpConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-		m_constantBuffer,
-		m_constantBufferMemory);
-	if (!ok)
+		m_constantBuffer, m_constantBufferMemory))
 		throw std::runtime_error("FrameInterpolationVk: falha ao criar m_constantBuffer");
 }
 
-void FrameInterpolationVk::CreatePipelines()
+void FrameInterpolationVk::CreatePipeline()
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
 
-	// Layout simplificado (mesma abordagem do OpticalFlowVk - um so
-	// layout unificado pra todos os passes, ver aviso sobre fidelidade
-	// aos bindings reais por pass):
-	//   0: UBO cbFI
-	//   1: cor atual (combined image sampler)
-	//   2: cor anterior / previousInterpolationSource (combined image sampler)
-	//   3: vetores de optical flow, vindos do OpticalFlowVk (combined image sampler)
-	//   4: profundidade reconstruida do frame anterior (storage image)
-	//   5: velocidade dilatada (storage image)
-	//   6: mascara de disoclusao (storage image)
-	//   7: piramide de inpainting (storage image)
-	//   8: mascara de inpainting (storage image)
-	//   9: saida - frame interpolado (storage image)
-	VkDescriptorSetLayoutBinding bindings[10]{};
-	bindings[0] = { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[1] = { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[2] = { 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[3] = { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[4] = { 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[5] = { 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[6] = { 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[7] = { 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[8] = { 8, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
-	bindings[9] = { 9, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+	fs::path path = GetShaderPath(kShaderFile);
+	std::ifstream file(path, std::ios::ate | std::ios::binary);
+	if (!file.is_open())
+		throw std::runtime_error(std::string("FrameInterpolationVk: nao consegui abrir o shader ") + path.string());
+	size_t fileSize = (size_t)file.tellg();
+	std::vector<char> code(fileSize);
+	file.seekg(0);
+	file.read(code.data(), fileSize);
+	file.close();
+
+	VkShaderModuleCreateInfo smInfo{};
+	smInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	smInfo.codeSize = code.size();
+	smInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+	if (vkCreateShaderModule(device, &smInfo, nullptr, &m_shaderModule) != VK_SUCCESS)
+		throw std::runtime_error("FrameInterpolationVk: vkCreateShaderModule falhou");
+
+	VkDescriptorSetLayoutBinding b[5]{};
+	auto setB = [&](int i, uint32_t binding, VkDescriptorType t)
+	{
+		b[i].binding = binding; b[i].descriptorType = t; b[i].descriptorCount = 1; b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+	};
+	setB(0, kBindCb, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	setB(1, kBindPrev, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+	setB(2, kBindCur, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+	setB(3, kBindFlow, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+	setB(4, kBindOut, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 
 	VkDescriptorSetLayoutCreateInfo layoutInfo{};
 	layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	layoutInfo.bindingCount = 10;
-	layoutInfo.pBindings = bindings;
+	layoutInfo.bindingCount = 5;
+	layoutInfo.pBindings = b;
 	if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_descriptorSetLayout) != VK_SUCCESS)
 		throw std::runtime_error("FrameInterpolationVk: falha ao criar descriptor set layout");
 
-	VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-	pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-	pipelineLayoutInfo.setLayoutCount = 1;
-	pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
-	if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS)
+	VkPipelineLayoutCreateInfo plInfo{};
+	plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	plInfo.setLayoutCount = 1;
+	plInfo.pSetLayouts = &m_descriptorSetLayout;
+	if (vkCreatePipelineLayout(device, &plInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS)
 		throw std::runtime_error("FrameInterpolationVk: falha ao criar pipeline layout");
 
-	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
-	{
-		VkPipelineShaderStageCreateInfo stageInfo{};
-		stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-		stageInfo.module = m_shaderModules[i];
-		stageInfo.pName = "CS";
-
-		VkComputePipelineCreateInfo pipelineInfo{};
-		pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-		pipelineInfo.stage = stageInfo;
-		pipelineInfo.layout = m_pipelineLayout;
-
-		if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipelines[i]) != VK_SUCCESS)
-			throw std::runtime_error(std::string("FrameInterpolationVk: falha ao criar pipeline para pass ") + std::to_string(i));
-	}
+	VkComputePipelineCreateInfo pInfo{};
+	pInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+	pInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	pInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+	pInfo.stage.module = m_shaderModule;
+	pInfo.stage.pName = "CS";
+	pInfo.layout = m_pipelineLayout;
+	VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pInfo, nullptr, &m_pipeline);
+	if (r != VK_SUCCESS)
+		throw std::runtime_error(std::string("FrameInterpolationVk: falha ao criar pipeline (VkResult=") + std::to_string((int)r) + ")");
 }
 
-void FrameInterpolationVk::CreateDescriptorSets()
+void FrameInterpolationVk::CreateDescriptors()
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
-
-	VkDescriptorPoolSize poolSizes[3]{};
-	poolSizes[0] = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, (uint32_t)Pass::Count };
-	poolSizes[1] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)Pass::Count * 3 };
-	poolSizes[2] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)Pass::Count * 6 };
-
-	VkDescriptorPoolCreateInfo poolInfo{};
-	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-	poolInfo.poolSizeCount = 3;
-	poolInfo.pPoolSizes = poolSizes;
-	poolInfo.maxSets = (uint32_t)Pass::Count;
-	if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS)
+	VkDescriptorPoolSize sizes[3] = {
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 3 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+	};
+	VkDescriptorPoolCreateInfo pool{};
+	pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	pool.maxSets = 1;
+	pool.poolSizeCount = 3;
+	pool.pPoolSizes = sizes;
+	if (vkCreateDescriptorPool(device, &pool, nullptr, &m_descriptorPool) != VK_SUCCESS)
 		throw std::runtime_error("FrameInterpolationVk: falha ao criar descriptor pool");
 
-	std::vector<VkDescriptorSetLayout> layouts((uint32_t)Pass::Count, m_descriptorSetLayout);
-	VkDescriptorSetAllocateInfo allocInfo{};
-	allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-	allocInfo.descriptorPool = m_descriptorPool;
-	allocInfo.descriptorSetCount = (uint32_t)Pass::Count;
-	allocInfo.pSetLayouts = layouts.data();
-	if (vkAllocateDescriptorSets(device, &allocInfo, m_descriptorSets) != VK_SUCCESS)
-		throw std::runtime_error("FrameInterpolationVk: falha ao alocar descriptor sets");
-}
-
-void FrameInterpolationVk::CreateSampler()
-{
-	VkSamplerCreateInfo samplerInfo{};
-	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-	samplerInfo.magFilter = VK_FILTER_LINEAR;
-	samplerInfo.minFilter = VK_FILTER_LINEAR;
-	samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	samplerInfo.anisotropyEnable = VK_FALSE;
-	samplerInfo.maxAnisotropy = 1.0f;
-	samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-	samplerInfo.unnormalizedCoordinates = VK_FALSE;
-	samplerInfo.compareEnable = VK_FALSE;
-	samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-	samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-
-	if (vkCreateSampler(m_renderer->GetLogicalDevice(), &samplerInfo, nullptr, &m_colorSampler) != VK_SUCCESS)
-		throw std::runtime_error("FrameInterpolationVk: falha ao criar m_colorSampler");
-}
-
-void FrameInterpolationVk::UpdateDescriptorSets(VkImageView currentColorView, VkImageView previousColorView, VkImageView opticalFlowVectorView)
-{
-	VkDevice device = m_renderer->GetLogicalDevice();
-
-	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
-	{
-		VkDescriptorBufferInfo cbInfo{ m_constantBuffer, 0, sizeof(FrameInterpolationConstants) };
-
-		VkDescriptorImageInfo currentColorInfo{ m_colorSampler, currentColorView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-		VkDescriptorImageInfo previousColorInfo{ m_colorSampler, previousColorView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-		VkDescriptorImageInfo opticalFlowInfo{ m_colorSampler, opticalFlowVectorView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-
-		VkDescriptorImageInfo prevDepthInfo{ VK_NULL_HANDLE, m_reconstructedPrevDepthView, VK_IMAGE_LAYOUT_GENERAL };
-		VkDescriptorImageInfo dilatedVelInfo{ VK_NULL_HANDLE, m_dilatedVelocityView, VK_IMAGE_LAYOUT_GENERAL };
-		VkDescriptorImageInfo disocclusionInfo{ VK_NULL_HANDLE, m_disocclusionMaskView, VK_IMAGE_LAYOUT_GENERAL };
-		VkDescriptorImageInfo inpaintPyramidInfo{ VK_NULL_HANDLE, m_inpaintingPyramidView, VK_IMAGE_LAYOUT_GENERAL };
-		VkDescriptorImageInfo inpaintMaskInfo{ VK_NULL_HANDLE, m_inpaintingMaskView, VK_IMAGE_LAYOUT_GENERAL };
-		VkDescriptorImageInfo outputInfo{ VK_NULL_HANDLE, m_interpolatedFrameView, VK_IMAGE_LAYOUT_GENERAL };
-
-		VkWriteDescriptorSet writes[10]{};
-		auto setWrite = [&](uint32_t idx, uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo* bufInfo, const VkDescriptorImageInfo* imgInfo)
-		{
-			writes[idx].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writes[idx].dstSet = m_descriptorSets[i];
-			writes[idx].dstBinding = binding;
-			writes[idx].descriptorCount = 1;
-			writes[idx].descriptorType = type;
-			writes[idx].pBufferInfo = bufInfo;
-			writes[idx].pImageInfo = imgInfo;
-		};
-
-		setWrite(0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &cbInfo, nullptr);
-		setWrite(1, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &currentColorInfo);
-		setWrite(2, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &previousColorInfo);
-		setWrite(3, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &opticalFlowInfo);
-		setWrite(4, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &prevDepthInfo);
-		setWrite(5, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &dilatedVelInfo);
-		setWrite(6, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &disocclusionInfo);
-		setWrite(7, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &inpaintPyramidInfo);
-		setWrite(8, 8, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &inpaintMaskInfo);
-		setWrite(9, 9, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &outputInfo);
-
-		vkUpdateDescriptorSets(device, 10, writes, 0, nullptr);
-	}
-}
-
-void FrameInterpolationVk::ComputeToComputeBarrier(VkCommandBuffer cb)
-{
-	VkMemoryBarrier barrier{};
-	barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-	barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-	barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-
-	vkCmdPipelineBarrier(cb,
-		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-		0, 1, &barrier, 0, nullptr, 0, nullptr);
+	VkDescriptorSetAllocateInfo ai{};
+	ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+	ai.descriptorPool = m_descriptorPool;
+	ai.descriptorSetCount = 1;
+	ai.pSetLayouts = &m_descriptorSetLayout;
+	if (vkAllocateDescriptorSets(device, &ai, &m_descriptorSet) != VK_SUCCESS)
+		throw std::runtime_error("FrameInterpolationVk: falha ao alocar descriptor set");
 }
 
 void FrameInterpolationVk::Dispatch(VkCommandBuffer commandBuffer,
@@ -407,142 +194,85 @@ void FrameInterpolationVk::Dispatch(VkCommandBuffer commandBuffer,
 	float deltaTimeSeconds,
 	bool reset)
 {
+	(void)deltaTimeSeconds; (void)reset; // t fixo = 0.5 (um frame gerado entre dois reais)
+	VkDevice device = m_renderer->GetLogicalDevice();
+
 	if (!m_resourcesTransitioned)
 	{
-		VkImage imagesToTransition[6] = {
-			m_reconstructedPrevDepthImage, m_dilatedVelocityImage, m_disocclusionMaskImage,
-			m_inpaintingPyramidImage, m_inpaintingMaskImage, m_interpolatedFrameImage
-		};
-
-		VkImageMemoryBarrier barriers[6]{};
-		for (int i = 0; i < 6; i++)
-		{
-			barriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-			barriers[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			barriers[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-			barriers[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-			barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-			barriers[i].image = imagesToTransition[i];
-			barriers[i].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-			barriers[i].srcAccessMask = 0;
-			barriers[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-		}
-
-		vkCmdPipelineBarrier(commandBuffer,
-			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			0, 0, nullptr, 0, nullptr, 6, barriers);
-
+		VkImageMemoryBarrier bar{};
+		bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		bar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		bar.image = m_interpolatedFrameImage;
+		bar.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		bar.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0, 0, nullptr, 0, nullptr, 1, &bar);
 		m_resourcesTransitioned = true;
 	}
 
-	// 1) Atualiza o buffer de constantes
+	// Constantes
 	{
-		FrameInterpolationConstants constants{};
-		constants.renderSize[0] = (int32_t)m_width;
-		constants.renderSize[1] = (int32_t)m_height;
-		constants.displaySize[0] = (int32_t)m_width;
-		constants.displaySize[1] = (int32_t)m_height;
-		constants.displaySizeRcp[0] = 1.0f / (float)m_width;
-		constants.displaySizeRcp[1] = 1.0f / (float)m_height;
-		constants.cameraNear = 0.1f;  // TODO: o Cemu nao tem depth real do jogo -
-		constants.cameraFar = 1000.0f; // ver aviso no relatorio principal sobre
-		                                // reconstrucao de depth sem depth real
-		constants.upscalerTargetSize[0] = (int32_t)m_width;
-		constants.upscalerTargetSize[1] = (int32_t)m_height;
-		constants.mode = 0;
-		constants.reset = reset ? 1 : 0;
-		constants.deviceToViewDepth[0] = 1.0f;
-		constants.deviceToViewDepth[1] = 1.0f;
-		constants.deviceToViewDepth[2] = 0.0f;
-		constants.deviceToViewDepth[3] = 0.0f;
-		constants.deltaTime = deltaTimeSeconds;
-		constants.hudLessAttachedFactor = 0;
-		constants.distortionFieldSize[0] = 0;
-		constants.distortionFieldSize[1] = 0;
-		constants.opticalFlowScale[0] = 1.0f / (float)m_width;
-		constants.opticalFlowScale[1] = 1.0f / (float)m_height;
-		constants.opticalFlowBlockSize = 8; // TODO: confirme contra o valor real usado no OpticalFlowVk
-		constants.dispatchFlags = 0;
-		constants.maxRenderSize[0] = (int32_t)m_width;
-		constants.maxRenderSize[1] = (int32_t)m_height;
-		constants.opticalFlowHalfResMode = 0;
-		constants.numInstances = 1;
-		constants.interpolationRectBase[0] = 0;
-		constants.interpolationRectBase[1] = 0;
-		constants.interpolationRectSize[0] = (int32_t)m_width;
-		constants.interpolationRectSize[1] = (int32_t)m_height;
-		constants.debugBarColor[0] = 0.0f;
-		constants.debugBarColor[1] = 0.0f;
-		constants.debugBarColor[2] = 0.0f;
-		constants.backBufferTransferFunction = 0;
-		constants.minMaxLuminance[0] = 0.0f;
-		constants.minMaxLuminance[1] = 1.0f;
-		constants.tanHalfFov = 0.5773f; // ~60 graus de FOV - ajuste conforme o jogo, se relevante
-		constants.pad1 = 0;
-		constants.jitter[0] = 0.0f;
-		constants.jitter[1] = 0.0f;
-		constants.motionVectorScale[0] = 1.0f;
-		constants.motionVectorScale[1] = 1.0f;
-
+		InterpConstants c{};
+		c.iSize[0] = (int32_t)m_width;
+		c.iSize[1] = (int32_t)m_height;
+		c.iFlowSize[0] = (int32_t)DivRoundUp(m_width, OpticalFlowVk::kBlockSize);
+		c.iFlowSize[1] = (int32_t)DivRoundUp(m_height, OpticalFlowVk::kBlockSize);
+		c.fFlowSign = 1.0f;
+		c.fFlowScale = 1.0f;
+		c.fT = 0.5f;
+		c.fErrThreshold = 0.12f;
+		c.iBlock = (int32_t)OpticalFlowVk::kBlockSize;
 		void* mapped = nullptr;
-		vkMapMemory(m_renderer->GetLogicalDevice(), m_constantBufferMemory, 0, sizeof(constants), 0, &mapped);
-		memcpy(mapped, &constants, sizeof(constants));
-		vkUnmapMemory(m_renderer->GetLogicalDevice(), m_constantBufferMemory);
+		vkMapMemory(device, m_constantBufferMemory, 0, sizeof(c), 0, &mapped);
+		memcpy(mapped, &c, sizeof(c));
+		vkUnmapMemory(device, m_constantBufferMemory);
 	}
 
-	// 2) Atualiza os descriptor sets com as views deste frame
-	UpdateDescriptorSets(currentColorView, previousColorView, opticalFlow.GetOpticalFlowVectorView());
+	// Descriptors
+	VkDescriptorBufferInfo cb{ m_constantBuffer, 0, sizeof(InterpConstants) };
+	VkDescriptorImageInfo prev{ VK_NULL_HANDLE, previousColorView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+	VkDescriptorImageInfo cur{ VK_NULL_HANDLE, currentColorView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+	VkDescriptorImageInfo flow{ VK_NULL_HANDLE, opticalFlow.GetOpticalFlowVectorView(), VK_IMAGE_LAYOUT_GENERAL };
+	VkDescriptorImageInfo out{ VK_NULL_HANDLE, m_interpolatedFrameView, VK_IMAGE_LAYOUT_GENERAL };
 
-	// 3) Executa os 7 passes, na ordem CONFIRMADA no .cpp de referencia
-	//    (Setup -> ReconstructPreviousDepth -> OpticalFlowVectorField ->
-	//    DisocclusionMask -> Interpolation -> InpaintingPyramid -> Inpainting)
-	uint32_t groupsX = DivRoundUp(m_width, kThreadGroupWidth);
-	uint32_t groupsY = DivRoundUp(m_height, kThreadGroupHeight);
-
-	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
+	VkWriteDescriptorSet w[5]{};
+	auto setW = [&](int i, uint32_t binding, VkDescriptorType t, const VkDescriptorBufferInfo* bi, const VkDescriptorImageInfo* ii)
 	{
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelines[i]);
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout,
-			0, 1, &m_descriptorSets[i], 0, nullptr);
+		w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		w[i].dstSet = m_descriptorSet;
+		w[i].dstBinding = binding;
+		w[i].descriptorCount = 1;
+		w[i].descriptorType = t;
+		w[i].pBufferInfo = bi;
+		w[i].pImageInfo = ii;
+	};
+	setW(0, kBindCb, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &cb, nullptr);
+	setW(1, kBindPrev, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &prev);
+	setW(2, kBindCur, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &cur);
+	setW(3, kBindFlow, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nullptr, &flow);
+	setW(4, kBindOut, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &out);
+	vkUpdateDescriptorSets(device, 5, w, 0, nullptr);
 
-		vkCmdDispatch(commandBuffer, groupsX, groupsY, 1);
-
-		if (i + 1 < (uint32_t)Pass::Count)
-			ComputeToComputeBarrier(commandBuffer);
-	}
-
-	m_frameIndex++;
+	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
+	vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+	vkCmdDispatch(commandBuffer, DivRoundUp(m_width, 8), DivRoundUp(m_height, 8), 1);
 }
 
 void FrameInterpolationVk::DestroyAll()
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
 	vkDeviceWaitIdle(device);
-
-	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
-	{
-		if (m_pipelines[i]) vkDestroyPipeline(device, m_pipelines[i], nullptr);
-		if (m_shaderModules[i]) vkDestroyShaderModule(device, m_shaderModules[i], nullptr);
-	}
+	if (m_pipeline) vkDestroyPipeline(device, m_pipeline, nullptr);
 	if (m_pipelineLayout) vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
 	if (m_descriptorSetLayout) vkDestroyDescriptorSetLayout(device, m_descriptorSetLayout, nullptr);
 	if (m_descriptorPool) vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
-	if (m_colorSampler) vkDestroySampler(device, m_colorSampler, nullptr);
-
-	auto destroyImage = [&](VkImage& img, VkDeviceMemory& mem, VkImageView& view)
-	{
-		if (view) vkDestroyImageView(device, view, nullptr);
-		if (img) vkDestroyImage(device, img, nullptr);
-		if (mem) vkFreeMemory(device, mem, nullptr);
-	};
-
-	destroyImage(m_reconstructedPrevDepthImage, m_reconstructedPrevDepthMemory, m_reconstructedPrevDepthView);
-	destroyImage(m_dilatedVelocityImage, m_dilatedVelocityMemory, m_dilatedVelocityView);
-	destroyImage(m_disocclusionMaskImage, m_disocclusionMaskMemory, m_disocclusionMaskView);
-	destroyImage(m_inpaintingPyramidImage, m_inpaintingPyramidMemory, m_inpaintingPyramidView);
-	destroyImage(m_inpaintingMaskImage, m_inpaintingMaskMemory, m_inpaintingMaskView);
-	destroyImage(m_interpolatedFrameImage, m_interpolatedFrameMemory, m_interpolatedFrameView);
-
+	if (m_shaderModule) vkDestroyShaderModule(device, m_shaderModule, nullptr);
+	if (m_interpolatedFrameView) vkDestroyImageView(device, m_interpolatedFrameView, nullptr);
+	if (m_interpolatedFrameImage) vkDestroyImage(device, m_interpolatedFrameImage, nullptr);
+	if (m_interpolatedFrameMemory) vkFreeMemory(device, m_interpolatedFrameMemory, nullptr);
 	if (m_constantBuffer) vkDestroyBuffer(device, m_constantBuffer, nullptr);
 	if (m_constantBufferMemory) vkFreeMemory(device, m_constantBufferMemory, nullptr);
 }

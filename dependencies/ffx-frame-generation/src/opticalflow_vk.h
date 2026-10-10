@@ -74,6 +74,9 @@ public:
 
 	void Dispatch(VkCommandBuffer commandBuffer, VkImageView currentColorView, VkImageView previousColorView, bool reset);
 
+	// Vetor final: R32G32_SINT (pixels da resolucao cheia), tamanho ceil(w/8) x ceil(h/8).
+	static constexpr uint32_t kBlockSize = 8;
+
 	VkImageView GetOpticalFlowVectorView() const { return m_opticalFlowVectorView; }
 
 	// Os 7 passes, na ordem real de dispatch (ver ffx_opticalflow.cpp:
@@ -150,14 +153,12 @@ private:
 	// buffers do histograma SCD - tamanho real: 256 bins * 9 (3x3
 	// regioes) = 2304 elementos (antes estava errado, 256 fixo)
 	static constexpr uint32_t kHistogramElementCount = 256 * 3 * 3;
-	VkBuffer m_scdHistogramBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory m_scdHistogramMemory = VK_NULL_HANDLE;
-	VkBuffer m_scdPreviousHistogramBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory m_scdPreviousHistogramMemory = VK_NULL_HANDLE;
-	VkBuffer m_scdTempBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory m_scdTempMemory = VK_NULL_HANDLE;
-	VkBuffer m_scdOutputBuffer = VK_NULL_HANDLE;
-	VkDeviceMemory m_scdOutputMemory = VK_NULL_HANDLE;
+	// (V5) SCD sao IMAGENS 2D (RWTexture2D no HLSL), nao buffers.
+	VkImage m_scdHistogramImage = VK_NULL_HANDLE; VkDeviceMemory m_scdHistogramMemory = VK_NULL_HANDLE; VkImageView m_scdHistogramView = VK_NULL_HANDLE;
+	VkImage m_scdPreviousHistogramImage = VK_NULL_HANDLE; VkDeviceMemory m_scdPreviousHistogramMemory = VK_NULL_HANDLE; VkImageView m_scdPreviousHistogramView = VK_NULL_HANDLE;
+	VkImage m_scdTempImage = VK_NULL_HANDLE; VkDeviceMemory m_scdTempMemory = VK_NULL_HANDLE; VkImageView m_scdTempView = VK_NULL_HANDLE;
+	VkImage m_scdOutputImage = VK_NULL_HANDLE; VkDeviceMemory m_scdOutputMemory = VK_NULL_HANDLE; VkImageView m_scdOutputView = VK_NULL_HANDLE;
+	uint32_t m_frameCounter = 0;
 
 	// Pipeline de 3 estagios do calculo do flow em si - imagens
 	// SEPARADAS (nao dava pra ler e escrever a mesma, ver pass
