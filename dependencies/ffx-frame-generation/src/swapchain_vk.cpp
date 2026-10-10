@@ -9,6 +9,8 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/SwapchainInfoVk.h"
 
+#include "Cemu/Logging/CemuLogging.h"
+
 #include <stdexcept>
 
 SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex, VkFormat backbufferFormat)
@@ -20,6 +22,7 @@ SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t widt
 	m_frameInterpolation = std::make_unique<FrameInterpolationVk>(renderer, width, height);
 
 	CreateBackbufferCopies(width, height, backbufferFormat);
+	cemuLog_log(LogType::Force, "[FrameGen] criado: {}x{}, formato backbuffer={}", width, height, (int)backbufferFormat);
 
 	VkCommandPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -329,7 +332,7 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 	submitInfo.signalSemaphoreCount = 1;
 	submitInfo.pSignalSemaphores = &m_renderFinishedSemaphore;
 
-	vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
+	VkResult submitResult = vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
 
 	VkPresentInfoKHR presentInfo{};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -340,6 +343,14 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 	presentInfo.pImageIndices = &imageIndex;
 
 	VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+	// Diagnostico: loga os 5 primeiros frames gerados e depois 1 a cada 300.
+	{
+		static uint32_t s_generatedCount = 0;
+		s_generatedCount++;
+		if (s_generatedCount <= 5 || (s_generatedCount % 300) == 0)
+			cemuLog_log(LogType::Force, "[FrameGen] frame gerado #{} dt={:.4f}s submit={} present={}", s_generatedCount, deltaTimeSeconds, (int)submitResult, (int)result);
+	}
 
 	// NAO libera o command buffer agora - a GPU pode ainda estar
 	// executando ele. Guarda ele em m_pendingCommandBuffer e libera no
