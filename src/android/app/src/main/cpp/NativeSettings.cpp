@@ -278,6 +278,18 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setRecompilerAOTCache([[maybe
 // 2 threads instead of up to 8 - see VulkanPipelineCompiler.cpp and VulkanPipelineStableCache.cpp.
 // Only takes effect on the next title boot, since the thread pools are only created then.
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getFsr3FrameGen([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().fsr3_frame_gen;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setFsr3FrameGen([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().fsr3_frame_gen = enabled;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_getLimitShaderCompilerThreads([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
 	return GetConfig().limit_shader_compiler_threads;

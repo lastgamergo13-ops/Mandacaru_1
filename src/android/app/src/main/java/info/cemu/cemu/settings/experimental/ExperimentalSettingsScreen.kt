@@ -136,22 +136,22 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
                         "synthesize what the in-between frame should look like. This raises the number of " +
                         "frames shown per second without the GPU having to fully render each one, making " +
                         "motion look smoother.\n\n" +
-                        "Status: still being ported/finished (Optical Flow + Frame Interpolation on " +
-                        "Vulkan). This toggle is a placeholder ahead of that work landing - turning it on " +
-                        "currently does nothing in-game yet."
+                        "Status: EXPERIMENTAL, Vulkan only. Uses AMD's real Optical Flow plus a custom " +
+                        "interpolation shader (the game's depth/motion vectors are not available in " +
+                        "Cemu). Can be toggled while a game is running; costs extra GPU time and may " +
+                        "show artifacts."
             ),
         )
-        var fsr3FrameGenEnabled by rememberSaveable { mutableStateOf(false) }
         Toggle(
             label = tr("FSR3 Frame Gen"),
             description = tr(
-                "Ainda portando o Frame Gen - este botao ainda nao faz nada no jogo.\n" +
+                "Experimental (so Vulkan). Liga/desliga na hora, ate com o jogo rodando.\n" +
                         "Resumo: gera um frame extra entre dois frames reais, estimando o movimento " +
                         "entre eles, pra deixar o movimento na tela mais suave sem a GPU ter que " +
                         "renderizar cada frame por completo."
             ),
-            initialCheckedState = { fsr3FrameGenEnabled },
-            onCheckedChanged = { fsr3FrameGenEnabled = it },
+            initialCheckedState = NativeSettings::getFsr3FrameGen,
+            onCheckedChanged = NativeSettings::setFsr3FrameGen,
         )
         Button(
             label = tr("Quality of Life"),

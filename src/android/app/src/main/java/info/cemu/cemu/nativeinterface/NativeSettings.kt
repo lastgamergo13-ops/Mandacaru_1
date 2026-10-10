@@ -37,6 +37,13 @@ object NativeSettings {
     @JvmStatic
     external fun setLimitShaderCompilerThreads(value: Boolean)
 
+    // FSR3 Frame Generation (Vulkan only). Takes effect immediately, even mid-game.
+    @JvmStatic
+    external fun getFsr3FrameGen(): Boolean
+
+    @JvmStatic
+    external fun setFsr3FrameGen(value: Boolean)
+
     object VSyncMode {
         const val OFF: Int = 0
         const val DOUBLE_BUFFERING: Int = 1

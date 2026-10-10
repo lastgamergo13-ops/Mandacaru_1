@@ -26,6 +26,7 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	memory_ceiling_mb = parser.get("memory_ceiling_mb", memory_ceiling_mb.GetInitValue());
 	enable_recompiler_aot_cache = parser.get("enable_recompiler_aot_cache", enable_recompiler_aot_cache.GetInitValue());
 	limit_shader_compiler_threads = parser.get("limit_shader_compiler_threads", limit_shader_compiler_threads.GetInitValue());
+	fsr3_frame_gen = parser.get("fsr3_frame_gen", fsr3_frame_gen.GetInitValue());
 
 	const char* mlc = parser.get("mlc_path", "");
 	mlc_path = mlc;
@@ -330,6 +331,7 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	config.set("memory_ceiling_mb", memory_ceiling_mb.GetValue());
 	config.set("enable_recompiler_aot_cache", enable_recompiler_aot_cache.GetValue());
 	config.set("limit_shader_compiler_threads", limit_shader_compiler_threads.GetValue());
+	config.set("fsr3_frame_gen", fsr3_frame_gen.GetValue());
 	config.set("mlc_path", mlc_path.GetValue().c_str());
 	config.set<bool>("permanent_storage", permanent_storage);
 	config.set("proxy_server", proxy_server.GetValue().c_str());

@@ -429,6 +429,10 @@ struct CemuConfig
 	// next title boot (the thread pools are only created then).
 	ConfigValue<bool> limit_shader_compiler_threads{ false };
 
+	// FSR3 Frame Generation (Vulkan, Experimental/Hackers). Off by default. Read every frame by
+	// SwapchainFrameGenVk, so it can be toggled while a game is running.
+	ConfigValue<bool> fsr3_frame_gen{ false };
+
 	ConfigValue<bool> permanent_storage{ true };
 
 	ConfigValue<std::string> mlc_path{};

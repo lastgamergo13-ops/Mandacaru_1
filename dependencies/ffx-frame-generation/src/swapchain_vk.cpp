@@ -10,6 +10,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/SwapchainInfoVk.h"
 
 #include "Cemu/Logging/CemuLogging.h"
+#include "config/CemuConfig.h"
 
 #include <stdexcept>
 
@@ -100,9 +101,27 @@ void SwapchainFrameGenVk::CreateBackbufferCopies(uint32_t width, uint32_t height
 	}
 }
 
+bool SwapchainFrameGenVk::UpdateActiveState()
+{
+	const bool configOn = GetConfig().fsr3_frame_gen.GetValue();
+	if (configOn != m_configWasOn)
+	{
+		cemuLog_log(LogType::Force, "[FrameGen] {}", configOn ? "ativado" : "desativado");
+		if (configOn)
+		{
+			// recomeca o historico: as 2 proximas capturas viram (anterior, atual)
+			m_hasPreviousFrame = false;
+			m_hasLastGeneratedFrameTime = false;
+			m_currentCopyIndex = 1;
+		}
+		m_configWasOn = configOn;
+	}
+	return configOn && m_enabled;
+}
+
 void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkImage swapchainImage)
 {
-	if (!m_enabled)
+	if (!UpdateActiveState())
 		return;
 
 	// Alterna o slot de destino - o slot que acabou de virar "atual"
@@ -169,7 +188,7 @@ void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkIma
 
 bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset)
 {
-	if (!m_enabled || !m_hasPreviousFrame)
+	if (!UpdateActiveState() || !m_hasPreviousFrame)
 		return false;
 
 	VkDevice device = m_renderer->GetLogicalDevice();

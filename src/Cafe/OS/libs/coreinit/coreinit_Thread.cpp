@@ -1377,6 +1377,18 @@ namespace coreinit
 		OSHostThread* hostThread = (OSHostThread*)Fiber::GetFiberPrivateData();
         cemu_assert_debug(hostThread);
 
+#if defined(__ANDROID__)
+		// CORRECAO (freeze antes do GX2Init): no Android cada fiber e uma pthread propria, entao
+		// t_assignedCoreIndex (thread_local) so era gravado UMA vez, no inicio do fiber
+		// (__OSFiberThreadEntry). Se a thread do jogo depois e retomada por OUTRO core
+		// (hostThread->selectedCore muda em __OSSwitchToThreadFiber), o valor ficava velho: o
+		// codigo abaixo escolhia a run queue / o fiber idle do core ERRADO e fazia Fiber::Switch()
+		// para um fiber idle que ja esta ativo em outra pthread, dessincronizando o handoff por
+		// semaforo e deixando a thread presa segurando o scheduler lock para sempre. Em
+		// ucontext/Windows isso nao ocorre porque a thread real do core e a mesma (TLS correto).
+		t_assignedCoreIndex = hostThread->selectedCore;
+#endif
+
 		//if (ppcInterpreterCurrentInstance)
 		//	debug_printf("Core %d store thread %08x (t = %d)\n", hostThread->ppcInstance.sprNew.UPIR, memory_getVirtualOffsetFromPointer(hostThread->thread), t_assignedCoreIndex);
 
@@ -1419,6 +1431,10 @@ namespace coreinit
 		}
 
 		cemu_assert_debug(__OSHasSchedulerLock());	
+#if defined(__ANDROID__)
+		// fomos retomados possivelmente em outro core (ver comentario no inicio da funcao)
+		t_assignedCoreIndex = hostThread->selectedCore;
+#endif
 		cemu_assert_debug(g_isMulticoreMode == false || hostThread->selectedCore == t_assignedCoreIndex);
 
 		// received next time slice, load self again

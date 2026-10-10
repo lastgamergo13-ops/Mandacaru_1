@@ -97,6 +97,11 @@ private:
 	uint32_t m_height = 0;
 	bool m_enabled = true;
 
+	// Le a opcao fsr3_frame_gen da config A CADA FRAME (liga/desliga em runtime).
+	// Ao ligar, descarta o historico antigo pra nao interpolar com frame velho.
+	bool m_configWasOn = false;
+	bool UpdateActiveState();
+
 	// true depois que CaptureBackbuffer() foi chamado pelo menos 2x -
 	// antes disso nao ha frame "anterior" pra interpolar.
 	bool m_hasPreviousFrame = false;
