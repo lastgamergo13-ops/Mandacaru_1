@@ -586,7 +586,8 @@ namespace coreinit
 		// thread exits before ever calling GX2Init(), this is how we'll know it was a
 		// deliberate exit rather than a hang.
 		{
-			const char* threadNamePtr = currentThread->threadName.GetPtr();
+			const std::string threadNameSafe = __OSSafeThreadName(currentThread);
+			const char* threadNamePtr = threadNameSafe.c_str();
 			Watchdog_SetThreadStatus(fmt::format("exited: PPC thread \"{}\" (0x{:08x}) called OSExitThread({})",
 				threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(currentThread).GetMPTR(), exitValue));
 		}

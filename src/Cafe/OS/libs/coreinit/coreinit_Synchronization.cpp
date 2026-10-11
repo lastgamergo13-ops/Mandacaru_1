@@ -260,7 +260,8 @@ namespace coreinit
 #if defined(__ANDROID__)
 				{
 					OSThread_t* ownerThread = mutex->owner.GetPtr();
-					const char* ownerNamePtr = ownerThread ? ownerThread->threadName.GetPtr() : nullptr;
+					const std::string ownerNameSafe = ownerThread ? __OSSafeThreadName(ownerThread) : std::string();
+					const char* ownerNamePtr = ownerThread ? ownerNameSafe.c_str() : nullptr;
 					g_watchdogWaitReasonOverride = fmt::format("waiting on mutex 0x{:08x}, held by \"{}\" (0x{:08x})",
 						MEMPTR<OSMutex>(mutex).GetMPTR(),
 						ownerThread ? (ownerNamePtr ? ownerNamePtr : "(unnamed)") : "(no owner?)",

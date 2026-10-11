@@ -30,7 +30,8 @@ namespace coreinit
 		// queue, instead of just seeing "running emulated OSThread" with no further detail.
 		// A caller can set g_watchdogWaitReasonOverride beforehand for a more specific
 		// message (e.g. naming the mutex + its current owner); it's consumed here.
-		const char* threadNamePtr = thread->threadName.GetPtr();
+		const std::string threadNameSafe = __OSSafeThreadName(thread);
+		const char* threadNamePtr = threadNameSafe.c_str();
 		std::string statusMsg;
 		if (!g_watchdogWaitReasonOverride.empty())
 		{

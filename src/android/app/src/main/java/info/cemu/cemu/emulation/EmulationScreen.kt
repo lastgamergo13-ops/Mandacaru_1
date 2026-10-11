@@ -97,6 +97,7 @@ fun EmulationScreen(
     var showEmulatedUSBDevices by remember { mutableStateOf(false) }
     var showQuickControllerProfileSwitcher by remember { mutableStateOf(false) }
     var showInGameCheats by remember { mutableStateOf(false) }
+    var frameGenPanelUnlocked by rememberSaveable { mutableStateOf(false) }
 
     val emulationError by viewModel.emulationError.collectAsState()
     val isEmulationInitialized by viewModel.isEmulationInitialized.collectAsState()
@@ -215,6 +216,11 @@ fun EmulationScreen(
                             showInGameCheats = true
                             closeDrawer()
                         },
+                        frameGenPanelUnlocked = frameGenPanelUnlocked,
+                        onFrameGenPanelUnlockedChange = {
+                            frameGenPanelUnlocked = it
+                            closeDrawer()
+                        },
                     )
                 }
             }
@@ -255,6 +261,12 @@ fun EmulationScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        if (frameGenPanelUnlocked && NativeSettings.getFsr3FrameGen()) {
+            FrameGenInGamePanel(
+                modifier = Modifier.align(Alignment.CenterEnd),
+                onClose = { frameGenPanelUnlocked = false },
+            )
+        }
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
@@ -344,6 +356,8 @@ private fun EmulationSideMenuContent(
     onShowEmulatedUSBDevices: () -> Unit,
     onShowQuickControllerProfileSwitcher: () -> Unit,
     onShowInGameCheats: () -> Unit,
+    frameGenPanelUnlocked: Boolean,
+    onFrameGenPanelUnlockedChange: (Boolean) -> Unit,
     onEditInputOverlay: () -> Unit,
     onResetInputOverlay: () -> Unit,
     onTakeScreenshot: () -> Unit,
@@ -385,6 +399,16 @@ private fun EmulationSideMenuContent(
         TextButtonItem(
             label = tr("Cheats"),
             onClick = onShowInGameCheats,
+        )
+    }
+
+    // Botao do FSR: so aparece se o Frame Gen estiver ligado na aba Experimental. Ligar libera
+    // o painel do Frame Gen na lateral direita, em jogo.
+    if (NativeSettings.getFsr3FrameGen()) {
+        CheckboxItem(
+            label = tr("FSR3 Frame Gen (painel em jogo)"),
+            checked = frameGenPanelUnlocked,
+            onCheckedChange = onFrameGenPanelUnlockedChange,
         )
     }
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include "Cafe/HW/MMU/MMU.h"
 #include "Cafe/HW/Espresso/Const.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Scheduler.h"
 
@@ -512,6 +513,37 @@ static_assert(sizeof(OSThread_t) == 0x6A0);
 
 namespace coreinit
 {
+	// Nome da thread para mensagens de diagnostico (watchdog). threadName e um ponteiro para a
+	// memoria do JOGO e pode estar nulo, nao terminado ou apontando para pagina nao mapeada
+	// (o jogo libera/reaproveita o buffer): ler direto com fmt/strlen derrubava o emulador
+	// (SIGSEGV em strlen dentro de queueAndWait). Aqui a leitura e limitada (31 bytes) e
+	// confere o mapeamento de cada pagina.
+	inline std::string __OSSafeThreadName(const OSThread_t* thread)
+	{
+		if (!thread)
+			return "(null)";
+		const MPTR namePtr = thread->threadName.GetMPTR();
+		if (namePtr == 0)
+			return "(unnamed)";
+		std::string out;
+		for (uint32 i = 0; i < 31; i++)
+		{
+			const MPTR a = namePtr + i;
+			if (i == 0 || (a & 0xFFF) == 0)
+			{
+				if (!memory_isAddressRangeAccessible(a, 1))
+					return out.empty() ? "(invalid name)" : out;
+			}
+			char c = *(const char*)(memory_base + a);
+			if (c == 0)
+				break;
+			if (c < 32 || c > 126)
+				c = '?';
+			out.push_back(c);
+		}
+		return out.empty() ? "(unnamed)" : out;
+	}
+
 	void MapThreadExports();
 	void InitializeThread();
 
