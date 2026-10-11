@@ -17,6 +17,7 @@
 
 #include <stdexcept>
 #include <thread>
+#include <vector>
 #include <algorithm>
 
 SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex, VkFormat backbufferFormat)
@@ -54,6 +55,54 @@ SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t widt
 	{
 		if (vkCreateSemaphore(m_renderer->GetLogicalDevice(), &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS)
 			throw std::runtime_error("SwapchainFrameGenVk: falha ao criar semaforo");
+	}
+	CreateTimingQueries(graphicsQueueFamilyIndex);
+}
+
+void SwapchainFrameGenVk::CreateTimingQueries(uint32_t graphicsQueueFamilyIndex)
+{
+	VkPhysicalDevice phys = m_renderer->GetPhysicalDevice();
+	uint32_t count = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(phys, &count, nullptr);
+	std::vector<VkQueueFamilyProperties> props(count);
+	vkGetPhysicalDeviceQueueFamilyProperties(phys, &count, props.data());
+	if (graphicsQueueFamilyIndex >= count || props[graphicsQueueFamilyIndex].timestampValidBits == 0)
+		return; // sem suporte a timestamp: so nao mede
+	const uint32_t bits = props[graphicsQueueFamilyIndex].timestampValidBits;
+	m_timestampMask = bits >= 64 ? ~0ull : ((1ull << bits) - 1ull);
+	VkPhysicalDeviceProperties devProps{};
+	vkGetPhysicalDeviceProperties(phys, &devProps);
+	m_timestampPeriodNs = devProps.limits.timestampPeriod;
+	VkQueryPoolCreateInfo qi{};
+	qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+	qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+	qi.queryCount = 2;
+	if (vkCreateQueryPool(m_renderer->GetLogicalDevice(), &qi, nullptr, &m_queryPool) != VK_SUCCESS)
+		m_queryPool = VK_NULL_HANDLE;
+}
+
+// Le o resultado do command buffer gerado ANTERIOR (a fence ja garantiu que ele terminou).
+void SwapchainFrameGenVk::CollectTiming()
+{
+	if (!m_queryPending || m_queryPool == VK_NULL_HANDLE)
+		return;
+	m_queryPending = false;
+	uint64_t ts[2] = {};
+	if (vkGetQueryPoolResults(m_renderer->GetLogicalDevice(), m_queryPool, 0, 2, sizeof(ts), ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+		return;
+	const uint64_t delta = ((ts[1] & m_timestampMask) - (ts[0] & m_timestampMask)) & m_timestampMask;
+	const double ms = (double)delta * m_timestampPeriodNs / 1.0e6;
+	if (ms < 0.0 || ms > 1000.0)
+		return;
+	m_timingSumMs += ms;
+	m_timingMaxMs = std::max(m_timingMaxMs, ms);
+	if (++m_timingCount >= 120)
+	{
+		FrameGenStats::gpuMs.store((float)(m_timingSumMs / m_timingCount), std::memory_order_relaxed);
+		cemuLog_log(LogType::Force, "[FrameGen] custo de GPU do frame gerado (OF+interpolacao): media {:.2f} ms, max {:.2f} ms ({} amostras)", m_timingSumMs / m_timingCount, m_timingMaxMs, m_timingCount);
+		m_timingSumMs = 0.0;
+		m_timingMaxMs = 0.0;
+		m_timingCount = 0;
 	}
 }
 
@@ -135,7 +184,7 @@ bool SwapchainFrameGenVk::UpdateActiveState()
 			cemuLog_log(LogType::Force, "[FrameGen] multiplicador={}x, limite de FPS base={}", cfg.multiplier, cfg.baseFpsLimit);
 		m_multiplier = cfg.multiplier;
 		m_baseFpsLimit = cfg.baseFpsLimit;
-		if (cfg.flowScalePercent != m_appliedFlowScalePercent)
+		if (cfg.flowScalePercent != m_appliedFlowScalePercent || cfg.pyramid != m_appliedPyramid)
 			ApplyFlowScale(cfg.flowScalePercent);
 	}
 	const bool isActive = configOn && m_enabled;
@@ -144,6 +193,7 @@ bool SwapchainFrameGenVk::UpdateActiveState()
 		FrameGenStats::active.store(false, std::memory_order_relaxed);
 		FrameGenStats::realFps.store(0.0f, std::memory_order_relaxed);
 		FrameGenStats::generatedFps.store(0.0f, std::memory_order_relaxed);
+		FrameGenStats::gpuMs.store(0.0f, std::memory_order_relaxed);
 		m_statRealCount = m_statGenCount = 0;
 		m_statWindowStart = {};
 	}
@@ -355,6 +405,7 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 		vkWaitForFences(device, 1, &m_inFlightFence, VK_TRUE, UINT64_MAX);
 		vkFreeCommandBuffers(device, m_commandPool, 1, &m_pendingCommandBuffer);
 		m_pendingCommandBuffer = VK_NULL_HANDLE;
+		CollectTiming();
 	}
 	vkResetFences(device, 1, &m_inFlightFence);
 
@@ -387,6 +438,12 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	vkBeginCommandBuffer(cb, &beginInfo);
+	const bool timing = (m_queryPool != VK_NULL_HANDLE);
+	if (timing)
+	{
+		vkCmdResetQueryPool(cb, m_queryPool, 0, 2);
+		vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_queryPool, 0);
+	}
 
 	uint32_t currentIdx = m_currentCopyIndex;
 	uint32_t previousIdx = 1 - m_currentCopyIndex;
@@ -411,6 +468,8 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 			0, 1, &mb, 0, nullptr, 0, nullptr);
 	}
 	m_frameInterpolation->Dispatch(cb, m_backbufferCopyViews[currentIdx], m_backbufferCopyViews[previousIdx], *m_opticalFlow, deltaTimeSeconds, reset, progress);
+	if (timing)
+		vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, m_queryPool, 1);
 
 	// 3) Transiciona a imagem recem-adquirida do swapchain para receber o blit
 	VkImageMemoryBarrier toDst{};
@@ -541,6 +600,7 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	// INICIO da proxima chamada (passo 0 acima), depois de confirmar
 	// via m_inFlightFence que a GPU realmente terminou.
 	m_pendingCommandBuffer = cb;
+	m_queryPending = timing && submitResult == VK_SUCCESS;
 
 	// SUBOPTIMAL nao exige recriar o swapchain (no Adreno ele aparece em TODO present e recriar a
 	// cada frame destroi o desempenho); so OUT_OF_DATE exige.
@@ -576,6 +636,7 @@ void SwapchainFrameGenVk::DestroyAll()
 		if (m_backbufferCopyMemory[i]) vkFreeMemory(device, m_backbufferCopyMemory[i], nullptr);
 	}
 
+	if (m_queryPool) vkDestroyQueryPool(device, m_queryPool, nullptr);
 	if (m_commandPool) vkDestroyCommandPool(device, m_commandPool, nullptr);
 }
 
@@ -625,7 +686,10 @@ void SwapchainFrameGenVk::CreateOpticalFlow(int flowScalePercent)
 		m_flowHeight = std::max<uint32_t>(64, ((m_height * (uint32_t)flowScalePercent) / 100) & ~7u);
 	}
 	m_appliedFlowScalePercent = flowScalePercent;
-	m_opticalFlow = std::make_unique<OpticalFlowVk>(m_renderer, m_flowWidth, m_flowHeight);
+	m_appliedPyramid = FrameGenSettings::Get().pyramid;
+	m_opticalFlow = std::make_unique<OpticalFlowVk>(m_renderer, m_flowWidth, m_flowHeight, m_appliedPyramid);
+	if (m_appliedPyramid && !m_opticalFlow->IsPyramidActive())
+		cemuLog_log(LogType::Force, "[FrameGen] piramide pedida mas indisponivel: usando Optical Flow simples");
 	DestroyScaledImages();
 	if (flowScalePercent < 100)
 		CreateScaledImages();
@@ -705,5 +769,5 @@ void SwapchainFrameGenVk::ApplyFlowScale(int flowScalePercent)
 	CreateOpticalFlow(flowScalePercent);
 	m_hasPreviousFrame = false;
 	m_currentCopyIndex = 1;
-	cemuLog_log(LogType::Force, "[FrameGen] flow scale = {}% (optical flow {}x{})", m_appliedFlowScalePercent, m_flowWidth, m_flowHeight);
+	cemuLog_log(LogType::Force, "[FrameGen] flow scale = {}% (optical flow {}x{}, piramide={})", m_appliedFlowScalePercent, m_flowWidth, m_flowHeight, m_opticalFlow->IsPyramidActive() ? m_opticalFlow->GetPyramidLevelCount() : 0);
 }

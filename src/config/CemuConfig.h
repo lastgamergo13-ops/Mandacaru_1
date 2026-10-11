@@ -434,11 +434,17 @@ struct CemuConfig
 	ConfigValue<bool> fsr3_frame_gen{ false };
 	// Opcoes do Frame Gen (todas podem ser sobrescritas por jogo - ver FrameGenSettings.h):
 	ConfigValue<sint32> fsr3_fg_multiplier{ 2 };      // 2..4 (total de frames por frame real)
+	ConfigValue<bool> fsr3_fg_pyramid{ false };       // Optical Flow em piramide multi-nivel (experimental; cai no modo simples se falhar)
 	ConfigValue<sint32> fsr3_fg_flow_scale{ 50 };     // % da resolucao usada pelo Optical Flow: 50, 75 ou 100 (padrao 50: menos carga de GPU, evita device lost no Adreno)
 	ConfigValue<bool> fsr3_fg_performance_mode{ false }; // Optical Flow mais leve (forca flow scale <= 50%)
 	ConfigValue<sint32> fsr3_fg_base_fps_limit{ 0 };  // 0 = sem limite; 30/40/60 = limita o FPS REAL antes de gerar
 	// "FSR Upscale": usa o filtro FSR 1.0 (EASU+RCAS) do Cemu no lugar do filtro de upscale escolhido
 	ConfigValue<bool> fsr3_upscale{ false };
+	// Overlay do Frame Gen (linha "FrameGen: .. real + .. gerado = .."), so global:
+	ConfigValue<bool> fsr3_ov_show{ true };        // mostra a linha do Frame Gen no overlay de stats
+	ConfigValue<sint32> fsr3_ov_decimals{ 1 };     // casas decimais: 0, 1 ou 2
+	ConfigValue<sint32> fsr3_ov_style{ 0 };        // 0 = detalhado, 1 = compacto
+	ConfigValue<bool> fsr3_ov_gpu_ms{ false };     // mostra o custo de GPU (ms) do frame gerado
 
 	ConfigValue<bool> permanent_storage{ true };
 

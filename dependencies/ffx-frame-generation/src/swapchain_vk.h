@@ -97,6 +97,8 @@ private:
 	void DestroyScaledImages();
 	void ApplyFlowScale(int flowScalePercent);
 	int m_appliedFlowScalePercent = 100;
+	bool m_appliedPyramid = false;       // valor pedido
+
 	uint32_t m_flowWidth = 0;
 	uint32_t m_flowHeight = 0;
 	VkFormat m_backbufferFormat = VK_FORMAT_UNDEFINED;
@@ -169,6 +171,16 @@ private:
 	static constexpr uint32_t kSemaphoreRing = 4;
 	VkSemaphore m_renderFinishedSemaphores[kSemaphoreRing] = {};
 	uint32_t m_semaphoreIndex = 0;
+	// Medicao do custo de GPU (Optical Flow + Interpolation) com timestamp queries.
+	void CreateTimingQueries(uint32_t graphicsQueueFamilyIndex);
+	void CollectTiming();
+	VkQueryPool m_queryPool = VK_NULL_HANDLE;
+	double m_timestampPeriodNs = 0.0;
+	uint64_t m_timestampMask = 0;
+	bool m_queryPending = false;
+	double m_timingSumMs = 0.0;
+	double m_timingMaxMs = 0.0;
+	uint32_t m_timingCount = 0;
 	VkCommandBuffer m_pendingCommandBuffer = VK_NULL_HANDLE; // liberado no INICIO da proxima chamada, depois de confirmar que a GPU ja terminou com ele
 
 	// Relogio de parede pra calcular o deltaTime real entre dois

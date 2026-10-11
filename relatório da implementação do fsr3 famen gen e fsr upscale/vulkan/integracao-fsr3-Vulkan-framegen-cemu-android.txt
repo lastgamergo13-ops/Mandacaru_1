@@ -57,7 +57,7 @@ A.5 Interface / Configuracao
      tem. O FSR 1.0 e um upscale real (render nativo do Wii U -> resolucao da tela).
  [~] V10: PERFIL POR JOGO de todas as opcoes acima (Editar perfil do jogo > "FSR3 Frame Gen / Upscale
      (this game)"; salvo em gameProfiles/<titleId>.ini, secao [FrameGen]; "Use global setting" = herda)
- [ ] Overlay do FPS com 1 casa decimal / escolha de posicao (usa o overlay existente do Cemu)
+ [~] V11.6: overlay do Frame Gen configuravel (mostrar/ocultar, 0-2 casas decimais, estilo detalhado/compacto, custo de GPU em ms); posicao/cor/tamanho seguem o overlay normal do Cemu
 
 A.6 Estabilidade do emulador (nao e do frame gen, mas bloqueava os testes)
  [x] Freeze antes do GX2Init: corrigido na V8 (t_assignedCoreIndex velho ao migrar de core)
@@ -67,8 +67,8 @@ A.6 Estabilidade do emulador (nao e do frame gen, mas bloqueava os testes)
  [!] Shader cache do jogo "corrompido (incomplete file table)": apague a pasta shaderCache do jogo
 
 A.7 Pendencias de performance / recursos
- [ ] Medir custo real (ms) do Optical Flow + Interpolation no Adreno 650
- [ ] Nao alocar recursos quando o toggle esta desligado (hoje aloca no inicio)
+ [~] V11.5: custo de GPU (OF+interpolacao) medido com timestamp queries; aparece no log a cada 120 frames gerados
+ [~] V11.5: recursos do Frame Gen so sao criados quando o toggle esta LIGADO e liberados ao desligar
  [ ] Porte OpenGL: SO DEPOIS que o Vulkan estiver terminado e validado (decisao do usuario).
      (Hoje o Vulkan ainda esta "sem validacao visual": falta confirmar qualidade dos frames,
       sinal do fluxo e desempenho em jogo.)
@@ -368,3 +368,43 @@ Os 3 logs terminam igual: VK_ERROR_DEVICE_LOST (-4) em SubmitCommandBuffer, so c
 [x] Protecao contra travada/loading: se o intervalo entre frames reais passar de 120 ms (< ~8 FPS), o frame gen nao
     gera frame extra naquele frame (menos carga de GPU durante carregamento de fase; o Mario Kart 8 caiu a ~1.7 FPS
     antes do crash). Volta sozinho quando o jogo normaliza.
+
+
+=== ATUALIZACAO V11.5 (2026-10-11 13:xx) - logs Mario Kart 8 / 3D World / Forest Escape (build 899bbf55) ===
+ACHADO IMPORTANTE: o Mario Kart 8 com o Frame Gen DESLIGADO tambem deu VK_ERROR_DEVICE_LOST (-4) no frame 29 (3 s).
+Em todos os logs, o -4 so aparece nos builds que CRIAM os recursos do Frame Gen ("[FrameGen] criado"), mesmo com ele desligado;
+os builds sem essa criacao (Forest Escape/Adventure antigos) nao deram -4, e os jogos leves com FG desligado tambem nao.
+Hipotese (NAO confirmada): os recursos ociosos (imagens 2312x1080, pipelines, memoria) pressionam GPU/RAM em jogos pesados.
+[x] Correcao: criacao PREGUICOSA - o Frame Gen so aloca algo quando esta ligado e libera tudo ao desligar (VulkanRenderer.cpp).
+[x] Novo log "[FrameGen] custo de GPU do frame gerado ... media X ms, max Y ms" (swapchain_vk.cpp) para medir o Adreno 650.
+[ ] Teste pedido: Mario Kart 8 com Frame Gen DESLIGADO. Se ainda der -4, o problema NAO e do Frame Gen (e do jogo/driver) -
+    me mande o log mesmo assim. Depois teste com ligado e veja o custo de GPU no log.
+[ ] Linhas verdes: nao apareceram nos testes recentes (relato do usuario) - manter em observacao.
+Ainda falta (grande, so com validacao visual): passes originais da AMD (reconstruct depth/dilate/disocclusion/inpainting),
+niveis extras da piramide, confirmar fFlowSign, overlay com posicao configuravel. OpenGL por ultimo.
+
+
+=== ATUALIZACAO V11.6 (2026-10-11) ===
+[~] Overlay configuravel do Frame Gen: Experimental (4 itens novos) e painel em jogo (secao "Overlay").
+    Opcoes: mostrar linha / casas decimais (0,1,2) / estilo (detalhado "FrameGen: 30.0 real + 30.0 gerado = 60.0" ou compacto "FG 30.0+30.0=60.0") /
+    custo de GPU (linha "FG GPU: x.xx ms"). A posicao, cor, tamanho e fundo do overlay continuam nas opcoes de overlay ja existentes do Cemu.
+[ ] NIVEIS EXTRAS DA PIRAMIDE (Optical Flow multi-nivel): NAO implementado - motivo tecnico:
+    - o pass Luminance Pyramid foi removido porque o Adreno 650 recusa o pipeline (VkResult -13);
+    - CORRECAO: eu AINDA TENHO o codigo-fonte do FidelityFX SDK (HLSL + ffx_opticalflow.cpp) no meu ambiente de trabalho; a frase
+      anterior "so tem os .spv" estava errada. Li o laco real da AMD: 7 niveis (do 6 ate o 0): em cada nivel roda Search ->
+      Filter -> (nivel>0) Scale; luma e fluxo em PING-PONG por frame (INPUT_1/2, OPTICAL_FLOW_1/2) com um recurso por nivel
+      (tamanho metade do anterior), alias dos niveis anteriores no pass Search.
+    - O que impede de fazer sem uma rodada de teste: (1) os .spv atuais do Search/Filter/Scale foram compilados so com os
+      bindings do nivel 0 (Search sem r_optical_flow_previous nem aliases) -> precisam ser RECOMPILADOS com os bindings completos;
+      (2) o pass que gera os niveis da luma (SPD) e recusado pelo Adreno 650 (-13), entao precisa de outra forma de gerar os niveis;
+      (3) o laco de dispatch, os recursos por nivel e as constantes por nivel precisam ser reescritos.
+    Plano seguro (aguardando sua aprovacao): opcao "Optical Flow: simples / piramide" (padrao simples), com fallback automatico
+    para o modo atual se algo falhar, + novo roteiro de compilacao dos .spv.
+
+=== V11.7 - Optical Flow em PIRAMIDE (opcional) ===
+[x] opticalflow_vk: ate 7 niveis (laco AMD: Search->Filter->Scale do nivel mais grosso ao 0), downsample 2x2 proprio
+[x] fallback automatico para o modo simples se o .spv do downsample faltar / pipeline recusar
+[x] config fsr3_fg_pyramid (padrao OFF), JNI chave 10, toggle nas Experimentais e no painel em jogo
+[x] swapchain recria o OF ao mudar a opcao (sem laco em caso de falha)
+[ ] VOCE: compilar mandacaru_of_luma_downsample.hlsl -> .spv (ver compilar-downsample-luma.txt)
+[ ] VOCE: testar com a opcao ligada e mandar log (procure "em PIRAMIDE" e o custo "FG GPU")

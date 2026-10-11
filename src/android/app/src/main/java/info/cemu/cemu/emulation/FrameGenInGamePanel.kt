@@ -37,9 +37,14 @@ fun FrameGenInGamePanel(modifier: Modifier = Modifier, onClose: () -> Unit) {
     var frameGen by remember { mutableStateOf(NativeSettings.getFsr3FrameGen()) }
     var multiplier by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER)) }
     var flowScale by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE)) }
+    var pyramid by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PYRAMID) != 0) }
     var perfMode by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE) != 0) }
     var fpsLimit by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT)) }
     var upscale by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.UPSCALE) != 0) }
+    var ovShow by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW) != 0) }
+    var ovDecimals by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS)) }
+    var ovStyle by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE)) }
+    var ovGpu by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS) != 0) }
 
     Surface(
         modifier = modifier
@@ -76,6 +81,11 @@ fun FrameGenInGamePanel(modifier: Modifier = Modifier, onClose: () -> Unit) {
                 NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE, it)
             }
 
+            SwitchRow(tr("Optical Flow pyramid"), pyramid) {
+                pyramid = it
+                NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PYRAMID, if (it) 1 else 0)
+            }
+
             SwitchRow(tr("Frame Gen performance mode"), perfMode) {
                 perfMode = it
                 NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE, if (it) 1 else 0)
@@ -90,6 +100,26 @@ fun FrameGenInGamePanel(modifier: Modifier = Modifier, onClose: () -> Unit) {
             SwitchRow(tr("FSR Upscale"), upscale) {
                 upscale = it
                 NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.UPSCALE, if (it) 1 else 0)
+            }
+
+            Text(tr("Overlay"), fontSize = 16.sp)
+            SwitchRow(tr("Show Frame Gen line"), ovShow) {
+                ovShow = it
+                NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW, if (it) 1 else 0)
+            }
+            Text(tr("Decimals"), fontSize = 14.sp)
+            ChipRow(listOf(0, 1, 2), ovDecimals, { it.toString() }) {
+                ovDecimals = it
+                NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS, it)
+            }
+            Text(tr("Style"), fontSize = 14.sp)
+            ChipRow(listOf(0, 1), ovStyle, { if (it == 0) tr("Detailed") else tr("Compact") }) {
+                ovStyle = it
+                NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE, it)
+            }
+            SwitchRow(tr("Show GPU cost (ms)"), ovGpu) {
+                ovGpu = it
+                NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS, if (it) 1 else 0)
             }
         }
     }

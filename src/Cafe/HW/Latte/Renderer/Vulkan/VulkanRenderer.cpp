@@ -1,3 +1,4 @@
+#include "Cafe/HW/Latte/Core/FrameGenSettings.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
@@ -3494,7 +3495,23 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 	// demanda na primeira vez que chegamos aqui com uma swapchain
 	// valida (nao da pra criar antes, porque so aqui sabemos o
 	// tamanho/formato reais da swapchain desta janela).
-	if (mainWindow && !m_frameGen)
+	// Criacao PREGUICOSA: so aloca imagens/pipelines/memoria do Frame Gen enquanto ele estiver LIGADO.
+	// (Antes ele era criado sempre; nos logs o Mario Kart 8 deu VK_ERROR_DEVICE_LOST mesmo com o Frame Gen
+	// desligado, e os jogos leves nunca deram - os recursos ociosos ocupam memoria de GPU/RAM.)
+	if (mainWindow)
+	{
+		const bool frameGenWanted = FrameGenSettings::Get().enabled;
+		if (!frameGenWanted && m_frameGen)
+		{
+			m_frameGen.reset(); // libera tudo (DestroyAll espera a GPU)
+			m_frameGenIsFirstFrame = true;
+		}
+		else if (frameGenWanted && !m_frameGen)
+		{
+			// (criado abaixo)
+		}
+	}
+	if (mainWindow && !m_frameGen && FrameGenSettings::Get().enabled)
 	{
 		VkExtent2D extent = chainInfo.getExtent();
 		m_frameGen = std::make_unique<SwapchainFrameGenVk>(

@@ -16,6 +16,7 @@ namespace FrameGenSettings
 		bool performanceMode = false;
 		int baseFpsLimit = 0;      // 0 = sem limite
 		bool fsrUpscale = false;
+		bool pyramid = false;      // Optical Flow multi-nivel (so global)
 	};
 
 	inline Values Get()
@@ -28,6 +29,7 @@ namespace FrameGenSettings
 		v.performanceMode = c.fsr3_fg_performance_mode.GetValue();
 		v.baseFpsLimit = c.fsr3_fg_base_fps_limit.GetValue();
 		v.fsrUpscale = c.fsr3_upscale.GetValue();
+		v.pyramid = c.fsr3_fg_pyramid.GetValue();
 		if (g_current_game_profile)
 		{
 			const auto& o = g_current_game_profile->GetFrameGenOverrides();

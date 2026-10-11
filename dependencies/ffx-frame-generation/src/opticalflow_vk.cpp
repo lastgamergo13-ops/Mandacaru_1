@@ -26,6 +26,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
 #include "config/ActiveSettings.h"
+#include "Cemu/Logging/CemuLogging.h"
 
 #include <fstream>
 #include <vector>
@@ -145,7 +146,7 @@ namespace
 	}
 }
 
-OpticalFlowVk::OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth, uint32_t resolutionHeight)
+OpticalFlowVk::OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth, uint32_t resolutionHeight, bool pyramid)
 	: m_renderer(renderer), m_width(resolutionWidth), m_height(resolutionHeight)
 {
 	m_memoryManager = renderer->GetMemoryManager();
@@ -153,6 +154,8 @@ OpticalFlowVk::OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth,
 	CreateIntermediateResources(resolutionWidth, resolutionHeight);
 	CreatePerPassLayoutsAndPipelines();
 	CreateDescriptorPoolAndSets();
+	if (pyramid)
+		m_pyramidActive = TryCreatePyramid();
 }
 
 OpticalFlowVk::~OpticalFlowVk() { DestroyAll(); }
@@ -450,6 +453,16 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 		std::vector<VkImage> images = { m_lumaImage, m_lumaPreviousImage, m_opticalFlowRawImage, m_opticalFlowFilteredImage, m_opticalFlowVectorImage,
 			m_scdHistogramImage, m_scdPreviousHistogramImage, m_scdTempImage, m_scdOutputImage };
 		// Pass::ComputeLuminancePyramid removido - imagens de piramide nao existem mais, nada a transicionar aqui.
+		if (m_pyramidActive)
+		{
+			for (uint32_t l = 1; l < m_levelCount; l++)
+			{
+				images.push_back(m_lumaCurLevel[l].image);
+				images.push_back(m_lumaPrevLevel[l].image);
+				images.push_back(m_flowA[l].image);
+				images.push_back(m_flowB[l].image);
+			}
+		}
 
 		std::vector<VkImageMemoryBarrier> barriers(images.size());
 		for (size_t i = 0; i < images.size(); i++)
@@ -528,7 +541,24 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 	dispatchPass(Pass::PrepareLuma, tgPrepareLuma_x, tgPrepareLuma_y);
 	dispatchWithSet(Pass::PrepareLuma, m_descriptorSetPrepareLumaPrevious, tgPrepareLuma_x, tgPrepareLuma_y);
 
-	// Pass::ComputeLuminancePyramid removido - nao despachado (ver aviso em CreateShaderModules).
+	// Pass::ComputeLuminancePyramid (SPD da AMD) removido - o Adreno recusa. No modo piramide, os niveis da luma
+	// sao gerados por um shader simples nosso (media 2x2), um dispatch por nivel, para a luma atual e a anterior.
+	auto dispatchPipe = [&](VkPipeline pipe, VkPipelineLayout lay, VkDescriptorSet set, uint32_t gx, uint32_t gy, uint32_t gz)
+	{
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, lay, 0, 1, &set, 0, nullptr);
+		vkCmdDispatch(commandBuffer, gx, gy, gz);
+		ComputeToComputeBarrier(commandBuffer);
+	};
+	if (m_pyramidActive)
+	{
+		for (uint32_t l = 1; l < m_levelCount; l++)
+		{
+			const uint32_t gx = DivRoundUp(m_lumaLevelW[l], 8), gy = DivRoundUp(m_lumaLevelH[l], 8);
+			dispatchPipe(m_downsamplePipeline, m_downsamplePipelineLayout, m_downsampleSetsCur[l], gx, gy, 1);
+			dispatchPipe(m_downsamplePipeline, m_downsamplePipelineLayout, m_downsampleSetsPrev[l], gx, gy, 1);
+		}
+	}
 
 	{
 		const uint32_t strataWidth = (m_width / 4) / kHistogramsPerDim;
@@ -540,6 +570,25 @@ void OpticalFlowVk::Dispatch(VkCommandBuffer commandBuffer, VkImageView currentC
 	// Formulas de ffx_opticalflow.cpp (nivel 0): compute = ((ceil(w/4)*16+63)/64, ceil(h/16));
 	// filter = (ceil(flowW/16), ceil(flowH/4)) escrevendo direto o vetor FINAL.
 	// O pass Scale so roda ENTRE niveis da piramide - nao no nivel 0.
+	if (m_pyramidActive)
+	{
+		// Laco real da AMD (ffx_opticalflow.cpp): do nivel mais grosso (N-1) ate o 0:
+		//   Search(L) -> Filter(L) -> (L>0) Scale(L) escrevendo o palpite inicial do nivel L-1.
+		const VkPipeline pSearch = m_pipelines[(uint32_t)Pass::ComputeOpticalFlowAdvancedV5];
+		const VkPipeline pFilter = m_pipelines[(uint32_t)Pass::FilterOpticalFlowV5];
+		const VkPipeline pScale = m_pipelines[(uint32_t)Pass::ScaleOpticalFlowAdvancedV5];
+		for (int l = (int)m_levelCount - 1; l >= 0; l--)
+		{
+			dispatchPipe(pSearch, m_pipelineLayouts[(uint32_t)Pass::ComputeOpticalFlowAdvancedV5], m_searchSets[l],
+				(DivRoundUp(m_lumaLevelW[l], 4) * 16 + 63) / 64, DivRoundUp(m_lumaLevelH[l], 16), 1);
+			dispatchPipe(pFilter, m_pipelineLayouts[(uint32_t)Pass::FilterOpticalFlowV5], m_filterSets[l],
+				DivRoundUp(m_flowLevelW[l], 16), DivRoundUp(m_flowLevelH[l], 4), 1);
+			if (l > 0)
+				dispatchPipe(pScale, m_pipelineLayouts[(uint32_t)Pass::ScaleOpticalFlowAdvancedV5], m_scaleSets[l],
+					(m_flowLevelW[l - 1] + 3) / 4, (m_flowLevelH[l - 1] + 3) / 4, 1);
+		}
+	}
+	else
 	{
 		const uint32_t flowW = DivRoundUp(m_width, kOpticalFlowBlockSize);
 		const uint32_t flowH = DivRoundUp(m_height, kOpticalFlowBlockSize);
@@ -554,6 +603,7 @@ void OpticalFlowVk::DestroyAll()
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
 	vkDeviceWaitIdle(device);
+	DestroyPyramid();
 
 	for (uint32_t i = 0; i < (uint32_t)Pass::Count; i++)
 	{
@@ -587,4 +637,211 @@ void OpticalFlowVk::DestroyAll()
 	destroyImage(m_scdTempImage, m_scdTempMemory, m_scdTempView);
 	destroyImage(m_scdOutputImage, m_scdOutputMemory, m_scdOutputView);
 	destroyBuffer(m_constantBuffer, m_constantBufferMemory);
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Piramide multi-nivel (opcional) - ver comentario no .h e no relatorio de integracao.
+// ---------------------------------------------------------------------------------------------
+void OpticalFlowVk::DestroyPyramid()
+{
+	VkDevice device = m_renderer->GetLogicalDevice();
+	auto destroyRes = [&](ImageRes& r)
+	{
+		if (r.view) vkDestroyImageView(device, r.view, nullptr);
+		if (r.image) vkDestroyImage(device, r.image, nullptr);
+		if (r.memory) vkFreeMemory(device, r.memory, nullptr);
+		r = ImageRes{};
+	};
+	for (uint32_t i = 0; i < kMaxPyramidLevels; i++)
+	{
+		destroyRes(m_lumaCurLevel[i]);
+		destroyRes(m_lumaPrevLevel[i]);
+		destroyRes(m_flowA[i]);
+		destroyRes(m_flowB[i]);
+	}
+	if (m_pyramidPool) { vkDestroyDescriptorPool(device, m_pyramidPool, nullptr); m_pyramidPool = VK_NULL_HANDLE; }
+	if (m_downsamplePipeline) { vkDestroyPipeline(device, m_downsamplePipeline, nullptr); m_downsamplePipeline = VK_NULL_HANDLE; }
+	if (m_downsamplePipelineLayout) { vkDestroyPipelineLayout(device, m_downsamplePipelineLayout, nullptr); m_downsamplePipelineLayout = VK_NULL_HANDLE; }
+	if (m_downsampleSetLayout) { vkDestroyDescriptorSetLayout(device, m_downsampleSetLayout, nullptr); m_downsampleSetLayout = VK_NULL_HANDLE; }
+	if (m_downsampleModule) { vkDestroyShaderModule(device, m_downsampleModule, nullptr); m_downsampleModule = VK_NULL_HANDLE; }
+	if (m_levelCbBuffer) { vkDestroyBuffer(device, m_levelCbBuffer, nullptr); m_levelCbBuffer = VK_NULL_HANDLE; }
+	if (m_levelCbMemory) { vkFreeMemory(device, m_levelCbMemory, nullptr); m_levelCbMemory = VK_NULL_HANDLE; }
+	m_pyramidActive = false;
+	m_levelCount = 1;
+}
+
+bool OpticalFlowVk::TryCreatePyramid()
+{
+	try
+	{
+		VkDevice device = m_renderer->GetLogicalDevice();
+
+		// numero de niveis: ate 7 (como a AMD), mantendo o nivel mais grosso com >= 16 px no lado menor
+		const uint32_t minDim = std::min(m_width, m_height);
+		m_levelCount = 1;
+		while (m_levelCount < kMaxPyramidLevels && (minDim >> m_levelCount) >= 16)
+			m_levelCount++;
+		if (m_levelCount < 2)
+			throw std::runtime_error("resolucao pequena demais para piramide");
+
+		// tamanhos: luma = (w >> L, h >> L); fluxo = ceil(/2) por nivel a partir de ceil(w/8) x ceil(h/8)
+		m_flowLevelW[0] = DivRoundUp(m_width, kOpticalFlowBlockSize);
+		m_flowLevelH[0] = DivRoundUp(m_height, kOpticalFlowBlockSize);
+		for (uint32_t l = 0; l < m_levelCount; l++)
+		{
+			m_lumaLevelW[l] = std::max<uint32_t>(m_width >> l, 1);
+			m_lumaLevelH[l] = std::max<uint32_t>(m_height >> l, 1);
+			if (l > 0)
+			{
+				m_flowLevelW[l] = (m_flowLevelW[l - 1] + 1) / 2;
+				m_flowLevelH[l] = (m_flowLevelH[l - 1] + 1) / 2;
+			}
+		}
+
+		// shader de downsample (media 2x2) - arquivo novo, compilado pelo usuario (ver compilar-downsample-luma.txt)
+		m_downsampleModule = LoadShaderModule("mandacaru_of_luma_downsample.spv");
+		m_downsampleSetLayout = MakeLayout(device, { { 0 + kShiftT, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE }, { 0 + kShiftU, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE } });
+		VkPipelineLayoutCreateInfo plInfo{};
+		plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		plInfo.setLayoutCount = 1;
+		plInfo.pSetLayouts = &m_downsampleSetLayout;
+		if (vkCreatePipelineLayout(device, &plInfo, nullptr, &m_downsamplePipelineLayout) != VK_SUCCESS)
+			throw std::runtime_error("falha ao criar pipeline layout do downsample");
+		VkComputePipelineCreateInfo pInfo{};
+		pInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+		pInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		pInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+		pInfo.stage.module = m_downsampleModule;
+		pInfo.stage.pName = "CS";
+		pInfo.layout = m_downsamplePipelineLayout;
+		VkResult pr = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pInfo, nullptr, &m_downsamplePipeline);
+		if (pr != VK_SUCCESS)
+			throw std::runtime_error("pipeline do downsample recusado (VkResult=" + std::to_string((int)pr) + ")");
+
+		// imagens por nivel (nivel 0 reaproveita as imagens ja existentes)
+		for (uint32_t l = 1; l < m_levelCount; l++)
+		{
+			CreateImage2D(m_renderer, m_memoryManager, m_lumaLevelW[l], m_lumaLevelH[l], VK_FORMAT_R32_UINT, m_lumaCurLevel[l].image, m_lumaCurLevel[l].memory, m_lumaCurLevel[l].view);
+			CreateImage2D(m_renderer, m_memoryManager, m_lumaLevelW[l], m_lumaLevelH[l], VK_FORMAT_R32_UINT, m_lumaPrevLevel[l].image, m_lumaPrevLevel[l].memory, m_lumaPrevLevel[l].view);
+			CreateImage2D(m_renderer, m_memoryManager, m_flowLevelW[l], m_flowLevelH[l], VK_FORMAT_R32G32_SINT, m_flowA[l].image, m_flowA[l].memory, m_flowA[l].view);
+			CreateImage2D(m_renderer, m_memoryManager, m_flowLevelW[l], m_flowLevelH[l], VK_FORMAT_R32G32_SINT, m_flowB[l].image, m_flowB[l].memory, m_flowB[l].view);
+		}
+
+		// um constant buffer com as constantes de TODOS os niveis (offsets de 256 bytes); valores estaticos
+		constexpr VkDeviceSize kStride = 256;
+		if (!m_memoryManager->CreateBuffer(kStride * m_levelCount, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, m_levelCbBuffer, m_levelCbMemory))
+			throw std::runtime_error("falha ao criar o constant buffer por nivel");
+		{
+			void* mapped = nullptr;
+			if (vkMapMemory(device, m_levelCbMemory, 0, kStride * m_levelCount, 0, &mapped) != VK_SUCCESS)
+				throw std::runtime_error("vkMapMemory falhou");
+			memset(mapped, 0, (size_t)(kStride * m_levelCount));
+			for (uint32_t l = 0; l < m_levelCount; l++)
+			{
+				OpticalFlowConstants c{};
+				c.iInputLumaResolution[0] = (int32_t)m_width;
+				c.iInputLumaResolution[1] = (int32_t)m_height;
+				c.uOpticalFlowPyramidLevel = l;
+				c.uOpticalFlowPyramidLevelCount = m_levelCount;
+				c.iFrameIndex = 0;
+				c.backbufferTransferFunction = 0;
+				c.minMaxLuminance[0] = 0.0f;
+				c.minMaxLuminance[1] = 1.0f;
+				memcpy((char*)mapped + kStride * l, &c, sizeof(c));
+			}
+			vkUnmapMemory(device, m_levelCbMemory);
+		}
+
+		// pool + sets (todos estaticos: as imagens por nivel nao mudam)
+		VkDescriptorPoolSize sizes[3] = {
+			{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 96 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 96 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 32 },
+		};
+		VkDescriptorPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = 3;
+		poolInfo.pPoolSizes = sizes;
+		poolInfo.maxSets = 5 * kMaxPyramidLevels;
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_pyramidPool) != VK_SUCCESS)
+			throw std::runtime_error("falha ao criar o descriptor pool da piramide");
+
+		auto alloc = [&](VkDescriptorSetLayout layout) -> VkDescriptorSet
+		{
+			VkDescriptorSetAllocateInfo ai{};
+			ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			ai.descriptorPool = m_pyramidPool;
+			ai.descriptorSetCount = 1;
+			ai.pSetLayouts = &layout;
+			VkDescriptorSet set = VK_NULL_HANDLE;
+			if (vkAllocateDescriptorSets(device, &ai, &set) != VK_SUCCESS)
+				throw std::runtime_error("falha ao alocar descriptor set da piramide");
+			return set;
+		};
+		auto writeImg = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkImageView view)
+		{
+			VkDescriptorImageInfo info{ VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL };
+			VkWriteDescriptorSet w{};
+			w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			w.dstSet = set; w.dstBinding = binding; w.descriptorCount = 1; w.descriptorType = type; w.pImageInfo = &info;
+			vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+		};
+		auto writeCb = [&](VkDescriptorSet set, uint32_t level)
+		{
+			VkDescriptorBufferInfo info{ m_levelCbBuffer, kStride * level, sizeof(OpticalFlowConstants) };
+			VkWriteDescriptorSet w{};
+			w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			w.dstSet = set; w.dstBinding = 0 + kShiftB; w.descriptorCount = 1; w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w.pBufferInfo = &info;
+			vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+		};
+		constexpr auto SI = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+		constexpr auto ST = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		auto lumaCur = [&](uint32_t l) { return l == 0 ? m_lumaView : m_lumaCurLevel[l].view; };
+		auto lumaPrev = [&](uint32_t l) { return l == 0 ? m_lumaPreviousView : m_lumaPrevLevel[l].view; };
+		auto flowA = [&](uint32_t l) { return l == 0 ? m_opticalFlowRawView : m_flowA[l].view; };
+		auto flowB = [&](uint32_t l) { return l == 0 ? m_opticalFlowVectorView : m_flowB[l].view; };
+
+		for (uint32_t l = 0; l < m_levelCount; l++)
+		{
+			VkDescriptorSet s = m_searchSets[l] = alloc(m_descriptorSetLayouts[(uint32_t)Pass::ComputeOpticalFlowAdvancedV5]);
+			writeCb(s, l);
+			writeImg(s, 0 + kShiftT, SI, lumaCur(l));
+			writeImg(s, 1 + kShiftT, SI, lumaPrev(l));
+			writeImg(s, 0 + kShiftU, ST, flowA(l));
+			writeImg(s, 1 + kShiftU, ST, m_scdOutputView);
+
+			s = m_filterSets[l] = alloc(m_descriptorSetLayouts[(uint32_t)Pass::FilterOpticalFlowV5]);
+			writeImg(s, 0 + kShiftT, SI, flowA(l));
+			writeImg(s, 0 + kShiftU, ST, flowB(l));
+
+			if (l > 0)
+			{
+				s = m_scaleSets[l] = alloc(m_descriptorSetLayouts[(uint32_t)Pass::ScaleOpticalFlowAdvancedV5]);
+				writeCb(s, l);
+				writeImg(s, 0 + kShiftT, SI, lumaCur(l));
+				writeImg(s, 1 + kShiftT, SI, lumaPrev(l));
+				writeImg(s, 2 + kShiftT, SI, flowB(l));
+				writeImg(s, 0 + kShiftU, ST, flowA(l - 1));
+				writeImg(s, 1 + kShiftU, ST, m_scdOutputView);
+
+				s = m_downsampleSetsCur[l] = alloc(m_downsampleSetLayout);
+				writeImg(s, 0 + kShiftT, SI, lumaCur(l - 1));
+				writeImg(s, 0 + kShiftU, ST, lumaCur(l));
+
+				s = m_downsampleSetsPrev[l] = alloc(m_downsampleSetLayout);
+				writeImg(s, 0 + kShiftT, SI, lumaPrev(l - 1));
+				writeImg(s, 0 + kShiftU, ST, lumaPrev(l));
+			}
+		}
+		cemuLog_log(LogType::Force, "[FrameGen] Optical Flow em PIRAMIDE: {} niveis (nivel mais grosso {}x{})", m_levelCount, m_lumaLevelW[m_levelCount - 1], m_lumaLevelH[m_levelCount - 1]);
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		cemuLog_log(LogType::Force, "[FrameGen] piramide do Optical Flow indisponivel, usando o modo simples: {}", e.what());
+		DestroyPyramid();
+		return false;
+	}
 }

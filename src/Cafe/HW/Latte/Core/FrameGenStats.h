@@ -8,4 +8,5 @@ namespace FrameGenStats
 	inline std::atomic<bool> active{ false };      // frame gen ligado e funcionando
 	inline std::atomic<float> realFps{ 0.0f };      // frames reais do jogo por segundo
 	inline std::atomic<float> generatedFps{ 0.0f }; // frames gerados (interpolados) por segundo
+	inline std::atomic<float> gpuMs{ 0.0f };        // custo medio de GPU (ms) do frame gerado (0 = sem medicao)
 }

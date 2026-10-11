@@ -165,6 +165,12 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             choices = listOf(50, 75, 100),
         )
         Toggle(
+            label = tr("Frame Gen Optical Flow pyramid"),
+            description = tr("Optical Flow multi-nivel (ate 7 niveis, como o FSR3 original): movimento grande mais preciso, custa mais GPU. Se o shader do downsample faltar, volta sozinho ao modo simples."),
+            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PYRAMID) != 0 },
+            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PYRAMID, if (it) 1 else 0) },
+        )
+        Toggle(
             label = tr("Frame Gen performance mode"),
             description = tr("Optical Flow mais leve (forca Flow scale ate 50%). Menos custo de GPU, movimento menos preciso."),
             initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE) != 0 },
@@ -176,6 +182,32 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT, it) },
             choiceToString = { if (it == 0) tr("Off") else "$it FPS" },
             choices = listOf(0, 30, 40, 60),
+        )
+        Toggle(
+            label = tr("Frame Gen overlay"),
+            description = tr("Mostra a linha 'FrameGen: real + gerado = total' no overlay de stats (precisa do FPS ligado). A posicao, cor e tamanho seguem o overlay normal."),
+            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW) != 0 },
+            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW, if (it) 1 else 0) },
+        )
+        SingleSelection(
+            label = tr("Frame Gen overlay decimals"),
+            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS) },
+            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS, it) },
+            choiceToString = { it.toString() },
+            choices = listOf(0, 1, 2),
+        )
+        SingleSelection(
+            label = tr("Frame Gen overlay style"),
+            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE) },
+            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE, it) },
+            choiceToString = { if (it == 0) tr("Detailed") else tr("Compact") },
+            choices = listOf(0, 1),
+        )
+        Toggle(
+            label = tr("Frame Gen overlay: GPU cost"),
+            description = tr("Mostra o custo de GPU (ms) do frame gerado (Optical Flow + interpolacao)."),
+            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS) != 0 },
+            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS, if (it) 1 else 0) },
         )
         Button(
             label = tr("Quality of Life"),

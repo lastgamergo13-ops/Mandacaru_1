@@ -6,6 +6,7 @@
 #include "config/CemuConfig.h"
 #include "config/ActiveSettings.h"
 #include "WindowSystem.h"
+#include <algorithm>
 
 #include <imgui.h>
 #include "resource/IconsFontAwesome5.h"
@@ -131,13 +132,24 @@ void LatteOverlay_renderOverlay(ImVec2& position, ImVec2& pivot, sint32 directio
 				ImGui::Text("FPS: %.2lf", g_state.fps);
 			}
 
-			if (config.overlay.fps && FrameGenStats::active.load(std::memory_order_relaxed))
+			if (config.overlay.fps && config.fsr3_ov_show.GetValue() && FrameGenStats::active.load(std::memory_order_relaxed))
 			{
-				// Frame Generation: real + gerado = total apresentado por segundo
+				// Frame Generation: real + gerado = total apresentado por segundo.
+				// Configuravel: casas decimais (0-2), estilo (detalhado/compacto) e custo de GPU.
 				const float r = FrameGenStats::realFps.load(std::memory_order_relaxed);
 				const float g = FrameGenStats::generatedFps.load(std::memory_order_relaxed);
+				const int dec = std::clamp<sint32>(config.fsr3_ov_decimals.GetValue(), 0, 2);
 				nextStatLine();
-				ImGui::Text("FrameGen: %.0f real + %.0f gerado = %.0f", r, g, r + g);
+				if (config.fsr3_ov_style.GetValue() == 1)
+					ImGui::Text("FG %.*f+%.*f=%.*f", dec, r, dec, g, dec, r + g);
+				else
+					ImGui::Text("FrameGen: %.*f real + %.*f gerado = %.*f", dec, r, dec, g, dec, r + g);
+				const float gpuMs = FrameGenStats::gpuMs.load(std::memory_order_relaxed);
+				if (config.fsr3_ov_gpu_ms.GetValue() && gpuMs > 0.0f)
+				{
+					nextStatLine();
+					ImGui::Text("FG GPU: %.2f ms", gpuMs);
+				}
 			}
 
 			if (config.overlay.frame_time && g_state.fps > 0.0)

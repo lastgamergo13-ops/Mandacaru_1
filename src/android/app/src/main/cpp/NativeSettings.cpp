@@ -305,6 +305,11 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_getFsr3Option([[maybe_unused]
 	case 3: return c.fsr3_fg_performance_mode.GetValue() ? 1 : 0;
 	case 4: return c.fsr3_fg_base_fps_limit.GetValue();
 	case 5: return c.fsr3_upscale.GetValue() ? 1 : 0;
+	case 6: return c.fsr3_ov_show.GetValue() ? 1 : 0;
+	case 7: return c.fsr3_ov_decimals.GetValue();
+	case 8: return c.fsr3_ov_style.GetValue();
+	case 9: return c.fsr3_ov_gpu_ms.GetValue() ? 1 : 0;
+	case 10: return c.fsr3_fg_pyramid.GetValue() ? 1 : 0;
 	}
 	return 0;
 }
@@ -321,6 +326,11 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setFsr3Option([[maybe_unused]
 	case 3: c.fsr3_fg_performance_mode = value != 0; break;
 	case 4: c.fsr3_fg_base_fps_limit = std::clamp<sint32>(value, 0, 240); break;
 	case 5: c.fsr3_upscale = value != 0; break;
+	case 6: c.fsr3_ov_show = value != 0; break;
+	case 7: c.fsr3_ov_decimals = std::clamp<sint32>(value, 0, 2); break;
+	case 8: c.fsr3_ov_style = std::clamp<sint32>(value, 0, 1); break;
+	case 9: c.fsr3_ov_gpu_ms = value != 0; break;
+	case 10: c.fsr3_fg_pyramid = value != 0; break;
 	}
 }
 

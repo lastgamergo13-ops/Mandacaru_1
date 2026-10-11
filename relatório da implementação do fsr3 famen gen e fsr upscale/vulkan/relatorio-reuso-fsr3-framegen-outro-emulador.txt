@@ -526,3 +526,21 @@ Regra de sincronizacao ao apresentar frames extras: o stage do semaforo de acqui
 o MESMO stage do primeiro uso da imagem (aqui TRANSFER, por causa do blit) e a barreira de layout deve usar esse
 mesmo srcStage. Usar COLOR_ATTACHMENT_OUTPUT no wait e COMPUTE na barreira deixa a escrita comecar antes da
 imagem ser liberada pelo presentation engine (device lost / artefatos em Adreno).
+
+=== V11.2 ===
+Ao adquirir uma imagem extra do swapchain para um frame gerado, SEMPRE esperar o fence do acquire
+(WaitAvailableFence) como o fluxo normal faz; senao o fence compartilhado fica pendente e o proximo acquire do
+frame real o reseta em uso (device lost em Adreno sob carga).
+
+=== V11.5 ===
+Nao crie os recursos do Frame Gen (imagens do tamanho da tela, pipelines) enquanto o toggle estiver desligado: crie na
+primeira vez que ligar e libere ao desligar. Em GPUs mobile de memoria unificada isso evita pressao de memoria em jogos
+pesados (suspeita: Mario Kart 8 deu device lost com o Frame Gen desligado). Para medir custo, use VkQueryPool de timestamp
+(timestampValidBits da familia + limits.timestampPeriod) ao redor dos dispatches e leia o resultado depois da fence.
+
+=== V11.6 ===
+Overlay configuravel: FrameGenStats ganhou gpuMs; opcoes (mostrar, decimais, estilo, custo GPU) em CemuConfig + JNI
+(getFsr3Option/setFsr3Option chaves 6..9) + UI (Experimental e painel em jogo). Piramide multi-nivel do Optical Flow NAO feita
+(ver motivo no checklist de integracao).
+
+V11.7: Optical Flow multi-nivel opcional. Novo shader de downsample de luma (media 2x2); demais shaders AMD reaproveitados sem recompilar (bindings ja compativeis). Fallback para 1 nivel se indisponivel.

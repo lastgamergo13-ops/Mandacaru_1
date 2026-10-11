@@ -66,7 +66,10 @@ class VKRMemoryManager;
 class OpticalFlowVk
 {
 public:
-	OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth, uint32_t resolutionHeight);
+	// pyramid = true tenta o Optical Flow MULTI-NIVEL (piramide de ate 7 niveis, como o FSR3 original).
+	// Se algo falhar (shader do downsample ausente, pipeline recusado...) cai sozinho no modo simples
+	// (1 nivel) - ver IsPyramidActive().
+	OpticalFlowVk(VulkanRenderer* renderer, uint32_t resolutionWidth, uint32_t resolutionHeight, bool pyramid = false);
 	~OpticalFlowVk();
 
 	OpticalFlowVk(const OpticalFlowVk&) = delete;
@@ -78,6 +81,9 @@ public:
 	static constexpr uint32_t kBlockSize = 8;
 
 	VkImageView GetOpticalFlowVectorView() const { return m_opticalFlowVectorView; }
+
+	bool IsPyramidActive() const { return m_pyramidActive; }
+	uint32_t GetPyramidLevelCount() const { return m_pyramidActive ? m_levelCount : 1; }
 
 	// Resolucao em que o Optical Flow RODA (pode ser menor que a tela: "flow scale") e tamanho
 	// da textura de vetores (ceil(w/8) x ceil(h/8)).
@@ -109,6 +115,32 @@ private:
 	void CreateDescriptorPoolAndSets();
 	void UpdateDescriptorSets(VkImageView currentColorView, VkImageView previousColorView);
 	void DestroyAll();
+
+	// --- Piramide multi-nivel (opcional) ---
+	static constexpr uint32_t kMaxPyramidLevels = 7;
+	struct ImageRes { VkImage image = VK_NULL_HANDLE; VkDeviceMemory memory = VK_NULL_HANDLE; VkImageView view = VK_NULL_HANDLE; };
+	bool TryCreatePyramid();
+	void DestroyPyramid();
+	bool m_pyramidActive = false;
+	uint32_t m_levelCount = 1;
+	uint32_t m_lumaLevelW[kMaxPyramidLevels] = {}, m_lumaLevelH[kMaxPyramidLevels] = {};
+	uint32_t m_flowLevelW[kMaxPyramidLevels] = {}, m_flowLevelH[kMaxPyramidLevels] = {};
+	ImageRes m_lumaCurLevel[kMaxPyramidLevels];  // [0] nao usado (nivel 0 = m_luma*)
+	ImageRes m_lumaPrevLevel[kMaxPyramidLevels];
+	ImageRes m_flowA[kMaxPyramidLevels];         // saida do Search do nivel (e palpite inicial vindo do Scale); [0] nao usado (= raw)
+	ImageRes m_flowB[kMaxPyramidLevels];         // saida do Filter do nivel; [0] nao usado (= vetor final)
+	VkShaderModule m_downsampleModule = VK_NULL_HANDLE;
+	VkDescriptorSetLayout m_downsampleSetLayout = VK_NULL_HANDLE;
+	VkPipelineLayout m_downsamplePipelineLayout = VK_NULL_HANDLE;
+	VkPipeline m_downsamplePipeline = VK_NULL_HANDLE;
+	VkBuffer m_levelCbBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_levelCbMemory = VK_NULL_HANDLE;
+	VkDescriptorPool m_pyramidPool = VK_NULL_HANDLE;
+	VkDescriptorSet m_searchSets[kMaxPyramidLevels] = {};
+	VkDescriptorSet m_filterSets[kMaxPyramidLevels] = {};
+	VkDescriptorSet m_scaleSets[kMaxPyramidLevels] = {};
+	VkDescriptorSet m_downsampleSetsCur[kMaxPyramidLevels] = {};
+	VkDescriptorSet m_downsampleSetsPrev[kMaxPyramidLevels] = {};
 
 	VkShaderModule LoadShaderModule(const char* spvFileName) const;
 	static void ComputeToComputeBarrier(VkCommandBuffer cb);

@@ -54,6 +54,11 @@ object NativeSettings {
         const val PERFORMANCE_MODE = 3
         const val BASE_FPS_LIMIT = 4
         const val UPSCALE = 5
+        const val OVERLAY_SHOW = 6
+        const val OVERLAY_DECIMALS = 7
+        const val OVERLAY_STYLE = 8
+        const val OVERLAY_GPU_MS = 9
+        const val PYRAMID = 10
     }
 
     @JvmStatic

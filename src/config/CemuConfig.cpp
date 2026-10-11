@@ -29,9 +29,14 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	fsr3_frame_gen = parser.get("fsr3_frame_gen", fsr3_frame_gen.GetInitValue());
 	fsr3_fg_multiplier = parser.get("fsr3_fg_multiplier", fsr3_fg_multiplier.GetInitValue());
 	fsr3_fg_flow_scale = parser.get("fsr3_fg_flow_scale", fsr3_fg_flow_scale.GetInitValue());
+	fsr3_fg_pyramid = parser.get("fsr3_fg_pyramid", fsr3_fg_pyramid.GetInitValue());
 	fsr3_fg_performance_mode = parser.get("fsr3_fg_performance_mode", fsr3_fg_performance_mode.GetInitValue());
 	fsr3_fg_base_fps_limit = parser.get("fsr3_fg_base_fps_limit", fsr3_fg_base_fps_limit.GetInitValue());
 	fsr3_upscale = parser.get("fsr3_upscale", fsr3_upscale.GetInitValue());
+	fsr3_ov_show = parser.get("fsr3_ov_show", fsr3_ov_show.GetInitValue());
+	fsr3_ov_decimals = parser.get("fsr3_ov_decimals", fsr3_ov_decimals.GetInitValue());
+	fsr3_ov_style = parser.get("fsr3_ov_style", fsr3_ov_style.GetInitValue());
+	fsr3_ov_gpu_ms = parser.get("fsr3_ov_gpu_ms", fsr3_ov_gpu_ms.GetInitValue());
 
 	const char* mlc = parser.get("mlc_path", "");
 	mlc_path = mlc;
@@ -339,9 +344,14 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	config.set("fsr3_frame_gen", fsr3_frame_gen.GetValue());
 	config.set("fsr3_fg_multiplier", fsr3_fg_multiplier.GetValue());
 	config.set("fsr3_fg_flow_scale", fsr3_fg_flow_scale.GetValue());
+	config.set("fsr3_fg_pyramid", fsr3_fg_pyramid.GetValue());
 	config.set("fsr3_fg_performance_mode", fsr3_fg_performance_mode.GetValue());
 	config.set("fsr3_fg_base_fps_limit", fsr3_fg_base_fps_limit.GetValue());
 	config.set("fsr3_upscale", fsr3_upscale.GetValue());
+	config.set("fsr3_ov_show", fsr3_ov_show.GetValue());
+	config.set("fsr3_ov_decimals", fsr3_ov_decimals.GetValue());
+	config.set("fsr3_ov_style", fsr3_ov_style.GetValue());
+	config.set("fsr3_ov_gpu_ms", fsr3_ov_gpu_ms.GetValue());
 	config.set("mlc_path", mlc_path.GetValue().c_str());
 	config.set<bool>("permanent_storage", permanent_storage);
 	config.set("proxy_server", proxy_server.GetValue().c_str());
