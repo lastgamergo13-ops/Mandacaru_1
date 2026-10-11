@@ -924,7 +924,13 @@ void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPa
 	{
 		// "FSR Upscale" (Experimental): troca o filtro de UPSCALE pelo FSR 1.0 (EASU+RCAS) do Cemu.
 		// Valor efetivo = perfil do jogo, senao a opcao global.
-		sint32 scaling_filter = downscaling ? GetConfig().downscale_filter : (FrameGenSettings::Get().fsrUpscale ? (sint32)kFsrFilter : (sint32)GetConfig().upscale_filter);
+		sint32 scaling_filter;
+		if (downscaling)
+			scaling_filter = GetConfig().downscale_filter.GetValue();
+		else if (FrameGenSettings::Get().fsrUpscale)
+			scaling_filter = (sint32)kFsrFilter;
+		else
+			scaling_filter = GetConfig().upscale_filter.GetValue();
 
 		if (scaling_filter == kLinearFilter)
 		{
