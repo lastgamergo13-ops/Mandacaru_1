@@ -33,7 +33,23 @@ namespace
 		sem_t resumeSem{};
 		pthread_t thread{};
 		bool hasOwnThread = false;
+		// Setado pelo destrutor do Fiber. A pthread dona do fiber (parada em sem_wait) ao acordar
+		// com isso setado NAO retoma o codigo do jogo: libera o impl e termina sozinha.
+		// Sem isso, o destrutor liberava o impl/semaforo enquanto a pthread ainda estava (ou ia
+		// estar) dentro de Fiber::Switch() -> use-after-free: a thread de uma OSThread encerrada
+		// (OSExitThread) "acordava" com o semaforo destruido e continuava executando com
+		// ponteiros liberados (crash em __OSThreadLoadContext logo depois do OSExitThread).
+		std::atomic<bool> dying{ false };
 	};
+
+	// sem_wait pode retornar com EINTR (sinais - ART, perf, profiler). Sem repetir, o fiber
+	// acordava sem ninguem ter feito switch para ele.
+	inline void AndroidSemWait(sem_t* sem)
+	{
+		while (sem_wait(sem) != 0 && errno == EINTR)
+		{
+		}
+	}
 
 	// Ponto de entrada da pthread real por tras de cada fiber "criado" (nao o
 	// que envolve a thread atual - esse nunca passa por aqui). Fica bloqueada
@@ -45,7 +61,14 @@ namespace
 		Fiber* self = static_cast<Fiber*>(param);
 		auto* impl = static_cast<AndroidFiberImpl*>(self->AndroidGetContextSlot());
 
-		sem_wait(&impl->resumeSem);
+		AndroidSemWait(&impl->resumeSem);
+		if (impl->dying.load(std::memory_order_acquire))
+		{
+			// fiber destruido antes de ter rodado alguma vez
+			sem_destroy(&impl->resumeSem);
+			delete impl;
+			return nullptr;
+		}
 		sCurrentFiber = self;
 		self->AndroidRunEntryPoint();
 		// FiberEntryPoint nao deveria retornar (mesma premissa do resto do
@@ -107,8 +130,20 @@ Fiber::Fiber(void* privateData) : m_privateData(privateData)
 Fiber::~Fiber()
 {
 	auto* impl = static_cast<AndroidFiberImpl*>(m_implData);
-	if (impl)
+	m_implData = nullptr;
+	if (!impl)
+		return;
+	if (impl->hasOwnThread)
 	{
+		// A pthread do fiber esta parada (ou prestes a parar) em sem_wait. NAO liberar o impl
+		// aqui: sinaliza e deixa a propria thread liberar e terminar (ver Switch() e
+		// AndroidFiberThreadEntry). Depois do sem_post nao tocamos mais no impl.
+		impl->dying.store(true, std::memory_order_release);
+		sem_post(&impl->resumeSem);
+	}
+	else
+	{
+		// fiber que representa uma thread existente (sem pthread propria)
 		sem_destroy(&impl->resumeSem);
 		delete impl;
 	}
@@ -136,7 +171,15 @@ void Fiber::Switch(Fiber& targetFiber)
 	// Acorda a thread real por tras do fiber alvo...
 	sem_post(&targetImpl->resumeSem);
 	// ...e dorme na propria, esperando alguem trocar de volta pra ca.
-	sem_wait(&leavingImpl->resumeSem);
+	AndroidSemWait(&leavingImpl->resumeSem);
+	if (leavingImpl->dying.load(std::memory_order_acquire))
+	{
+		// Este fiber foi destruido (ex.: OSThread encerrada e desalocada). Nunca mais volta ao
+		// codigo do jogo: libera o proprio impl e encerra a pthread.
+		sem_destroy(&leavingImpl->resumeSem);
+		delete leavingImpl;
+		pthread_exit(nullptr);
+	}
 }
 
 void* Fiber::GetFiberPrivateData()

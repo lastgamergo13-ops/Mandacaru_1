@@ -1,5 +1,6 @@
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "Cafe/HW/Latte/Core/LattePerformanceMonitor.h"
+#include "Cafe/HW/Latte/Core/FrameGenStats.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/Account/Account.h"
 #include "config/CemuConfig.h"
@@ -128,6 +129,15 @@ void LatteOverlay_renderOverlay(ImVec2& position, ImVec2& pivot, sint32 directio
 			{
 				nextStatLine();
 				ImGui::Text("FPS: %.2lf", g_state.fps);
+			}
+
+			if (config.overlay.fps && FrameGenStats::active.load(std::memory_order_relaxed))
+			{
+				// Frame Generation: real + gerado = total apresentado por segundo
+				const float r = FrameGenStats::realFps.load(std::memory_order_relaxed);
+				const float g = FrameGenStats::generatedFps.load(std::memory_order_relaxed);
+				nextStatLine();
+				ImGui::Text("FrameGen: %.0f real + %.0f gerado = %.0f", r, g, r + g);
 			}
 
 			if (config.overlay.frame_time && g_state.fps > 0.0)

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "JNIUtils.h"
 #include "AndroidMemoryManager.h"
 #include "audio/IAudioAPI.h"
@@ -287,6 +288,40 @@ extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_setFsr3FrameGen([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
 {
 	GetConfig().fsr3_frame_gen = enabled;
+}
+
+// Opcoes do FSR3 Frame Gen / FSR Upscale (globais). Chaves (iguais as do perfil por jogo):
+//   0 = frame gen on/off (0/1)   1 = multiplicador (2..4)   2 = flow scale % (50/75/100)
+//   3 = modo performance (0/1)   4 = limite de FPS base (0,30,40,60)   5 = FSR upscale (0/1)
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getFsr3Option([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint key)
+{
+	auto& c = GetConfig();
+	switch (key)
+	{
+	case 0: return c.fsr3_frame_gen.GetValue() ? 1 : 0;
+	case 1: return c.fsr3_fg_multiplier.GetValue();
+	case 2: return c.fsr3_fg_flow_scale.GetValue();
+	case 3: return c.fsr3_fg_performance_mode.GetValue() ? 1 : 0;
+	case 4: return c.fsr3_fg_base_fps_limit.GetValue();
+	case 5: return c.fsr3_upscale.GetValue() ? 1 : 0;
+	}
+	return 0;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setFsr3Option([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint key, jint value)
+{
+	auto& c = GetConfig();
+	switch (key)
+	{
+	case 0: c.fsr3_frame_gen = value != 0; break;
+	case 1: c.fsr3_fg_multiplier = std::clamp<sint32>(value, 2, 4); break;
+	case 2: c.fsr3_fg_flow_scale = std::clamp<sint32>(value, 25, 100); break;
+	case 3: c.fsr3_fg_performance_mode = value != 0; break;
+	case 4: c.fsr3_fg_base_fps_limit = std::clamp<sint32>(value, 0, 240); break;
+	case 5: c.fsr3_upscale = value != 0; break;
+	}
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL

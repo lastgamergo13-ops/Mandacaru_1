@@ -103,30 +103,27 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             ),
         )
         InfoDialogButton(
-            title = tr("FSR3 Upscale"),
+            title = tr("FSR Upscale"),
             explanation = tr(
-                "AMD FSR3 Upscale renders the game at a lower internal resolution and uses an " +
-                        "algorithm to reconstruct detail when scaling up to your display's resolution - " +
-                        "similar in purpose to Nvidia's DLSS, but running on any GPU. The goal is better " +
-                        "image quality than simple bilinear/bicubic upscaling at the same performance cost, " +
-                        "or the same quality at a lower performance cost.\n\n" +
-                        "Status: NOT ported yet. This toggle is a placeholder for the feature that's " +
-                        "planned - turning it on currently does nothing in-game. Not to be confused with " +
-                        "the existing \"FSR1\" choice in the Graphics settings screen, which is a different, " +
-                        "already-working, older AMD filter."
+                "Usa o filtro AMD FSR 1.0 (EASU + RCAS) do Cemu para ampliar a imagem do jogo " +
+                        "(renderizada na resolucao nativa do Wii U) ate a resolucao da sua tela, " +
+                        "com bordas mais nitidas que o bilinear/bicubic.\n\n" +
+                        "Honestidade tecnica: o FSR3 'de verdade' (temporal) precisa de depth e " +
+                        "motion vectors do jogo, que o Cemu nao tem. Por isso este botao liga o FSR 1.0 " +
+                        "(espacial), que e um upscale real e ja funciona. Pode ser definido por jogo no " +
+                        "perfil do jogo. Equivale a escolher \"FSR\" em Graficos > Filtro de upscale, " +
+                        "sem alterar aquela escolha."
             ),
         )
-        var fsr3UpscaleEnabled by rememberSaveable { mutableStateOf(false) }
+        var fsr3Upscale by rememberSaveable { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.UPSCALE) != 0) }
         Toggle(
-            label = tr("FSR3 Upscale"),
-            description = tr(
-                "FSR3 Upscale ainda nao portado - este botao ainda nao faz nada no jogo.\n" +
-                        "Resumo: reconstroi a imagem ao escalar de uma resolucao interna menor para a " +
-                        "tela, tentando preservar mais detalhe que um escalonamento simples, no mesmo " +
-                        "espirito do DLSS."
-            ),
-            initialCheckedState = { fsr3UpscaleEnabled },
-            onCheckedChanged = { fsr3UpscaleEnabled = it },
+            label = tr("FSR Upscale"),
+            description = tr("Liga o filtro FSR 1.0 (EASU+RCAS) no lugar do filtro de upscale normal. Vale na hora."),
+            initialCheckedState = { fsr3Upscale },
+            onCheckedChanged = {
+                fsr3Upscale = it
+                NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.UPSCALE, if (it) 1 else 0)
+            },
         )
         InfoDialogButton(
             title = tr("FSR3 Frame Gen"),
@@ -152,6 +149,33 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             ),
             initialCheckedState = NativeSettings::getFsr3FrameGen,
             onCheckedChanged = NativeSettings::setFsr3FrameGen,
+        )
+        SingleSelection(
+            label = tr("Frame multiplier"),
+            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER) },
+            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER, it) },
+            choiceToString = { "${it}x" },
+            choices = listOf(2, 3, 4),
+        )
+        SingleSelection(
+            label = tr("Flow scale"),
+            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE) },
+            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE, it) },
+            choiceToString = { "$it%" },
+            choices = listOf(50, 75, 100),
+        )
+        Toggle(
+            label = tr("Frame Gen performance mode"),
+            description = tr("Optical Flow mais leve (forca Flow scale ate 50%). Menos custo de GPU, movimento menos preciso."),
+            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE) != 0 },
+            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE, if (it) 1 else 0) },
+        )
+        SingleSelection(
+            label = tr("Frame Gen base FPS limit"),
+            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT) },
+            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT, it) },
+            choiceToString = { if (it == 0) tr("Off") else "$it FPS" },
+            choices = listOf(0, 30, 40, 60),
         )
         Button(
             label = tr("Quality of Life"),

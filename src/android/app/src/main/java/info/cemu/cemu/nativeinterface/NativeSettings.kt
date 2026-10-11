@@ -44,6 +44,24 @@ object NativeSettings {
     @JvmStatic
     external fun setFsr3FrameGen(value: Boolean)
 
+    // Opcoes do FSR3 Frame Gen / FSR Upscale (valem para todos os jogos, salvo perfil do jogo).
+    // key: 0 frame gen (0/1) | 1 multiplicador (2..4) | 2 flow scale % (50/75/100)
+    //      3 modo performance (0/1) | 4 limite de FPS base (0/30/40/60) | 5 FSR upscale (0/1)
+    object Fsr3Option {
+        const val FRAME_GEN = 0
+        const val MULTIPLIER = 1
+        const val FLOW_SCALE = 2
+        const val PERFORMANCE_MODE = 3
+        const val BASE_FPS_LIMIT = 4
+        const val UPSCALE = 5
+    }
+
+    @JvmStatic
+    external fun getFsr3Option(key: Int): Int
+
+    @JvmStatic
+    external fun setFsr3Option(key: Int, value: Int)
+
     object VSyncMode {
         const val OFF: Int = 0
         const val DOUBLE_BUFFERING: Int = 1

@@ -3563,7 +3563,9 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 	{
 		throw std::runtime_error(fmt::format("Failed to present image: {}", result));
 	}
-	if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+	// SUBOPTIMAL nao exige recriar o swapchain. No Adreno ele vem em TODO present e recriar a cada
+	// frame destruia o desempenho (logs: 466-582 recriacoes por sessao). So OUT_OF_DATE exige.
+	if(result == VK_ERROR_OUT_OF_DATE_KHR)
 		chainInfo.m_shouldRecreate = true;
 
 	if(result >= 0)

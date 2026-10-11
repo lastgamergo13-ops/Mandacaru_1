@@ -329,4 +329,12 @@ object NativeGameTitles {
     /** Pass 100-200 to override for this title only, or -1 to clear the override. */
     @JvmStatic
     external fun setEmulationSpeedPercentForTitle(gameTitleId: Long, speedPercent: Int)
+
+    // ─── FSR3 Frame Gen / FSR Upscale — per-title override ─────────────
+    // key = NativeSettings.Fsr3Option.* . -1 = "usar a opcao global"; so afeta ESTE jogo.
+    @JvmStatic
+    external fun getFrameGenOptionForTitle(gameTitleId: Long, key: Int): Int
+
+    @JvmStatic
+    external fun setFrameGenOptionForTitle(gameTitleId: Long, key: Int, value: Int)
 }

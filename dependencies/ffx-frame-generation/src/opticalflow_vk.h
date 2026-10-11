@@ -79,6 +79,13 @@ public:
 
 	VkImageView GetOpticalFlowVectorView() const { return m_opticalFlowVectorView; }
 
+	// Resolucao em que o Optical Flow RODA (pode ser menor que a tela: "flow scale") e tamanho
+	// da textura de vetores (ceil(w/8) x ceil(h/8)).
+	uint32_t GetInputWidth() const { return m_width; }
+	uint32_t GetInputHeight() const { return m_height; }
+	uint32_t GetFlowTextureWidth() const { return (m_width + kBlockSize - 1) / kBlockSize; }
+	uint32_t GetFlowTextureHeight() const { return (m_height + kBlockSize - 1) / kBlockSize; }
+
 	// Os 7 passes, na ordem real de dispatch (ver ffx_opticalflow.cpp:
 	// PrepareLuma -> ComputeLuminancePyramid -> GenerateSCDHistogram ->
 	// ComputeSCDDivergence -> ComputeOpticalFlowAdvancedV5 ->

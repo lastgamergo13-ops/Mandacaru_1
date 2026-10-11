@@ -5,6 +5,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
 #include "config/ActiveSettings.h"
+#include "Cemu/Logging/CemuLogging.h"
 
 #include <fstream>
 #include <vector>
@@ -29,7 +30,9 @@ static_assert(sizeof(InterpConstants) == 48, "cbInterp deve ter 48 bytes");
 
 namespace
 {
-	constexpr const char* kShaderFile = "mandacaru_frameinterpolation_simple.spv";
+	// V7 (extrapolacao + flow scale). Se nao existir, cai pro shader antigo (so interpolacao).
+	constexpr const char* kShaderFileV7 = "mandacaru_frameinterpolation_v7.spv";
+	constexpr const char* kShaderFileOld = "mandacaru_frameinterpolation_simple.spv";
 
 	// Esquema de shift (dxc -fvk-b-shift 0 / -fvk-t-shift 100 / -fvk-u-shift 200)
 	constexpr uint32_t kBindCb = 0;
@@ -108,8 +111,15 @@ void FrameInterpolationVk::CreatePipeline()
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
 
-	fs::path path = GetShaderPath(kShaderFile);
+	fs::path path = GetShaderPath(kShaderFileV7);
 	std::ifstream file(path, std::ios::ate | std::ios::binary);
+	m_supportsExtrapolation = file.is_open();
+	if (!file.is_open())
+	{
+		path = GetShaderPath(kShaderFileOld);
+		file.open(path, std::ios::ate | std::ios::binary);
+		cemuLog_log(LogType::Force, "[FrameGen] shader {} nao encontrado - usando o antigo (so interpolacao, sem flow scale correto)", kShaderFileV7);
+	}
 	if (!file.is_open())
 		throw std::runtime_error(std::string("FrameInterpolationVk: nao consegui abrir o shader ") + path.string());
 	size_t fileSize = (size_t)file.tellg();
@@ -192,9 +202,10 @@ void FrameInterpolationVk::Dispatch(VkCommandBuffer commandBuffer,
 	VkImageView previousColorView,
 	const OpticalFlowVk& opticalFlow,
 	float deltaTimeSeconds,
-	bool reset)
+	bool reset,
+	float progress)
 {
-	(void)deltaTimeSeconds; (void)reset; // t fixo = 0.5 (um frame gerado entre dois reais)
+	(void)deltaTimeSeconds; (void)reset;
 	VkDevice device = m_renderer->GetLogicalDevice();
 
 	if (!m_resourcesTransitioned)
@@ -218,11 +229,15 @@ void FrameInterpolationVk::Dispatch(VkCommandBuffer commandBuffer,
 		InterpConstants c{};
 		c.iSize[0] = (int32_t)m_width;
 		c.iSize[1] = (int32_t)m_height;
-		c.iFlowSize[0] = (int32_t)DivRoundUp(m_width, OpticalFlowVk::kBlockSize);
-		c.iFlowSize[1] = (int32_t)DivRoundUp(m_height, OpticalFlowVk::kBlockSize);
+		// O Optical Flow pode rodar em resolucao menor ("flow scale"): o tamanho da textura de
+		// vetores vem dele, e os vetores (em pixels do OF) sao convertidos p/ pixels cheios.
+		c.iFlowSize[0] = (int32_t)opticalFlow.GetFlowTextureWidth();
+		c.iFlowSize[1] = (int32_t)opticalFlow.GetFlowTextureHeight();
 		c.fFlowSign = 1.0f;
-		c.fFlowScale = 1.0f;
-		c.fT = 0.5f;
+		c.fFlowScale = (float)m_width / (float)opticalFlow.GetInputWidth();
+		// V7: fT > 1 = extrapola a partir do frame atual (ordem temporal correta).
+		// Shader antigo: interpola entre anterior(0) e atual(1) em t = progress.
+		c.fT = m_supportsExtrapolation ? (1.0f + progress) : progress;
 		c.fErrThreshold = 0.12f;
 		c.iBlock = (int32_t)OpticalFlowVk::kBlockSize;
 		void* mapped = nullptr;

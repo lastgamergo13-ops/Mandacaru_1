@@ -40,12 +40,19 @@ public:
 
 	// commandBuffer: ja em gravacao; OpticalFlowVk::Dispatch() deve ter sido
 	// chamado ANTES, no mesmo command buffer. Resultado em GetInterpolatedFrame*().
+	// progress (0..1): posicao do frame gerado DEPOIS do frame real atual, em fracao do intervalo
+	// entre frames reais (ex.: multiplicador 3x -> 0.333 e 0.667). Se o shader V7 estiver
+	// disponivel o frame e EXTRAPOLADO a partir do atual (ordem temporal correta); senao
+	// (so o shader antigo) cai para interpolacao entre anterior e atual com t = progress.
 	void Dispatch(VkCommandBuffer commandBuffer,
 		VkImageView currentColorView,
 		VkImageView previousColorView,
 		const OpticalFlowVk& opticalFlow,
 		float deltaTimeSeconds,
-		bool reset);
+		bool reset,
+		float progress = 0.5f);
+
+	bool SupportsExtrapolation() const { return m_supportsExtrapolation; }
 
 	VkImageView GetInterpolatedFrameView() const { return m_interpolatedFrameView; }
 	VkImage GetInterpolatedFrameImage() const { return m_interpolatedFrameImage; }
@@ -62,6 +69,7 @@ private:
 	uint32_t m_width = 0;
 	uint32_t m_height = 0;
 	bool m_resourcesTransitioned = false;
+	bool m_supportsExtrapolation = false; // true se carregou mandacaru_frameinterpolation_v7.spv
 
 	VkShaderModule m_shaderModule = VK_NULL_HANDLE;
 	VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;

@@ -81,11 +81,39 @@ public:
 	// coisas, mas nao e o que importa pro pacing da interpolacao).
 	// Retorna false se pulou a geracao (desabilitado, ou ainda nao tem
 	// 2 frames reais capturados pra interpolar entre eles).
+	// Gera e apresenta (multiplicador - 1) frames extras por frame real (2x = 1 extra, 3x = 2, 4x = 3),
+	// espacados no tempo, e aplica o limite de FPS base. Retorna true se ao menos 1 frame foi apresentado.
 	bool GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset);
 
 private:
 	void CreateBackbufferCopies(uint32_t width, uint32_t height, VkFormat backbufferFormat);
 	void DestroyAll();
+
+	// --- Flow scale / modo performance ---
+	// O Optical Flow roda numa resolucao reduzida (50/75% da tela) alimentada por copias
+	// reduzidas do backbuffer (blit linear feito em CaptureBackbuffer). 100% = usa as copias cheias.
+	void CreateOpticalFlow(int flowScalePercent);
+	void CreateScaledImages();
+	void DestroyScaledImages();
+	void ApplyFlowScale(int flowScalePercent);
+	int m_appliedFlowScalePercent = 100;
+	uint32_t m_flowWidth = 0;
+	uint32_t m_flowHeight = 0;
+	VkFormat m_backbufferFormat = VK_FORMAT_UNDEFINED;
+	VkImage m_scaledImages[2] = {};
+	VkDeviceMemory m_scaledMemory[2] = {};
+	VkImageView m_scaledViews[2] = {};
+	bool m_scaledInitialized[2] = { false, false };
+
+	// --- Multiplicador, pacing e limite de FPS base ---
+	// Apresenta UM frame gerado. runOpticalFlow so no primeiro de cada frame real.
+	bool PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset, bool runOpticalFlow, float progress);
+	void ApplyBaseFpsLimit();
+	int m_multiplier = 2;
+	int m_baseFpsLimit = 0;
+	std::chrono::steady_clock::time_point m_lastRealCaptureTime{};
+	double m_realFrameInterval = 1.0 / 30.0; // media movel (s) entre frames reais
+	std::chrono::steady_clock::time_point m_limiterNext{};
 
 	VulkanRenderer* m_renderer = nullptr;
 	VKRMemoryManager* m_memoryManager = nullptr;
@@ -101,6 +129,12 @@ private:
 	// Ao ligar, descarta o historico antigo pra nao interpolar com frame velho.
 	bool m_configWasOn = false;
 	bool UpdateActiveState();
+
+	// Contador de FPS (real / gerado), janela de ~1s. Ver TickStats() no .cpp.
+	void TickStats(bool realFrame);
+	uint32_t m_statRealCount = 0;
+	uint32_t m_statGenCount = 0;
+	std::chrono::steady_clock::time_point m_statWindowStart{};
 
 	// true depois que CaptureBackbuffer() foi chamado pelo menos 2x -
 	// antes disso nao ha frame "anterior" pra interpolar.
@@ -129,7 +163,11 @@ private:
 	// do frame gerado; semaforo e o que o present() espera antes de
 	// mostrar a imagem na tela, no lugar de um vkQueueWaitIdle.
 	VkFence m_inFlightFence = VK_NULL_HANDLE;
-	VkSemaphore m_renderFinishedSemaphore = VK_NULL_HANDLE;
+	// Um semaforo por frame gerado em voo (multiplicador ate 4x = 3 presents por frame real): reusar
+	// o mesmo semaforo binario antes do present consumi-lo seria invalido.
+	static constexpr uint32_t kSemaphoreRing = 4;
+	VkSemaphore m_renderFinishedSemaphores[kSemaphoreRing] = {};
+	uint32_t m_semaphoreIndex = 0;
 	VkCommandBuffer m_pendingCommandBuffer = VK_NULL_HANDLE; // liberado no INICIO da proxima chamada, depois de confirmar que a GPU ja terminou com ele
 
 	// Relogio de parede pra calcular o deltaTime real entre dois

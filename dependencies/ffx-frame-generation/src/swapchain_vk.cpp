@@ -11,19 +11,25 @@
 
 #include "Cemu/Logging/CemuLogging.h"
 #include "config/CemuConfig.h"
+#include "Cafe/HW/Latte/Core/FrameGenStats.h"
+
+#include "Cafe/HW/Latte/Core/FrameGenSettings.h"
 
 #include <stdexcept>
+#include <thread>
+#include <algorithm>
 
 SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex, VkFormat backbufferFormat)
 	: m_renderer(renderer), m_width(width), m_height(height)
 {
 	m_memoryManager = renderer->GetMemoryManager();
 
-	m_opticalFlow = std::make_unique<OpticalFlowVk>(renderer, width, height);
+	m_backbufferFormat = backbufferFormat;
 	m_frameInterpolation = std::make_unique<FrameInterpolationVk>(renderer, width, height);
-
 	CreateBackbufferCopies(width, height, backbufferFormat);
-	cemuLog_log(LogType::Force, "[FrameGen] criado: {}x{}, formato backbuffer={}", width, height, (int)backbufferFormat);
+	CreateOpticalFlow(FrameGenSettings::Get().flowScalePercent);
+	cemuLog_log(LogType::Force, "[FrameGen] criado: {}x{}, formato backbuffer={}, optical flow {}x{} ({}%), extrapolacao={}",
+		width, height, (int)backbufferFormat, m_flowWidth, m_flowHeight, m_appliedFlowScalePercent, m_frameInterpolation->SupportsExtrapolation() ? "sim" : "nao (shader v7 ausente)");
 
 	VkCommandPoolCreateInfo poolInfo{};
 	poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -44,8 +50,11 @@ SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t widt
 
 	VkSemaphoreCreateInfo semaphoreInfo{};
 	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-	if (vkCreateSemaphore(m_renderer->GetLogicalDevice(), &semaphoreInfo, nullptr, &m_renderFinishedSemaphore) != VK_SUCCESS)
-		throw std::runtime_error("SwapchainFrameGenVk: falha ao criar semaforo");
+	for (uint32_t i = 0; i < kSemaphoreRing; i++)
+	{
+		if (vkCreateSemaphore(m_renderer->GetLogicalDevice(), &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS)
+			throw std::runtime_error("SwapchainFrameGenVk: falha ao criar semaforo");
+	}
 }
 
 SwapchainFrameGenVk::~SwapchainFrameGenVk()
@@ -103,7 +112,9 @@ void SwapchainFrameGenVk::CreateBackbufferCopies(uint32_t width, uint32_t height
 
 bool SwapchainFrameGenVk::UpdateActiveState()
 {
-	const bool configOn = GetConfig().fsr3_frame_gen.GetValue();
+	// Valores efetivos: perfil do jogo (se definido) senao a config global. Lidos todo frame.
+	const FrameGenSettings::Values cfg = FrameGenSettings::Get();
+	const bool configOn = cfg.enabled;
 	if (configOn != m_configWasOn)
 	{
 		cemuLog_log(LogType::Force, "[FrameGen] {}", configOn ? "ativado" : "desativado");
@@ -113,16 +124,49 @@ bool SwapchainFrameGenVk::UpdateActiveState()
 			m_hasPreviousFrame = false;
 			m_hasLastGeneratedFrameTime = false;
 			m_currentCopyIndex = 1;
+			m_lastRealCaptureTime = {};
+			m_limiterNext = {};
 		}
 		m_configWasOn = configOn;
 	}
-	return configOn && m_enabled;
+	if (configOn)
+	{
+		if (cfg.multiplier != m_multiplier || cfg.baseFpsLimit != m_baseFpsLimit)
+			cemuLog_log(LogType::Force, "[FrameGen] multiplicador={}x, limite de FPS base={}", cfg.multiplier, cfg.baseFpsLimit);
+		m_multiplier = cfg.multiplier;
+		m_baseFpsLimit = cfg.baseFpsLimit;
+		if (cfg.flowScalePercent != m_appliedFlowScalePercent)
+			ApplyFlowScale(cfg.flowScalePercent);
+	}
+	const bool isActive = configOn && m_enabled;
+	if (!isActive)
+	{
+		FrameGenStats::active.store(false, std::memory_order_relaxed);
+		FrameGenStats::realFps.store(0.0f, std::memory_order_relaxed);
+		FrameGenStats::generatedFps.store(0.0f, std::memory_order_relaxed);
+		m_statRealCount = m_statGenCount = 0;
+		m_statWindowStart = {};
+	}
+	return isActive;
 }
 
 void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkImage swapchainImage)
 {
 	if (!UpdateActiveState())
 		return;
+	TickStats(true);
+
+	// intervalo medio entre frames reais (usado no pacing dos frames gerados)
+	{
+		const auto nowCap = std::chrono::steady_clock::now();
+		if (m_lastRealCaptureTime != std::chrono::steady_clock::time_point{})
+		{
+			double sample = std::chrono::duration<double>(nowCap - m_lastRealCaptureTime).count();
+			sample = std::clamp(sample, 1.0 / 240.0, 0.2);
+			m_realFrameInterval = m_realFrameInterval * 0.8 + sample * 0.2;
+		}
+		m_lastRealCaptureTime = nowCap;
+	}
 
 	// Alterna o slot de destino - o slot que acabou de virar "atual"
 	// nesta chamada sera o "anterior" na proxima.
@@ -171,6 +215,46 @@ void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkIma
 		destImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		1, &copyRegion);
 
+	// Flow scale < 100%: gera tambem a copia REDUZIDA (blit linear) que alimenta o Optical Flow.
+	if (m_appliedFlowScalePercent < 100 && m_scaledImages[m_currentCopyIndex] != VK_NULL_HANDLE)
+	{
+		const uint32_t si = m_currentCopyIndex;
+		const bool used = m_scaledInitialized[si];
+		VkImageMemoryBarrier sToDst{};
+		sToDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		sToDst.oldLayout = used ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+		sToDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		sToDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		sToDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		sToDst.image = m_scaledImages[si];
+		sToDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		sToDst.srcAccessMask = used ? VK_ACCESS_SHADER_READ_BIT : 0;
+		sToDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		vkCmdPipelineBarrier(commandBuffer,
+			(used ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT), VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0, 0, nullptr, 0, nullptr, 1, &sToDst);
+		m_scaledInitialized[si] = true;
+
+		VkImageBlit blit{};
+		blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+		blit.srcOffsets[1] = { (int32_t)m_width, (int32_t)m_height, 1 };
+		blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+		blit.dstOffsets[1] = { (int32_t)m_flowWidth, (int32_t)m_flowHeight, 1 };
+		vkCmdBlitImage(commandBuffer,
+			swapchainImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			m_scaledImages[si], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1, &blit, VK_FILTER_LINEAR);
+
+		VkImageMemoryBarrier sToRead = sToDst;
+		sToRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		sToRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		sToRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		sToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		vkCmdPipelineBarrier(commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0, 0, nullptr, 0, nullptr, 1, &sToRead);
+	}
+
 	// Transiciona a copia para SHADER_READ_ONLY, pronta pro Optical Flow ler
 	VkImageMemoryBarrier toRead = toDst;
 	toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -191,6 +275,46 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 	if (!UpdateActiveState() || !m_hasPreviousFrame)
 		return false;
 
+	const int multiplier = std::clamp(m_multiplier, 2, 4);
+	// Referencia de tempo: quando o frame real atual foi capturado (logo antes de ser apresentado).
+	// Os frames gerados saem espacados dentro do intervalo medio entre frames reais.
+	const auto t0 = (m_lastRealCaptureTime != std::chrono::steady_clock::time_point{}) ? m_lastRealCaptureTime : std::chrono::steady_clock::now();
+	bool anyPresented = false;
+	for (int k = 1; k < multiplier; k++)
+	{
+		const float progress = (float)k / (float)multiplier; // posicao dentro do intervalo
+		const auto target = t0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(m_realFrameInterval * progress));
+		if (target > std::chrono::steady_clock::now())
+			std::this_thread::sleep_until(target);
+		if (!PresentGeneratedFrame(chainInfo, presentQueue, reset && k == 1, k == 1, progress))
+			break;
+		anyPresented = true;
+	}
+	ApplyBaseFpsLimit();
+	return anyPresented;
+}
+
+// Limita o FPS REAL do jogo (antes de gerar): dorme o que faltar ate completar o periodo.
+void SwapchainFrameGenVk::ApplyBaseFpsLimit()
+{
+	if (m_baseFpsLimit <= 0)
+	{
+		m_limiterNext = {};
+		return;
+	}
+	const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / (double)m_baseFpsLimit));
+	const auto now = std::chrono::steady_clock::now();
+	if (m_limiterNext == std::chrono::steady_clock::time_point{})
+		m_limiterNext = now;
+	m_limiterNext += period;
+	if (m_limiterNext > now)
+		std::this_thread::sleep_until(m_limiterNext);
+	else
+		m_limiterNext = now; // atrasou: ressincroniza em vez de tentar "compensar"
+}
+
+bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset, bool runOpticalFlow, float progress)
+{
 	VkDevice device = m_renderer->GetLogicalDevice();
 
 	// Calcula o tempo real (relogio de parede) desde a ultima vez que
@@ -256,8 +380,26 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 	uint32_t currentIdx = m_currentCopyIndex;
 	uint32_t previousIdx = 1 - m_currentCopyIndex;
 
-	m_opticalFlow->Dispatch(cb, m_backbufferCopyViews[currentIdx], m_backbufferCopyViews[previousIdx], reset);
-	m_frameInterpolation->Dispatch(cb, m_backbufferCopyViews[currentIdx], m_backbufferCopyViews[previousIdx], *m_opticalFlow, deltaTimeSeconds, reset);
+	if (runOpticalFlow)
+	{
+		// Flow scale < 100%: o Optical Flow le as copias REDUZIDAS (m_scaledViews).
+		const bool scaled = m_appliedFlowScalePercent < 100 && m_scaledViews[currentIdx] != VK_NULL_HANDLE;
+		m_opticalFlow->Dispatch(cb,
+			scaled ? m_scaledViews[currentIdx] : m_backbufferCopyViews[currentIdx],
+			scaled ? m_scaledViews[previousIdx] : m_backbufferCopyViews[previousIdx], reset);
+	}
+	else
+	{
+		// frames extras (multiplicador > 2): reaproveita os vetores ja calculados neste frame real.
+		// Barreira p/ garantir que as escritas do OF (submit anterior) estao visiveis ao FI.
+		VkMemoryBarrier mb{};
+		mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+		mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+		mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0, 1, &mb, 0, nullptr, 0, nullptr);
+	}
+	m_frameInterpolation->Dispatch(cb, m_backbufferCopyViews[currentIdx], m_backbufferCopyViews[previousIdx], *m_opticalFlow, deltaTimeSeconds, reset, progress);
 
 	// 3) Transiciona a imagem recem-adquirida do swapchain para receber o blit
 	VkImageMemoryBarrier toDst{};
@@ -349,19 +491,24 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 		submitInfo.pWaitDstStageMask = &waitStage;
 	}
 	submitInfo.signalSemaphoreCount = 1;
-	submitInfo.pSignalSemaphores = &m_renderFinishedSemaphore;
+	VkSemaphore renderFinishedSemaphore = m_renderFinishedSemaphores[m_semaphoreIndex];
+	m_semaphoreIndex = (m_semaphoreIndex + 1) % kSemaphoreRing;
+	submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
 	VkResult submitResult = vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
 
 	VkPresentInfoKHR presentInfo{};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	presentInfo.waitSemaphoreCount = 1;
-	presentInfo.pWaitSemaphores = &m_renderFinishedSemaphore;
+	presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &chainInfo.m_swapchain;
 	presentInfo.pImageIndices = &imageIndex;
 
 	VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+	if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
+		TickStats(false);
 
 	// Diagnostico: loga os 5 primeiros frames gerados e depois 1 a cada 300.
 	{
@@ -377,7 +524,9 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 	// via m_inFlightFence que a GPU realmente terminou.
 	m_pendingCommandBuffer = cb;
 
-	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+	// SUBOPTIMAL nao exige recriar o swapchain (no Adreno ele aparece em TODO present e recriar a
+	// cada frame destroi o desempenho); so OUT_OF_DATE exige.
+	if (result == VK_ERROR_OUT_OF_DATE_KHR)
 		chainInfo.m_shouldRecreate = true;
 
 	chainInfo.swapchainImageIndex = (uint32)-1;
@@ -395,10 +544,12 @@ void SwapchainFrameGenVk::DestroyAll()
 		m_pendingCommandBuffer = VK_NULL_HANDLE;
 	}
 	if (m_inFlightFence) vkDestroyFence(device, m_inFlightFence, nullptr);
-	if (m_renderFinishedSemaphore) vkDestroySemaphore(device, m_renderFinishedSemaphore, nullptr);
+	for (uint32_t i = 0; i < kSemaphoreRing; i++)
+		if (m_renderFinishedSemaphores[i]) vkDestroySemaphore(device, m_renderFinishedSemaphores[i], nullptr);
 
 	m_frameInterpolation.reset();
 	m_opticalFlow.reset();
+	DestroyScaledImages();
 
 	for (int i = 0; i < 2; i++)
 	{
@@ -408,4 +559,133 @@ void SwapchainFrameGenVk::DestroyAll()
 	}
 
 	if (m_commandPool) vkDestroyCommandPool(device, m_commandPool, nullptr);
+}
+
+
+// Contador de FPS: conta frames reais (CaptureBackbuffer) e gerados (present do interpolado)
+// numa janela de ~1s, publica em FrameGenStats (overlay) e escreve 1 linha no log por janela.
+void SwapchainFrameGenVk::TickStats(bool realFrame)
+{
+	const auto now = std::chrono::steady_clock::now();
+	if (m_statWindowStart == std::chrono::steady_clock::time_point{})
+		m_statWindowStart = now;
+	if (realFrame)
+		m_statRealCount++;
+	else
+		m_statGenCount++;
+	const double elapsed = std::chrono::duration<double>(now - m_statWindowStart).count();
+	if (elapsed < 1.0)
+		return;
+	const float real = (float)(m_statRealCount / elapsed);
+	const float gen = (float)(m_statGenCount / elapsed);
+	FrameGenStats::active.store(true, std::memory_order_relaxed);
+	FrameGenStats::realFps.store(real, std::memory_order_relaxed);
+	FrameGenStats::generatedFps.store(gen, std::memory_order_relaxed);
+	cemuLog_log(LogType::Force, "[FrameGen] FPS real={:.1f} gerado={:.1f} total={:.1f}", real, gen, real + gen);
+	m_statRealCount = 0;
+	m_statGenCount = 0;
+	m_statWindowStart = now;
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Flow scale
+// ---------------------------------------------------------------------------------------------
+void SwapchainFrameGenVk::CreateOpticalFlow(int flowScalePercent)
+{
+	flowScalePercent = std::clamp(flowScalePercent, 25, 100);
+	if (flowScalePercent >= 100)
+	{
+		m_flowWidth = m_width;
+		m_flowHeight = m_height;
+		flowScalePercent = 100;
+	}
+	else
+	{
+		// multiplo de 8 (tamanho do bloco do Optical Flow), minimo 64
+		m_flowWidth = std::max<uint32_t>(64, ((m_width * (uint32_t)flowScalePercent) / 100) & ~7u);
+		m_flowHeight = std::max<uint32_t>(64, ((m_height * (uint32_t)flowScalePercent) / 100) & ~7u);
+	}
+	m_appliedFlowScalePercent = flowScalePercent;
+	m_opticalFlow = std::make_unique<OpticalFlowVk>(m_renderer, m_flowWidth, m_flowHeight);
+	DestroyScaledImages();
+	if (flowScalePercent < 100)
+		CreateScaledImages();
+}
+
+void SwapchainFrameGenVk::CreateScaledImages()
+{
+	VkDevice device = m_renderer->GetLogicalDevice();
+	for (int i = 0; i < 2; i++)
+	{
+		VkImageCreateInfo imageInfo{};
+		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		imageInfo.imageType = VK_IMAGE_TYPE_2D;
+		imageInfo.extent = { m_flowWidth, m_flowHeight, 1 };
+		imageInfo.mipLevels = 1;
+		imageInfo.arrayLayers = 1;
+		imageInfo.format = m_backbufferFormat;
+		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		if (vkCreateImage(device, &imageInfo, nullptr, &m_scaledImages[i]) != VK_SUCCESS)
+			throw std::runtime_error("SwapchainFrameGenVk: falha ao criar imagem reduzida (flow scale)");
+
+		VkMemoryRequirements memReq;
+		vkGetImageMemoryRequirements(device, m_scaledImages[i], &memReq);
+		uint32_t memoryTypeIndex = 0;
+		if (!m_memoryManager->FindMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memoryTypeIndex))
+			throw std::runtime_error("SwapchainFrameGenVk: memory type p/ imagem reduzida nao encontrado");
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memReq.size;
+		allocInfo.memoryTypeIndex = memoryTypeIndex;
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &m_scaledMemory[i]) != VK_SUCCESS)
+			throw std::runtime_error("SwapchainFrameGenVk: vkAllocateMemory (imagem reduzida) falhou");
+		vkBindImageMemory(device, m_scaledImages[i], m_scaledMemory[i], 0);
+
+		VkImageViewCreateInfo viewInfo{};
+		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		viewInfo.image = m_scaledImages[i];
+		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		viewInfo.format = m_backbufferFormat;
+		viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		if (vkCreateImageView(device, &viewInfo, nullptr, &m_scaledViews[i]) != VK_SUCCESS)
+			throw std::runtime_error("SwapchainFrameGenVk: falha ao criar view da imagem reduzida");
+		m_scaledInitialized[i] = false;
+	}
+}
+
+void SwapchainFrameGenVk::DestroyScaledImages()
+{
+	VkDevice device = m_renderer->GetLogicalDevice();
+	for (int i = 0; i < 2; i++)
+	{
+		if (m_scaledViews[i]) vkDestroyImageView(device, m_scaledViews[i], nullptr);
+		if (m_scaledImages[i]) vkDestroyImage(device, m_scaledImages[i], nullptr);
+		if (m_scaledMemory[i]) vkFreeMemory(device, m_scaledMemory[i], nullptr);
+		m_scaledViews[i] = VK_NULL_HANDLE;
+		m_scaledImages[i] = VK_NULL_HANDLE;
+		m_scaledMemory[i] = VK_NULL_HANDLE;
+		m_scaledInitialized[i] = false;
+	}
+}
+
+// Troca o flow scale em runtime: recria o Optical Flow e as imagens reduzidas e recomeca o historico.
+void SwapchainFrameGenVk::ApplyFlowScale(int flowScalePercent)
+{
+	VkDevice device = m_renderer->GetLogicalDevice();
+	vkDeviceWaitIdle(device);
+	if (m_pendingCommandBuffer != VK_NULL_HANDLE)
+	{
+		vkFreeCommandBuffers(device, m_commandPool, 1, &m_pendingCommandBuffer);
+		m_pendingCommandBuffer = VK_NULL_HANDLE;
+	}
+	m_opticalFlow.reset();
+	CreateOpticalFlow(flowScalePercent);
+	m_hasPreviousFrame = false;
+	m_currentCopyIndex = 1;
+	cemuLog_log(LogType::Force, "[FrameGen] flow scale = {}% (optical flow {}x{})", m_appliedFlowScalePercent, m_flowWidth, m_flowHeight);
 }

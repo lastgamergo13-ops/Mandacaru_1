@@ -1,3 +1,4 @@
+#include "Cafe/HW/Latte/Core/FrameGenSettings.h"
 #include "Cafe/HW/Latte/ISA/RegDefines.h"
 
 #include "Cafe/HW/Latte/Core/Latte.h"
@@ -921,7 +922,9 @@ void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPa
 
 	if (shader == nullptr)
 	{
-		sint32 scaling_filter = downscaling ? GetConfig().downscale_filter : GetConfig().upscale_filter;
+		// "FSR Upscale" (Experimental): troca o filtro de UPSCALE pelo FSR 1.0 (EASU+RCAS) do Cemu.
+		// Valor efetivo = perfil do jogo, senao a opcao global.
+		sint32 scaling_filter = downscaling ? GetConfig().downscale_filter : (FrameGenSettings::Get().fsrUpscale ? (sint32)kFsrFilter : (sint32)GetConfig().upscale_filter);
 
 		if (scaling_filter == kLinearFilter)
 		{

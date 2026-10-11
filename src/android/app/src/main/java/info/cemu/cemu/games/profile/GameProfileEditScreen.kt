@@ -23,6 +23,7 @@ import info.cemu.cemu.common.ui.components.Toggle
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.nativeinterface.NativeEmulation
 import info.cemu.cemu.nativeinterface.NativeGameTitles
+import info.cemu.cemu.nativeinterface.NativeSettings
 import info.cemu.cemu.nativeinterface.NativeGameTitles.DriverSettingMode
 import kotlinx.coroutines.launch
 
@@ -47,6 +48,7 @@ fun GameProfileEditScreen(
     val graphicPackChoices by viewModel.graphicPackChoices.collectAsState()
     val limitToHalfFpsOverride by viewModel.limitToHalfFpsOverride.collectAsState()
     val emulationSpeedPercentOverride by viewModel.emulationSpeedPercentOverride.collectAsState()
+    val frameGenOptions by viewModel.frameGenOptions.collectAsState()
 
     val titleId = game.titleId
 
@@ -161,6 +163,60 @@ fun GameProfileEditScreen(
                 onValueChange = viewModel::setEmulationSpeedPercentOverride,
             )
         }
+
+        // ── FSR3 Frame Gen / FSR Upscale so para este jogo ──
+        Header(text = tr("FSR3 Frame Gen / Upscale (this game)"))
+        val globalLabel = tr("Use global setting")
+        val triChoices = listOf(-1, 0, 1)
+        val triToString: (Int) -> String = { v ->
+            when (v) {
+                0 -> tr("Off")
+                1 -> tr("On")
+                else -> globalLabel
+            }
+        }
+        SingleSelection(
+            label = tr("Frame Gen"),
+            choice = frameGenOptions[NativeSettings.Fsr3Option.FRAME_GEN],
+            choices = triChoices,
+            choiceToString = triToString,
+            onChoiceChanged = { viewModel.setFrameGenOption(NativeSettings.Fsr3Option.FRAME_GEN, it) },
+        )
+        SingleSelection(
+            label = tr("Frame multiplier"),
+            choice = frameGenOptions[NativeSettings.Fsr3Option.MULTIPLIER],
+            choices = listOf(-1, 2, 3, 4),
+            choiceToString = { if (it < 0) globalLabel else "${it}x" },
+            onChoiceChanged = { viewModel.setFrameGenOption(NativeSettings.Fsr3Option.MULTIPLIER, it) },
+        )
+        SingleSelection(
+            label = tr("Flow scale"),
+            choice = frameGenOptions[NativeSettings.Fsr3Option.FLOW_SCALE],
+            choices = listOf(-1, 50, 75, 100),
+            choiceToString = { if (it < 0) globalLabel else "$it%" },
+            onChoiceChanged = { viewModel.setFrameGenOption(NativeSettings.Fsr3Option.FLOW_SCALE, it) },
+        )
+        SingleSelection(
+            label = tr("Performance mode"),
+            choice = frameGenOptions[NativeSettings.Fsr3Option.PERFORMANCE_MODE],
+            choices = triChoices,
+            choiceToString = triToString,
+            onChoiceChanged = { viewModel.setFrameGenOption(NativeSettings.Fsr3Option.PERFORMANCE_MODE, it) },
+        )
+        SingleSelection(
+            label = tr("Base FPS limit"),
+            choice = frameGenOptions[NativeSettings.Fsr3Option.BASE_FPS_LIMIT],
+            choices = listOf(-1, 0, 30, 40, 60),
+            choiceToString = { if (it < 0) globalLabel else if (it == 0) tr("Off") else "$it FPS" },
+            onChoiceChanged = { viewModel.setFrameGenOption(NativeSettings.Fsr3Option.BASE_FPS_LIMIT, it) },
+        )
+        SingleSelection(
+            label = tr("FSR Upscale"),
+            choice = frameGenOptions[NativeSettings.Fsr3Option.UPSCALE],
+            choices = triChoices,
+            choiceToString = triToString,
+            onChoiceChanged = { viewModel.setFrameGenOption(NativeSettings.Fsr3Option.UPSCALE, it) },
+        )
 
         // ── Graphic packs for this game (saved per-title, not globally) ──
         if (graphicPackChoices.isNotEmpty()) {

@@ -229,7 +229,9 @@ bool SwapchainInfoVk::AcquireImage()
 
 	VkSemaphore acquireSemaphore = m_acquireSemaphores[m_acquireIndex];
 	VkResult result = vkAcquireNextImageKHR(m_logicalDevice, m_swapchain, 1'000'000'000, acquireSemaphore, m_imageAvailableFence, &swapchainImageIndex);
-	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+	// SUBOPTIMAL ainda entrega a imagem; no Adreno ele vem em TODO acquire/present e recriar o
+	// swapchain a cada frame destroi o desempenho. So OUT_OF_DATE exige recriar.
+	if (result == VK_ERROR_OUT_OF_DATE_KHR)
 		m_shouldRecreate = true;
 	if (result == VK_TIMEOUT)
 	{

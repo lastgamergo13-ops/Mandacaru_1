@@ -91,6 +91,15 @@ class GameProfileEditViewModel(val game: Game) : ViewModel() {
         _emulationSpeedPercentOverride.value = value
     }
 
+    // ─── FSR3 Frame Gen / FSR Upscale — per-game override (-1 = usar a opcao global) ───
+    private val _frameGenOptions = MutableStateFlow(List(6) { -1 })
+    val frameGenOptions = _frameGenOptions.asStateFlow()
+
+    fun setFrameGenOption(key: Int, value: Int) {
+        NativeGameTitles.setFrameGenOptionForTitle(game.titleId, key, value)
+        _frameGenOptions.value = _frameGenOptions.value.toMutableList().also { it[key] = value }
+    }
+
     fun setSelectedDriverSetting(driverSetting: DriverSettingChoice) {
         if (driverSetting.mode != DriverSettingMode.GLOBAL
             && driverSetting.mode != DriverSettingMode.SYSTEM
@@ -162,6 +171,7 @@ class GameProfileEditViewModel(val game: Game) : ViewModel() {
             _graphicPackChoices.value = getGraphicPackChoices()
             _limitToHalfFpsOverride.value = NativeGameTitles.getLimitToHalfFpsForTitle(game.titleId)
             _emulationSpeedPercentOverride.value = NativeGameTitles.getEmulationSpeedPercentForTitle(game.titleId)
+            _frameGenOptions.value = List(6) { NativeGameTitles.getFrameGenOptionForTitle(game.titleId, it) }
         }
     }
 

@@ -66,6 +66,20 @@ public:
 	[[nodiscard]] const std::optional<uint32>& GetEmulationSpeedPercent() const { return m_emulationSpeedPercent; }
 	void SetEmulationSpeedPercent(std::optional<uint32> value) { m_emulationSpeedPercent = value; }
 
+	// Android/Mandacaru - FSR3 Frame Gen / FSR Upscale por jogo. nullopt = usa a opcao global.
+	// Valores efetivos (perfil > global): ver Cafe/HW/Latte/Core/FrameGenSettings.h
+	struct FrameGenOverrides
+	{
+		std::optional<bool> enabled;
+		std::optional<uint32> multiplier;       // 2..4
+		std::optional<uint32> flowScalePercent; // 25..100
+		std::optional<bool> performanceMode;
+		std::optional<uint32> baseFpsLimit;     // 0..240 (0 = sem limite)
+		std::optional<bool> fsrUpscale;
+	};
+	[[nodiscard]] const FrameGenOverrides& GetFrameGenOverrides() const { return m_frameGen; }
+	[[nodiscard]] FrameGenOverrides& GetFrameGenOverrides() { return m_frameGen; }
+
 #if BOOST_PLAT_ANDROID
   public:
 	struct DriverSetting
@@ -121,6 +135,7 @@ public:
 	// per-title "Limit to 30 FPS" / "Emulation speed" override (Android/Mandacaru)
 	std::optional<bool> m_limitToHalfFps{};
 	std::optional<uint32> m_emulationSpeedPercent{};
+	FrameGenOverrides m_frameGen{};
 };
 extern std::unique_ptr<GameProfile> g_current_game_profile;
 

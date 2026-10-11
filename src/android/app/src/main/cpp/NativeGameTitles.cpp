@@ -702,3 +702,46 @@ Java_info_cemu_cemu_nativeinterface_NativeGameTitles_setEmulationSpeedPercentFor
 	NativeGameTitles::g_currentGameProfile.SetEmulationSpeedPercent(value);
 	NativeGameTitles::g_currentGameProfile.Save(game_title_id);
 }
+
+
+// Android/Mandacaru - FSR3 Frame Gen / FSR Upscale por jogo.
+// key: 0 frame gen (bool) | 1 multiplicador | 2 flow scale % | 3 modo performance (bool)
+//      4 limite de FPS base | 5 FSR upscale (bool).  Retorno/valor -1 = "usar a opcao global".
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_getFrameGenOptionForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id, jint key)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	const auto& o = NativeGameTitles::g_currentGameProfile.GetFrameGenOverrides();
+	auto b = [](const std::optional<bool>& v) -> jint { return v.has_value() ? (v.value() ? 1 : 0) : -1; };
+	auto u = [](const std::optional<uint32>& v) -> jint { return v.has_value() ? (jint)v.value() : -1; };
+	switch (key)
+	{
+	case 0: return b(o.enabled);
+	case 1: return u(o.multiplier);
+	case 2: return u(o.flowScalePercent);
+	case 3: return b(o.performanceMode);
+	case 4: return u(o.baseFpsLimit);
+	case 5: return b(o.fsrUpscale);
+	}
+	return -1;
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_setFrameGenOptionForTitle(JNIEnv* env, [[maybe_unused]] jclass clazz, jlong game_title_id, jint key, jint value)
+{
+	NativeGameTitles::LoadGameProfile(game_title_id);
+	auto& o = NativeGameTitles::g_currentGameProfile.GetFrameGenOverrides();
+	auto b = [&](std::optional<bool>& dst) { if (value < 0) dst.reset(); else dst = (value != 0); };
+	auto u = [&](std::optional<uint32>& dst, jint lo, jint hi) { if (value < 0) dst.reset(); else dst = (uint32)(value < lo ? lo : (value > hi ? hi : value)); };
+	switch (key)
+	{
+	case 0: b(o.enabled); break;
+	case 1: u(o.multiplier, 2, 4); break;
+	case 2: u(o.flowScalePercent, 25, 100); break;
+	case 3: b(o.performanceMode); break;
+	case 4: u(o.baseFpsLimit, 0, 240); break;
+	case 5: b(o.fsrUpscale); break;
+	default: return;
+	}
+	NativeGameTitles::g_currentGameProfile.Save(game_title_id);
+}

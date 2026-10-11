@@ -294,6 +294,15 @@ bool GameProfile::Load(uint64_t title_id)
 			gameProfile_loadBooleanOption2(iniParser, "limitToHalfFps", m_limitToHalfFps);
 			gameProfile_loadUint32OptionOptional(iniParser, "emulationSpeedPercent", m_emulationSpeedPercent, 100u, 200u);
 		}
+		else if (boost::iequals(iniParser.GetCurrentSectionName(), "FrameGen"))
+		{
+			gameProfile_loadBooleanOption2(iniParser, "enabled", m_frameGen.enabled);
+			gameProfile_loadUint32OptionOptional(iniParser, "multiplier", m_frameGen.multiplier, 2u, 4u);
+			gameProfile_loadUint32OptionOptional(iniParser, "flowScalePercent", m_frameGen.flowScalePercent, 25u, 100u);
+			gameProfile_loadBooleanOption2(iniParser, "performanceMode", m_frameGen.performanceMode);
+			gameProfile_loadUint32OptionOptional(iniParser, "baseFpsLimit", m_frameGen.baseFpsLimit, 0u, 240u);
+			gameProfile_loadBooleanOption2(iniParser, "fsrUpscale", m_frameGen.fsrUpscale);
+		}
 #if BOOST_PLAT_ANDROID
 		else if (boost::iequals(iniParser.GetCurrentSectionName(), "AndroidDriver"))
 		{
@@ -390,6 +399,22 @@ void GameProfile::Save(uint64_t title_id)
 		fs->writeLine(fmt::format("{} = {}", "emulationSpeedPercent", m_emulationSpeedPercent.value()).c_str());
 	fs->writeLine("");
 
+	// FSR3 Frame Gen / FSR Upscale por jogo (Android/Mandacaru). Ausente = usa a opcao global.
+	fs->writeLine("[FrameGen]");
+	if (m_frameGen.enabled.has_value())
+		fs->writeLine(fmt::format("{} = {}", "enabled", m_frameGen.enabled.value() ? "true" : "false").c_str());
+	if (m_frameGen.multiplier.has_value())
+		fs->writeLine(fmt::format("{} = {}", "multiplier", m_frameGen.multiplier.value()).c_str());
+	if (m_frameGen.flowScalePercent.has_value())
+		fs->writeLine(fmt::format("{} = {}", "flowScalePercent", m_frameGen.flowScalePercent.value()).c_str());
+	if (m_frameGen.performanceMode.has_value())
+		fs->writeLine(fmt::format("{} = {}", "performanceMode", m_frameGen.performanceMode.value() ? "true" : "false").c_str());
+	if (m_frameGen.baseFpsLimit.has_value())
+		fs->writeLine(fmt::format("{} = {}", "baseFpsLimit", m_frameGen.baseFpsLimit.value()).c_str());
+	if (m_frameGen.fsrUpscale.has_value())
+		fs->writeLine(fmt::format("{} = {}", "fsrUpscale", m_frameGen.fsrUpscale.value() ? "true" : "false").c_str());
+	fs->writeLine("");
+
 #if BOOST_PLAT_ANDROID
 	fs->writeLine("[AndroidDriver]");
 	fs->writeLine(fmt::format("{} = {}", "mode", m_driverSetting.mode).c_str());
@@ -450,6 +475,7 @@ void GameProfile::ResetOptional()
 	// per-title "Limit to 30 FPS" / "Emulation speed" override (Android/Mandacaru)
 	m_limitToHalfFps.reset();
 	m_emulationSpeedPercent.reset();
+	m_frameGen = {};
 }
 
 void GameProfile::Reset()
@@ -481,4 +507,5 @@ void GameProfile::Reset()
 	// per-title "Limit to 30 FPS" / "Emulation speed" override (Android/Mandacaru)
 	m_limitToHalfFps.reset();
 	m_emulationSpeedPercent.reset();
+	m_frameGen = {};
 }
