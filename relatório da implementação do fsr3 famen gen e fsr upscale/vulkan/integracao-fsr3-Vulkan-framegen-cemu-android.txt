@@ -346,3 +346,25 @@ Obs: opcoes por jogo (perfil) tem prioridade sobre o painel (que altera o valor 
     (30 FPS, CPU ~16%, GPU processando frames). Os logs SEM frame gen mostram o mesmo padrao de threads MP4,
     ou seja, nao parece vir do frame gen. Falta: testar apertando A / + na tela e enviar log sem frame gen
     esperando ~3 min na mesma tela.
+
+
+=== ATUALIZACAO V11.2 (2026-10-11 12:xx) - Mario Kart 8 / Super Mario 3D World / Forest Escape ===
+Os 3 logs terminam igual: VK_ERROR_DEVICE_LOST (-4) em SubmitCommandBuffer, so com frame gen ligado
+(build 40b59339, ja com o fix de stage da V11.1 - ou seja, aquele nao era o unico problema).
+[x] Causa mais provavel agora: no frame GERADO chamavamos AcquireImage() mas nunca WaitAvailableFence().
+    O proximo AcquireImage() do frame REAL faz vkResetFences nesse mesmo fence ainda pendente
+    (uso invalido, aparece sob carga de GPU). Corrigido em swapchain_vk.cpp (inclui o fix da V11.1).
+[ ] NAO CONFIRMADO: testar Mario Kart 8, 3D World e Forest Escape. Se ainda der -4, o proximo passo e
+    reduzir a carga (Flow scale padrao 50%) e/ou gravar um log com a camada de validacao Vulkan.
+
+=== ATUALIZACAO V11.3 (2026-10-11) ===
+[x] Flow scale PADRAO agora 50% (CemuConfig.h) - menos carga de GPU. Se voce ja salvou 100% antes, escolha 50% na aba
+    Experimental ou no painel em jogo (o config salvo tem prioridade sobre o padrao).
+[x] Log de diagnostico: erros de vkQueueSubmit/vkQueuePresentKHR do frame gerado aparecem como "[FrameGen] ERRO ...".
+[x] Painel em jogo (direita) + botao na esquerda: feitos na V11.
+[ ] Falta (depende de teste): confirmar fim do DEVICE_LOST, qualidade visual, sinal do fFlowSign, linhas verdes; OpenGL por ultimo.
+
+=== ATUALIZACAO V11.4 (2026-10-11) ===
+[x] Protecao contra travada/loading: se o intervalo entre frames reais passar de 120 ms (< ~8 FPS), o frame gen nao
+    gera frame extra naquele frame (menos carga de GPU durante carregamento de fase; o Mario Kart 8 caiu a ~1.7 FPS
+    antes do crash). Volta sozinho quando o jogo normaliza.

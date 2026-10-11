@@ -162,6 +162,7 @@ void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkIma
 		if (m_lastRealCaptureTime != std::chrono::steady_clock::time_point{})
 		{
 			double sample = std::chrono::duration<double>(nowCap - m_lastRealCaptureTime).count();
+			m_lastRawInterval = sample;
 			sample = std::clamp(sample, 1.0 / 240.0, 0.2);
 			m_realFrameInterval = m_realFrameInterval * 0.8 + sample * 0.2;
 		}
@@ -275,6 +276,11 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 	if (!UpdateActiveState() || !m_hasPreviousFrame)
 		return false;
 
+	// Travada/loading (frame real demorou > 120 ms): nao gera frame extra. Gerar durante carregamento so
+	// soma carga de GPU (o crash do Mario Kart 8 foi a ~1.7 FPS) e o movimento nao e confiavel.
+	if (m_lastRawInterval > 0.12)
+		return false;
+
 	const int multiplier = std::clamp(m_multiplier, 2, 4);
 	// Referencia de tempo: quando o frame real atual foi capturado (logo antes de ser apresentado).
 	// Os frames gerados saem espacados dentro do intervalo medio entre frames reais.
@@ -356,6 +362,11 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	//    (reaproveita o metodo que o proprio Cemu ja usa pro frame real)
 	if (!chainInfo.AcquireImage())
 		return false; // swapchain fora de data ou minimizado - pula este frame gerado
+
+	// Igual ao fluxo normal do Cemu (VulkanRenderer::SwapBuffers): espera o fence do acquire. Sem isso
+	// o fence ficava "pendente" e o proximo AcquireImage() do frame REAL fazia vkResetFences nele
+	// ainda em uso (comportamento indefinido -> VK_ERROR_DEVICE_LOST no Adreno sob carga).
+	chainInfo.WaitAvailableFence();
 
 	VkSemaphore acquireSemaphore = chainInfo.ConsumeAcquireSemaphore();
 	uint32_t imageIndex = chainInfo.swapchainImageIndex;
@@ -499,6 +510,8 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
 	VkResult submitResult = vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
+	if (submitResult != VK_SUCCESS)
+		cemuLog_log(LogType::Force, "[FrameGen] ERRO vkQueueSubmit do frame gerado: {}", (int)submitResult);
 
 	VkPresentInfoKHR presentInfo{};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -509,6 +522,8 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	presentInfo.pImageIndices = &imageIndex;
 
 	VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
+	if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+		cemuLog_log(LogType::Force, "[FrameGen] ERRO vkQueuePresentKHR do frame gerado: {}", (int)result);
 
 	if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
 		TickStats(false);

@@ -113,6 +113,7 @@ private:
 	int m_baseFpsLimit = 0;
 	std::chrono::steady_clock::time_point m_lastRealCaptureTime{};
 	double m_realFrameInterval = 1.0 / 30.0; // media movel (s) entre frames reais
+	double m_lastRawInterval = 1.0 / 30.0;   // ultimo intervalo bruto (s) entre frames reais (detecta travadas/loading)
 	std::chrono::steady_clock::time_point m_limiterNext{};
 
 	VulkanRenderer* m_renderer = nullptr;
