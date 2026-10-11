@@ -413,8 +413,10 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	toDst.srcAccessMask = 0;
 	toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
+	// srcStage = TRANSFER: tem que bater com o waitStage do semaforo de acquire (abaixo), senao a
+	// transicao/blit podia comecar ANTES da imagem do swapchain estar realmente liberada.
 	vkCmdPipelineBarrier(cb,
-		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 		0, 0, nullptr, 0, nullptr, 1, &toDst);
 
 	// Transiciona a imagem interpolada de GENERAL (layout de storage
@@ -479,7 +481,8 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	// 5) Submete (sinalizando m_renderFinishedSemaphore e m_inFlightFence
 	// em vez de bloquear a CPU esperando a GPU) e apresenta assim que o
 	// present() puder (esperando so o semaforo, nao a fila inteira).
-	VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	// O primeiro uso da imagem adquirida e o blit (TRANSFER), nao color attachment.
+	VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 	VkSubmitInfo submitInfo{};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 	submitInfo.commandBufferCount = 1;

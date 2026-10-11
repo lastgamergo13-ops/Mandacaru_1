@@ -1,0 +1,348 @@
+INTEGRACAO DO FSR3 FRAME GENERATION NO CEMU-ANDROID (v4 - VULKAN) - STATUS E CHECK-LIST
+==========================================================================================
+Atualizado em 10/10/2026 com base nos logs de teste reais (Adreno 650, Android 13).
+Legenda:  [x] feito e CONFIRMADO em log/dispositivo   [~] feito, mas SEM validacao visual/pratica
+          [ ] ainda falta                              [!] problema conhecido
+
+----------------------------------------------------------------------------
+A. CHECK-LIST GERAL
+----------------------------------------------------------------------------
+
+A.1 Base / Infraestrutura
+ [x] Estrutura dependencies/ffx-frame-generation/ compilando no GitHub Actions (mandacaru_wiiu.yml)
+ [x] Shaders SPIR-V carregados de src/android/app/src/main/assets/resources/ffx-frame-generation/shaders_spv/
+     (SO essa pasta e extraida no aparelho - a pasta dependencies/.../shaders_spv NAO vale em runtime)
+ [x] Backend Vulkan proprio (nao existe backend Vulkan oficial no SDK da AMD; so DX12)
+ [x] Criacao do FrameGen junto com o swapchain: log "[FrameGen] criado: 2312x1080"
+
+A.2 Optical Flow (opticalflow_vk.cpp - versao V5)
+ [x] Pipelines criados sem erro no Adreno 650 (nenhum "pipeline error" nos logs)
+ [x] Pass Prepare Luma (R32_UINT)
+ [x] Pass SCD Histogram + SCD Divergence (RWTexture2D, imagens 2304x1)
+ [x] Pass Compute Optical Flow (R32G32_SINT, tamanho ceil(w/8) x ceil(h/8))
+ [x] Pass Filter Optical Flow (escreve direto o vetor final no nivel 0)
+ [x] Formatos/descritores auditados contra o HLSL real (tipos corrigidos na V5)
+ [x] Piramide de luminancia/SPD REMOVIDOS (Adreno 650 recusa SPD: quad ops, VkResult -13)
+ [~] Qualidade dos vetores de movimento (nunca comparado visualmente)
+ [ ] Passes Scale / niveis extras da piramide (so rodam entre niveis; nao usados no nivel 0)
+
+A.3 Frame Interpolation
+ [x] Shader unico customizado mandacaru_frameinterpolation_simple.spv (substitui os 9 shaders da AMD)
+ [x] Pipeline criado e dispatch executando sem crash
+ [~] Resultado visual correto (fFlowSign=+1 pode estar invertido; fErrThreshold=0.12)
+ [ ] Passes originais da AMD (reconstruct depth, dilate, disocclusion, inpainting): NAO usados
+     (dependem de depth/motion vectors do jogo, que o Cemu nao fornece)
+
+A.4 Swapchain / Apresentacao
+ [x] Captura do backbuffer (CaptureBackbuffer) a cada frame real
+ [x] Gera e apresenta frames extras (log: "frame gerado #N", 300+ sem erro, present=SUBOPTIMAL e so aviso)
+ [~] V10: ORDEM TEMPORAL corrigida - os frames extras agora sao EXTRAPOLADOS a partir do frame real
+     atual (saem depois dele, sem "voltar no tempo"). Precisa do shader novo v7 (ver LEIA-ME).
+ [~] V10: PACING - frames extras espacados no intervalo medio entre frames reais
+ [~] V10: MULTIPLICADOR 2x / 3x / 4x (gera N-1 frames extras por frame real)
+     (3x/4x so valem a pena se a TELA aguentar: 30 reais x 3 = 90 Hz; numa tela de 60 Hz sobra frame)
+ [~] V10: Semaforos por frame gerado (anel de 4) - necessario p/ multiplicador > 2
+ [~] V10: SUBOPTIMAL nao recria mais o swapchain (recriava A CADA FRAME: 466-582 recriacoes por
+     sessao nos logs, com e sem frame gen). Corrigido em VulkanRenderer.cpp + SwapchainInfoVk.cpp (no pacote).
+
+A.5 Interface / Configuracao
+ [x] Toggle "FSR3 Frame Gen" funcional e salvo (CemuConfig fsr3_frame_gen), liga/desliga em runtime
+ [x] Contador de FPS real / gerado / total (log a cada 1 s + overlay, ver secao B)
+ [~] V10: "Frame multiplier" 2x/3x/4x (Experimental)
+ [~] V10: "Flow scale" 50% / 75% / 100% (Optical Flow em resolucao menor; blit linear do backbuffer)
+ [~] V10: "Modo performance" (forca flow scale <= 50%)
+ [~] V10: "Limite de FPS base" Off/30/40/60 (limita o FPS REAL antes de gerar)
+ [~] V10: "FSR Upscale" FUNCIONAL = filtro FSR 1.0 (EASU+RCAS) do Cemu no lugar do filtro de upscale.
+     NOTA HONESTA: FSR3 temporal "de verdade" exige depth + motion vectors do jogo, que o Cemu nao
+     tem. O FSR 1.0 e um upscale real (render nativo do Wii U -> resolucao da tela).
+ [~] V10: PERFIL POR JOGO de todas as opcoes acima (Editar perfil do jogo > "FSR3 Frame Gen / Upscale
+     (this game)"; salvo em gameProfiles/<titleId>.ini, secao [FrameGen]; "Use global setting" = herda)
+ [ ] Overlay do FPS com 1 casa decimal / escolha de posicao (usa o overlay existente do Cemu)
+
+A.6 Estabilidade do emulador (nao e do frame gen, mas bloqueava os testes)
+ [x] Freeze antes do GX2Init: corrigido na V8 (t_assignedCoreIndex velho ao migrar de core)
+     -> logs de 10/10 mostram o jogo passando do GX2Init e rodando
+ [x] Crash "MP4 Demuxer / OSExitThread" (signal 11 em __OSThreadLoadContext): diagnosticado
+ [~] Corrigido na V9 (FiberUnix.cpp) - AGUARDANDO TESTE no aparelho (incluido de novo no pacote V10)
+ [!] Shader cache do jogo "corrompido (incomplete file table)": apague a pasta shaderCache do jogo
+
+A.7 Pendencias de performance / recursos
+ [ ] Medir custo real (ms) do Optical Flow + Interpolation no Adreno 650
+ [ ] Nao alocar recursos quando o toggle esta desligado (hoje aloca no inicio)
+ [ ] Porte OpenGL: SO DEPOIS que o Vulkan estiver terminado e validado (decisao do usuario).
+     (Hoje o Vulkan ainda esta "sem validacao visual": falta confirmar qualidade dos frames,
+      sinal do fluxo e desempenho em jogo.)
+
+----------------------------------------------------------------------------
+B. CONTADOR DE FPS (novo)
+----------------------------------------------------------------------------
+Mede em janelas de ~1 s: FPS REAL (frames do jogo), FPS GERADO (interpolados) e TOTAL.
+ - Log: "[FrameGen] FPS real=30.1 gerado=29.8 total=59.9"  (1 linha por segundo)
+ - Overlay: linha "FrameGen: 30 real + 30 gerado = 60" logo abaixo de "FPS:"
+   (precisa do overlay FPS ligado em Configuracoes > Overlay, e o frame gen ativado).
+ - Arquivos: src/Cafe/HW/Latte/Core/FrameGenStats.h (novo), LatteOverlay.cpp,
+   dependencies/ffx-frame-generation/src/swapchain_vk.h/.cpp
+
+----------------------------------------------------------------------------
+C. HISTORICO DE TESTES (logs)
+----------------------------------------------------------------------------
+ - V5/V6: FrameGen criado, 2+ frames gerados, sem crash do frame gen.
+ - 10/10 (3 logs): sem frame gen, com frame gen e com tudo do Experimental ligado.
+   O jogo entra e roda; apos alguns segundos todos crasham IGUAL (signal 11 em
+   __OSThreadLoadContext <- __OSThreadSwitchToNext <- OSExitThread, thread "MP4 Demuxer").
+   O crash tambem ocorre SEM frame gen -> NAO e causado pelo frame gen.
+   Causa: use-after-free no fiber-como-pthread (ver relatorio V9).
+   Com frame gen ligado: ~300 frames gerados em ~13 s antes do crash, present=SUBOPTIMAL (ok).
+
+----------------------------------------------------------------------------
+D. TEXTO DA VERSAO ANTERIOR (v3) - mantido como referencia
+   ATENCAO: partes estao desatualizadas (ex.: usa 20 shaders AMD; hoje o FI e 1 shader custom,
+   SPD/piramide foram removidos). O check-list acima prevalece.
+----------------------------------------------------------------------------
+
+INTEGRACAO DO FSR3 FRAME GENERATION NO CEMU-ANDROID (v3 - VULKAN)
+====================================================================
+Atualizado apos inspecionar o fsr3.zip real e descobrir a cadeia de
+ferramentas DXC -> SPIRV-Cross. Esta versao CORRIGE um ponto errado
+das versoes anteriores: para o backend VULKAN voce NAO precisa portar
+os shaders para GLSL manualmente. Explicacao abaixo.
+
+Escopo: apenas FSR3 Frame Generation (Optical Flow + Frame
+Interpolation, nao-ML, aberto). Fora de escopo: FSR4, Upscaler de
+resolucao, Ray Regeneration, CACAO, CAS, Blur, DoF, Lens, SSSR, SPD
+(exceto o header de dependencia), Denoiser.
+
+
+CORRECAO IMPORTANTE EM RELACAO AS VERSOES ANTERIORES
+---------------------------------------------------------
+Nas versoes v1/v2 deste relatorio eu disse que seria necessario
+"portar os ~20 shaders de HLSL para GLSL" antes de integrar no
+Vulkan. Isso estava errado. O Vulkan consome SPIR-V, nao GLSL - e o
+dxc.exe (parte do Vulkan SDK) compila HLSL DIRETO para SPIR-V com a
+flag -spirv, sem nenhuma reescrita manual de logica. Ou seja:
+
+  Para VULKAN: dxc.exe -spirv converte o .hlsl -> .spv automaticamente.
+               Nao ha "porte" manual de shader nenhum aqui.
+
+  Para OPENGL: so ai sim entra o GLSL, pegando o MESMO .spv gerado
+               acima e passando pelo spirv-cross.exe (ver o outro
+               relatorio, "porte-opengl-framegen-cemu-android.txt").
+
+Isso simplifica bastante o trabalho do lado Vulkan: o "porte de
+shader" inteiro vira um laco de comando (ja documentado no arquivo
+comandos-powershell-conversao-fsr3.txt), nao 20 reescritas manuais.
+
+
+1. ARQUIVOS REAIS CONFIRMADOS NO SDK (inspecionados diretamente no zip)
+--------------------------------------------------------------------------
+
+1.1 Os 20 shaders que precisam ser compilados com dxc -spirv
+    Pasta: Kits/FidelityFX/framegeneration/fsr3/internal/shaders/
+
+    Optical Flow (7 arquivos):
+    - ffx_opticalflow_prepare_luma_pass.hlsl
+    - ffx_opticalflow_compute_luminance_pyramid_pass.hlsl
+    - ffx_opticalflow_generate_scd_histogram_pass.hlsl
+    - ffx_opticalflow_compute_scd_divergence_pass.hlsl
+    - ffx_opticalflow_filter_optical_flow_pass_v5.hlsl
+    - ffx_opticalflow_scale_optical_flow_advanced_pass_v5.hlsl
+    - ffx_opticalflow_compute_optical_flow_advanced_pass_v5.hlsl  (nucleo, mais pesado)
+
+    Frame Interpolation (9 arquivos):
+    - ffx_frameinterpolation_setup_pass.hlsl
+    - ffx_frameinterpolation_reconstruct_previous_depth_pass.hlsl
+    - ffx_frameinterpolation_reconstruct_and_dilate_pass.hlsl
+    - ffx_frameinterpolation_optical_flow_vector_field_pass.hlsl
+    - ffx_frameinterpolation_disocclusion_mask_pass.hlsl
+    - ffx_frameinterpolation_compute_inpainting_pyramid_pass.hlsl
+    - ffx_frameinterpolation_inpainting_pass.hlsl
+    - ffx_frameinterpolation_pass.hlsl                             (final, combina tudo)
+    - ffx_frameinterpolation_debug_view_pass.hlsl                  (opcional, so debug)
+
+    Presentation/UI (2 arquivos, vertex+pixel shader simples):
+    - FrameInterpolationSwapchainUiComposition.hlsl
+    - FrameInterpolationSwapchainDebugPacing.hlsl
+
+    Pulados (dependem de motion vectors do jogo, que o Cemu nao tem
+    - pode compilar mas nao vai usar o resultado, ver secao 2):
+    - ffx_frameinterpolation_game_motion_vector_field_pass.hlsl
+    - ffx_frameinterpolation_compute_game_vector_field_inpainting_pyramid_pass.hlsl
+
+    Total: 20 arquivos .hlsl no pacote (18 usados + 2 pulados no
+    dispatch, mas compilaveis).
+
+1.2 Headers .h incluidos pelos shaders acima (CONFIRMADOS via inspecao
+    dos #include de cada .hlsl - sem eles o dxc da erro de "arquivo
+    nao encontrado"):
+
+    Kits/FidelityFX/framegeneration/fsr3/include/gpu/opticalflow/
+      (10 headers, um ou mais por shader de optical flow acima)
+    Kits/FidelityFX/framegeneration/fsr3/include/gpu/frameinterpolation/
+      (14 headers, um ou mais por shader de frame interpolation acima)
+    Kits/FidelityFX/framegeneration/fsr3/include/gpu/spd/ffx_spd.h
+      (dependencia de downsample usada pelos dois grupos acima)
+    Kits/FidelityFX/api/internal/gpu/ffx_core*.h
+      (6 arquivos: ffx_core.h, ffx_core_cpu.h, ffx_core_gpu_common.h,
+       ffx_core_gpu_common_half.h, ffx_core_hlsl.h, ffx_core_portability.h
+       - base de tipos/funcoes que TODOS os headers acima dependem)
+
+    NOTA: ja separei esses 20 shaders + todos os headers acima num
+    zip pronto (fsr3-shaders-para-converter.zip, ja entregue numa
+    mensagem anterior), organizados em shaders/ e gpu/{opticalflow,
+    frameinterpolation,spd,core}/ - use ele em vez de catar arquivo
+    por arquivo dentro do fsr3.zip completo.
+
+1.3 Headers da API em C++ (lado host, para o codigo do Cemu)
+
+    Kits/FidelityFX/framegeneration/fsr3/include/ffx_opticalflow.h
+      -> cria contexto de Optical Flow, FfxOpticalflowDispatchDescription
+    Kits/FidelityFX/framegeneration/fsr3/include/ffx_frameinterpolation.h
+      -> cria contexto de Frame Interpolation, FfxFrameInterpolationDispatchDescription
+    Kits/FidelityFX/framegeneration/include/ffx_framegeneration.h
+      -> API de alto nivel que amarra os dois componentes
+    Kits/FidelityFX/api/internal/ffx_interface.h
+      -> FfxFrameGenerationConfig, conecta ao swapchain/callbacks
+    Kits/FidelityFX/api/include/ffx_api_types.h
+      -> tipos base (FfxResource, dimensoes, coords)
+
+    NAO EXISTE equivalente Vulkan disso pronto - Kits/FidelityFX/backend/
+    so tem a pasta dx12/. Voce vai escrever o backend Vulkan do zero
+    (secao 3), usando esses headers de estrutura de dados como estao
+    (eles sao agnosticos de API grafica, so descrevem dados).
+
+1.4 Implementacao C++ de referencia (LER, nao copiar - e DX12)
+
+    Kits/FidelityFX/framegeneration/fsr3/internal/ffx_opticalflow.cpp
+    Kits/FidelityFX/framegeneration/fsr3/internal/ffx_frameinterpolation.cpp
+    Kits/FidelityFX/framegeneration/fsr3/dx12/FrameInterpolationSwapchainDX12.cpp
+      (+ _Helpers.cpp, _UiComposition.cpp, _DebugPacing.cpp)
+
+    Esses 3 arquivos mostram a ORDEM exata de dispatch de cada shader
+    e quais buffers/texturas cada pass espera como entrada/saida -
+    use como mapa de arquitetura antes de escrever o codigo Vulkan.
+
+
+2. O QUE FAZER COM CADA GRUPO DE ARQUIVO
+--------------------------------------------
+
+PASSO A - Compilar os 20 .hlsl para SPIR-V (automatico, sem reescrita manual)
+  Use os comandos ja prontos em comandos-powershell-conversao-fsr3.txt,
+  secao "O QUE FAZER PARA O VULKAN". Resultado: pasta spv_output\ com
+  20 arquivos .spv.
+
+PASSO B - Carregar os .spv no seu backend Vulkan
+  Cada .spv vira um VkShaderModule via vkCreateShaderModule. Nao
+  precisa editar o conteudo do .spv.
+
+PASSO C - Escrever o C++ que orquestra tudo (aqui SIM e trabalho manual)
+  Usando os headers da secao 1.3 (structs) e a ordem de dispatch
+  encontrada nos .cpp de referencia da secao 1.4, escreva:
+  - opticalflow_vk.cpp: cria buffers intermediarios (luma, piramide,
+    histograma, vetores), grava vkCmdDispatch na ordem correta com
+    vkCmdPipelineBarrier entre cada pass.
+  - frameinterpolation_vk.cpp: mesma logica, para o pipeline de
+    interpolacao. Pule os dois shaders de motion vectors do jogo (nao
+    chame o dispatch deles, mesmo tendo compilado o .spv).
+  - swapchain_vk.cpp: substitui vkQueuePresentKHR/vkAcquireNextImageKHR
+    para intercalar frame real -> interpolado -> real, baseado no
+    padrao de FrameInterpolationSwapchainDX12_Helpers.cpp.
+
+
+3. ONDE COLOCAR NO PROJETO (Cemu-Android)
+----------------------------------------------
+
+Cemu-Android/
+  dependencies/
+    ffx-frame-generation/
+      shaders_spv/                 <- os 20 .spv gerados no Passo A
+      include/                     <- copia dos headers da secao 1.3
+      src/
+        opticalflow_vk.cpp         <- Passo C
+        frameinterpolation_vk.cpp  <- Passo C
+        swapchain_vk.cpp           <- Passo C
+      CMakeLists.txt                <- compila isso como static lib
+  src/
+    Cafe/HW/Latte/Renderer/Vulkan/
+      VulkanFrameGen.h / .cpp      <- wrapper que chama a lib acima
+                                       no ponto de present do Cemu
+
+
+4. FLUXO DE INTEGRACAO NO RUNTIME
+--------------------------------------
+
+1. Inicializacao (uma vez, ao criar o device Vulkan):
+   - Criar contexto de Optical Flow e de Frame Interpolation.
+   - Substituir as chamadas de swapchain do Cemu pelas equivalentes
+     do swapchain_vk.cpp.
+2. A cada frame, antes do present:
+   - Dispatch do Optical Flow (backbuffer atual + anterior, so cor).
+   - Dispatch do Frame Interpolation (vetores do passo anterior +
+     os dois backbuffers -> gera o frame intermediario).
+   - Apresenta: real -> interpolado -> real -> interpolado (2x).
+3. Encerramento: destruir os contextos ao fechar o jogo/emulador.
+
+
+5. OPCOES A EXPOR PRO USUARIO DURANTE O JOGO
+--------------------------------------------------
+| Opcao                          | O que faz                         | Faixa sugerida |
+|---------------------------------|------------------------------------|-----------------|
+| Ativar/Desativar                | Liga/desliga instantaneamente     | on/off          |
+| Multiplicador                   | Quantos frames gerar por real      | 2, 3, 4         |
+| Flow scale                      | Resolucao interna da estimativa    | 0.5 - 1.0       |
+| Modo performance                | Optical Flow mais leve             | on/off          |
+| Limite de FPS base              | Trava o FPS real antes de gerar    | 30, 40, 60      |
+| Perfil por jogo                 | Config salva por titulo            | -               |
+| Mostrar so o frame interpolado  | Debug, comparacao de qualidade     | on/off (dev)    |
+| Indicador FPS real vs. gerado   | Overlay de transparencia           | on/off          |
+
+Prioridade sugerida: Ativar/Desativar -> Multiplicador -> Flow scale
+-> Modo performance -> Limite de FPS -> Perfil por jogo. As duas
+ultimas sao bonus, nao bloqueantes.
+
+
+6. RISCOS
+-------------
+- Reconstrucao de depth sem depth real do jogo (dentro do pass
+  ffx_frameinterpolation_reconstruct_and_dilate_pass) continua sendo o
+  ponto mais arriscado tecnicamente - pode exigir ajuste de logica,
+  nao so compilacao direta.
+- Teste em GPU Adreno/Mali de gama baixa antes de assumir que o modo
+  performance basta - o Optical Flow e a parte mais cara
+  computacionalmente mesmo sem motion vectors do jogo.
+- Pacing do present com 2 filas de apresentacao (real + gerado) pode
+  gerar stutter dependendo do presentation mode do swapchain
+  (Mailbox tende a funcionar melhor que FIFO aqui, custa mais bateria).
+
+
+ARQUIVOS RELACIONADOS JA ENTREGUES
+--------------------------------------
+- fsr3-shaders-para-converter.zip   -> os 20 .hlsl + headers da secao 1.2
+- comandos-powershell-conversao-fsr3.txt -> comandos dxc/spirv-cross prontos
+- porte-opengl-framegen-cemu-android.txt -> mesma logica, para o backend OpenGL (fase 2 do projeto)
+
+
+=== ATUALIZACAO V11 (2026-10-11) ===
+[x] Crash "wfJobThread" (SIGSEGV em strlen/fmt dentro de OSThreadQueueInternal::queueAndWait): corrigido
+    com __OSSafeThreadName (leitura limitada e checada do nome da thread do jogo) em
+    coreinit_ThreadQueue.cpp, coreinit_Thread.cpp e coreinit_Synchronization.cpp. Acontecia COM e SEM frame gen.
+[x] Painel do Frame Gen em jogo (lateral DIREITA): liga/desliga, multiplicador 2x/3x/4x, flow scale,
+    modo performance, limite de FPS base, FSR Upscale. Aplica na hora.
+[x] Botao na aba ESQUERDA: "FSR3 Frame Gen (painel em jogo)" - so aparece com o Frame Gen ligado
+    na aba Experimental; ao marcar, libera o painel da direita.
+[ ] Linhas verdes finas: NAO diagnosticado (sem erro de validacao nos logs; shader ja faz clamp nas bordas).
+    Pendente: o usuario dizer se aparece tambem com Frame Gen DESLIGADO.
+[ ] Validar qualidade visual, sinal do fFlowSign e desempenho; OpenGL so depois do Vulkan validado.
+Obs: opcoes por jogo (perfil) tem prioridade sobre o painel (que altera o valor global).
+
+
+=== ATUALIZACAO V11.1 (2026-10-11) - logs Forest Escape / Adventure Time ===
+[x] Forest Escape: "failed to submit command buffer. Error -4" (VK_ERROR_DEVICE_LOST) ~13 s apos
+    ligar o frame gen (so aparece com frame gen). Causa provavel: o submit do frame GERADO esperava o
+    semaforo de acquire em COLOR_ATTACHMENT_OUTPUT, mas o primeiro uso da imagem era o blit (TRANSFER) com a
+    barreira em COMPUTE -> a imagem do swapchain podia ser escrita antes de liberada. Corrigido em
+    swapchain_vk.cpp (waitStage = TRANSFER, barreira srcStage = TRANSFER). NAO CONFIRMADO ate testar.
+    Esta mesma corrida tambem e candidata a causa das linhas verdes finas.
+[ ] Adventure Time parado na tela de titulo: o video de intro roda (H264 ok) e depois o jogo fica no logo
+    (30 FPS, CPU ~16%, GPU processando frames). Os logs SEM frame gen mostram o mesmo padrao de threads MP4,
+    ou seja, nao parece vir do frame gen. Falta: testar apertando A / + na tela e enviar log sem frame gen
+    esperando ~3 min na mesma tela.

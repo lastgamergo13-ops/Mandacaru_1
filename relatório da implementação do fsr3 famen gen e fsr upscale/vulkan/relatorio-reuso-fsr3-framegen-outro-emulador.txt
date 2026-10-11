@@ -1,0 +1,528 @@
+RELATORIO DE REUSO: PORTE DO FSR3 FRAME GENERATION - O QUE PEGAR PRA OUTRO EMULADOR
+========================================================================================
+Este arquivo e atualizado TODA VEZ que um arquivo novo ou corrigido e
+entregue a partir de agora - sempre a versao mais recente de cada arquivo
+esta documentada aqui. Ultima atualizacao: apos resolver os 3 TODO
+(transicao de layout, deltaTime real, fence/semaforo) + a correcao do
+caminho dos .spv em Android + a correcao do TODO do layout inicial do
+CaptureBackbuffer.
+
+OBJETIVO DESTE ARQUIVO: se voce quiser pegar esse porte e usar em outro
+emulador (nao o Cemu-Android), aqui esta exatamente quais arquivos pegar
+e o que fazer com cada um - separando o que e REAPROVEITAVEL como esta
+do que e ESPECIFICO do Cemu e precisa ser adaptado.
+
+
+====================================================================================
+PARTE 1 - ARQUIVOS 100% REAPROVEITAVEIS (nao dependem de nada do Cemu)
+====================================================================================
+
+1.1 Os 22 arquivos .spv (shaders ja compilados)
+----------------------------------------------------
+Onde estao: dependencies/ffx-frame-generation/shaders_spv/ (no projeto
+atual) - fisicamente copiados pra dentro do APK em
+src/android/app/src/main/assets/resources/ffx-frame-generation/shaders_spv/
+(especifico de Android, ver Parte 2).
+
+O que sao: 18 shaders de compute (Optical Flow + Frame Interpolation) +
+4 de apresentacao/UI (2 vertex + 2 pixel), ja compilados de HLSL pra
+SPIR-V via dxc.exe. 100% reaproveitaveis em QUALQUER engine/emulador que
+use Vulkan - SPIR-V e binario, nao depende de nada do Cemu.
+
+O que fazer com eles: copiar os 22 arquivos pro novo projeto, em
+qualquer pasta que fizer sentido la. So precisa adaptar o CAMINHO de
+carregamento (ver GetShaderPath() na Parte 2 - isso sim e especifico do
+Cemu e precisa virar outra coisa no emulador novo).
+
+Lista completa dos 22 arquivos:
+  ffx_opticalflow_prepare_luma_pass.spv
+  ffx_opticalflow_compute_luminance_pyramid_pass.spv
+  ffx_opticalflow_generate_scd_histogram_pass.spv
+  ffx_opticalflow_compute_scd_divergence_pass.spv
+  ffx_opticalflow_compute_optical_flow_advanced_pass_v5.spv
+  ffx_opticalflow_filter_optical_flow_pass_v5.spv
+  ffx_opticalflow_scale_optical_flow_advanced_pass_v5.spv
+  ffx_frameinterpolation_setup_pass.spv
+  ffx_frameinterpolation_reconstruct_previous_depth_pass.spv
+  ffx_frameinterpolation_reconstruct_and_dilate_pass.spv (compilado mas NAO despachado - ver Parte 3)
+  ffx_frameinterpolation_optical_flow_vector_field_pass.spv
+  ffx_frameinterpolation_disocclusion_mask_pass.spv
+  ffx_frameinterpolation_compute_inpainting_pyramid_pass.spv
+  ffx_frameinterpolation_inpainting_pass.spv
+  ffx_frameinterpolation_pass.spv
+  ffx_frameinterpolation_debug_view_pass.spv (compilado, nao usado)
+  ffx_frameinterpolation_game_motion_vector_field_pass.spv (compilado, nao usado - ver Parte 3)
+  ffx_frameinterpolation_compute_game_vector_field_inpainting_pyramid_pass.spv (compilado, nao usado)
+  FrameInterpolationSwapchainUiComposition.vs.spv
+  FrameInterpolationSwapchainUiComposition.ps.spv
+  FrameInterpolationSwapchainDebugPacing.vs.spv
+  FrameInterpolationSwapchainDebugPacing.ps.spv
+
+
+1.2 A logica algoritmica dentro de opticalflow_vk.cpp e frameinterpolation_vk.cpp
+---------------------------------------------------------------------------------------
+A ORDEM de dispatch de cada pass, as barreiras de memoria entre eles, o
+layout dos descriptor sets (bindings 0-4 pro Optical Flow, 0-9 pro Frame
+Interpolation), e o conteudo das structs de constantes (OpticalFlowConstants,
+FrameInterpolationConstants, copiadas campo a campo dos cbuffer reais da
+AMD) - tudo isso e logica do ALGORITMO da AMD, nao do Cemu. Reaproveitavel
+como esta.
+
+O que NAO e reaproveitavel direto desses dois arquivos (ver Parte 2):
+qualquer linha que menciona VulkanRenderer, VKRMemoryManager, ou
+ActiveSettings - essas sao as unicas partes acopladas ao Cemu.
+
+
+====================================================================================
+PARTE 2 - ARQUIVOS/TRECHOS ESPECIFICOS DO CEMU (precisam de adaptacao)
+====================================================================================
+
+2.1 GetShaderPath() - dentro de opticalflow_vk.cpp E frameinterpolation_vk.cpp
+---------------------------------------------------------------------------------------
+Linha atual:
+    return ActiveSettings::GetDataPath("resources/ffx-frame-generation/shaders_spv/{}", fileName);
+
+ActiveSettings::GetDataPath() e uma classe do Cemu que resolve "onde
+estao os arquivos de dados que vem junto com o app" - em Android, isso e
+uma pasta extraida de assets/ na primeira execucao (ver
+CemuApplication.kt -> saveDataFiles()); em PC, uma pasta "resources/" do
+lado do executavel.
+
+NO EMULADOR NOVO: troque essa linha pelo equivalente que ESSE emulador
+ja usa pra achar seus proprios arquivos de dados/recursos (quase todo
+emulador tem algum mecanismo assim - pasta de "assets", "data",
+"resources" etc.). Se for Android, o MESMO problema de raiz que
+causou o crash aqui (ver 2.5) provavelmente existe la tambem.
+
+
+2.2 VKRMemoryManager - usado em CreateIntermediateResources() e CreateBuffer()
+---------------------------------------------------------------------------------------
+E a classe do Cemu que aloca memoria de GPU (encontra o memory type
+certo, cria VkBuffer/VkImage). Usado via:
+    m_memoryManager->FindMemoryType(...)
+    m_memoryManager->CreateBuffer(...)
+
+NO EMULADOR NOVO: troque pelo helper de alocacao de memoria Vulkan que
+esse emulador ja tiver (praticamente todo renderer Vulkan de verdade tem
+algo equivalente - se nao tiver, da pra escrever um FindMemoryType()
+simples com vkGetPhysicalDeviceMemoryProperties(), e um CreateBuffer()
+direto com vkCreateBuffer+vkAllocateMemory+vkBindBufferMemory).
+
+
+2.3 VulkanRenderer - GetLogicalDevice(), GetMemoryManager()
+---------------------------------------------------------------------------------------
+Os 3 arquivos (.h e .cpp dos 3 modulos) dependem de uma classe
+VulkanRenderer do Cemu que expoe:
+    VkDevice GetLogicalDevice() const
+    VKRMemoryManager* GetMemoryManager() const
+
+NO EMULADOR NOVO: troque pela classe/objeto equivalente que ja encapsula
+o VkDevice logico nesse emulador (praticamente garantido que existe algo
+assim, com outro nome).
+
+
+2.4 Os pontos de integracao DENTRO do loop de present - especificos de Cemu
+---------------------------------------------------------------------------------------
+Arquivo: VulkanRenderer.h e VulkanRenderer.cpp (nao faz parte da pasta
+dependencies/ffx-frame-generation - sao arquivos do PROPRIO Cemu que
+foram editados, nao criados do zero).
+
+Mudancas feitas:
+  a) VulkanRenderer.h: incluiu swapchain_vk.h, adicionou membro
+     std::unique_ptr<SwapchainFrameGenVk> m_frameGen e bool m_frameGenIsFirstFrame.
+  b) VulkanRenderer.cpp, dentro de SwapBuffer(bool mainWindow):
+     - Criacao sob demanda do m_frameGen na primeira vez que a janela
+       principal tem swapchain valida, usando:
+         chainInfo.getExtent()                    -> tamanho real da swapchain
+         chainInfo.m_surfaceFormat.format          -> formato real do backbuffer
+         m_indices.graphicsFamily                  -> indice da fila grafica
+     - CaptureBackbuffer() chamado com getCurrentCommandBuffer() ANTES
+       do SubmitCommandBuffer() ja existente.
+     - GenerateAndPresentInterpolatedFrame() chamado DEPOIS do
+       vkQueuePresentKHR real, so se mainWindow==true e o present deu certo.
+
+NO EMULADOR NOVO: esses 4 pontos de dados (device, extent, formato,
+indice de fila) e os 2 pontos de chamada (antes do submit, depois do
+present) precisam ser encontrados na classe de renderer Vulkan DESSE
+emulador - o PADRAO e identico (qualquer renderer Vulkan de emulador tem
+algo equivalente a cada um desses 4 dados e 2 pontos), so os nomes
+exatos de metodo/variavel vao ser diferentes. Isso foi o trabalho mais
+demorado de todo o porte no Cemu - esperar o mesmo no proximo.
+
+
+2.5 SwapchainInfoVk - AcquireImage(), ConsumeAcquireSemaphore(), m_swapchainImages, m_swapchain
+---------------------------------------------------------------------------------------
+O swapchain_vk.cpp reaproveita esses metodos/campos JA EXISTENTES na
+classe SwapchainInfoVk do Cemu pra fazer o segundo acquire+present do
+frame gerado, em vez de reescrever o gerenciamento de swapchain do zero.
+
+NO EMULADOR NOVO: se a classe de swapchain desse emulador ja tiver
+metodos equivalentes (quase certo que tem - "acquire next image" e
+"present" sao operacoes padrao de qualquer swapchain Vulkan), reaproveite
+do mesmo jeito. Se nao tiver, precisa escrever o acquire+present manual
+ali dentro de GenerateAndPresentInterpolatedFrame().
+
+
+2.6 O crash de Android resolvido - leia isso ANTES de portar pra outro app Android
+---------------------------------------------------------------------------------------
+Se o emulador novo TAMBEM for Android: o erro que causou o crash (signal
+6, std::exception "nao consegui abrir o shader") foi porque caminhos de
+arquivo relativos tipo "pasta/arquivo.spv" nao existem no sistema de
+arquivos de um app Android instalado - so existe o que foi empacotado em
+assets/ e extraido na primeira execucao. Qualquer porte pra Android
+precisa resolver isso da MESMA forma: colocar os .spv dentro da pasta de
+assets do projeto, ter algum mecanismo de extracao pra uma pasta real na
+primeira execucao, e carregar de la - nao de um caminho relativo chutado.
+
+
+====================================================================================
+PARTE 3 - LIMITACOES/SIMPLIFICACOES HERDADAS (independente do emulador)
+====================================================================================
+Essas valem pra qualquer emulador que reaproveitar este porte, nao sao
+especificas do Cemu - sao simplificacoes que FORAM FEITAS NO ALGORITMO
+em si, documentadas aqui pra nao se perder:
+
+- SEM piramide de mip completa (6 niveis) no Optical Flow nem no
+  Inpainting Pyramid do Frame Interpolation - roda em 1 resolucao so.
+  Reduz robustez em cenas com movimento rapido.
+- RECONSTRUCT_AND_DILATE (um pass do Frame Interpolation) NAO e
+  despachado - o .spv existe mas nao e chamado. A imagem de velocidade
+  dilatada fica alocada mas vazia/zero. Ainda em aberto se esse pass
+  deveria ser chamado de outro lugar (talvez do lado de um Upscaler, se
+  algum dia for integrado - ver relatorio separado sobre o Upscaler).
+- GAME_MOTION_VECTOR_FIELD e COMPUTE_GAME_VECTOR_FIELD_INPAINTING_PYRAMID
+  nao sao despachados de proposito - dependem de motion vectors do jogo,
+  que nenhum emulador generico vai ter facilmente disponivel (ver
+  relatorio do Upscaler pra uma discussao mais a fundo sobre esse
+  problema, que e BEM mais serio la do que aqui).
+- Layout de descriptor set UNIFICADO (todos os passes de um componente
+  usam o mesmo layout, mesmo que um pass especifico nao use todos os
+  bindings) - funciona, mas e menos eficiente que ter um layout dedicado
+  por pass como a implementacao original da AMD faz.
+- Tamanho de thread group (kThreadGroupWidth/Height = 8x8) e um palpite
+  baseado no padrao comum do FFX SDK, nunca confirmado contra o valor
+  real usado nos shaders (ver os headers .h de cada pass pra confirmar
+  antes de usar em producao serio).
+- Sincronizacao: Optical Flow e Frame Interpolation usam barreiras
+  simples (VkMemoryBarrier amplo) entre passes, nao barreiras
+  granulares por recurso - funciona, mas e mais conservador/lento que o
+  ideal.
+
+
+====================================================================================
+PARTE 4 - CHECKLIST RESUMIDO PRA PORTAR PRA OUTRO EMULADOR
+====================================================================================
+[ ] Copiar os 22 .spv (Parte 1.1) pro novo projeto
+[ ] Copiar opticalflow_vk.h/.cpp e frameinterpolation_vk.h/.cpp como estao
+[ ] Copiar swapchain_vk.h/.cpp como base, mas esperar reescrever boa
+    parte dele (e o mais acoplado ao Cemu dos 3)
+[ ] Trocar GetShaderPath() (2.1) pelo mecanismo de dados do emulador novo
+[ ] Trocar VKRMemoryManager (2.2) pelo helper de memoria do emulador novo
+[ ] Trocar VulkanRenderer::GetLogicalDevice()/GetMemoryManager() (2.3)
+[ ] Encontrar os 4 dados + 2 pontos de integracao equivalentes (2.4) no
+    renderer Vulkan do emulador novo
+[ ] Trocar SwapchainInfoVk::AcquireImage()/ConsumeAcquireSemaphore() (2.5)
+    pelo equivalente do emulador novo (ou escrever na mao se nao existir)
+[ ] Se for Android: resolver o carregamento de assets (2.6) da mesma forma
+[ ] Revisar as limitacoes da Parte 3 e decidir se valem a pena resolver
+    antes de usar em producao
+
+
+====================================================================================
+ATUALIZACAO - OpticalFlowVk REESCRITO (V2) apos crash real em hardware
+====================================================================================
+Motivo: crash "signal 6, falha ao criar pipeline para pass 1" em Adreno
+650 real. Causa raiz: a V1 usava um descriptor set layout GENERICO e
+UNICO pros 7 passes do Optical Flow - mas cada pass real da AMD tem um
+conjunto de recursos (SRV/UAV/CB) e um thread group DIFERENTE (confirmado
+lendo os #define de cada .hlsl). O pass 1 (luminance pyramid) sozinho
+precisa de 6 bindings de imagem de nivel de mip que a V1 nem declarava.
+
+O que mudou na V2 (opticalflow_vk.h/.cpp):
+- 7 VkDescriptorSetLayout + VkPipelineLayout SEPARADOS, um por pass,
+  cada um batendo com o binding real daquele .hlsl especifico.
+- Novos recursos intermediarios que a V1 nao tinha: 6 imagens de nivel
+  de piramide (nivel 1 em resolucao real, niveis 2-6 "dummy" 4x4 so pra
+  satisfazer o layout), e 3 buffers de histograma SCD adicionais
+  (previous_histogram, temp, output - a V1 so tinha 1 buffer).
+- Tamanho do buffer de histograma corrigido: 256*9=2304 elementos (a V1
+  tinha so 256, chutado errado).
+- Formulas de dispatch (groupCountX/Y/Z) proprias por pass, baseadas
+  nas formulas reais de ffx_opticalflow.cpp quando as constantes eram
+  conhecidas (histograma/divergencia), ou numa simplificacao de "1 nivel
+  so" documentada no .cpp pros passes que no SDK real fazem um laco
+  multi-nivel (luminance pyramid, optical flow advanced, filter, scale).
+
+LIMITACAO CONHECIDA DEIXADA DE PROPOSITO NA V2 (documentada com TODO
+extenso dentro de UpdateDescriptorSets() no .cpp): os passes 4, 5 e 6
+leem e escrevem, direta ou indiretamente, a MESMA imagem final de saida
+dentro do mesmo Dispatch() (cada um le o que o anterior escreveu, via
+views diferentes da mesma imagem). Isso funciona porque ha uma barreira
+de memoria entre cada dispatch, mas e uma simplificacao em cima da
+arquitetura real da AMD (que usa imagens SEPARADAS raw/filtered/final).
+Se aparecer corrupcao visual nos vetores de movimento gerados, esse e o
+primeiro lugar a revisar - a correcao seria separar em 3 imagens reais.
+
+Pra quem for reusar isso em outro emulador: a V2 e mais fiel ao
+algoritmo real da AMD que a V1, mas tambem mais complexa - o
+FrameInterpolationVk provavelmente tem o MESMO tipo de bug que foi
+corrigido aqui (layout generico que nao bate com os bindings reais de
+cada pass) e ainda nao foi revisado com esse nivel de detalhe.
+
+
+====================================================================================
+ATUALIZACAO - OpticalFlowVk V3: bindings confirmados por inspecao BINARIA do .spv
+====================================================================================
+Motivo: a V2 AINDA deu o mesmo crash ("falha ao criar pipeline para
+pass 1") mesmo depois de corrigir os bindings lendo o .hlsl. Causa raiz
+de verdade, descoberta escrevendo um parser Python pra ler as
+OpDecorate Binding/DescriptorSet direto do binario .spv:
+
+  1. O dxc, sem flags de "shift" na compilacao, numera bindings de
+     cada TIPO de registro HLSL (b=constant buffer, t=textura/SRV,
+     u=imagem ou buffer de escrita/UAV) de forma INDEPENDENTE,
+     comecando do 0 em cada um - causando colisao quando um pass usa
+     mais de um tipo (ex: cbOF, uma textura e uma imagem UAV podem
+     todos virar "binding 0" ao mesmo tempo).
+  2. O dxc tambem ELIMINA POR OTIMIZACAO qualquer constant buffer cujos
+     campos acabem nao influenciando o resultado final daquele pass
+     especifico - mesmo que o .hlsl declare o cbuffer, ele pode nao
+     existir no .spv compilado. Confirmado que os passes 1, 3 e 5 do
+     Optical Flow NAO tem nenhum constant buffer no binario real.
+  3. As texturas de entrada usam Load() (OpImageFetch), nao Sample() -
+     ou seja, NAO precisam de sampler nenhum. O tipo certo e
+     VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, nao COMBINED_IMAGE_SAMPLER (que
+     a V1 e V2 usavam em todo lugar).
+
+FERRAMENTA CRIADA PRA ISSO: um parser SPIR-V minimo em Python (le o
+cabecalho binario e as instrucoes OpDecorate/OpVariable/OpTypeImage
+direto, sem depender de spirv-dis/spirv-cross) - util pra qualquer
+duvida futura sobre o layout real de qualquer .spv, nao so deste
+projeto. Nao foi entregue como arquivo porque foi usado so como
+ferramenta de investigacao, mas pode ser reconstruido facilmente se
+precisar de novo (le o magic number 0x07230203, itera por instrucoes
+usando o word_count nos 16 bits altos de cada palavra de 32 bits).
+
+ACAO NECESSARIA antes de testar a V3: recompilar os 7 .spv do Optical
+Flow com estas flags adicionadas ao comando dxc.exe que ja existe:
+  -fvk-b-shift 0 0 -fvk-t-shift 100 0 -fvk-u-shift 200 0
+(arquivo COMANDO-RECOMPILAR-SPV-COM-SHIFT.txt entregue junto com o
+codigo da V3 tem o comando completo)
+
+O que mudou no codigo (opticalflow_vk.h/.cpp):
+- Bindings exatos por pass, usando binding = slot_original + shift
+  (b+0, t+100, u+200), tabela completa extraida do binario real.
+- Descriptor type SAMPLED_IMAGE no lugar de COMBINED_IMAGE_SAMPLER -
+  VkSampler removido inteiramente da classe.
+- Segunda imagem de luma (m_lumaPreviousImage) - o pass PrepareLuma
+  agora e despachado 2x por frame (uma vez pra cor atual, uma vez pra
+  cor anterior), porque os passes seguintes esperam LUMA processado
+  como "entrada anterior", nao cor crua (bug tambem presente nas
+  versoes anteriores, nao notado ate agora).
+- 3 imagens separadas pro calculo do flow (raw/filtered/final) no
+  lugar de 1 so - os passes 4/5/6 formam uma cadeia onde cada um le o
+  que o anterior escreveu, e nao dava pra ler+escrever a mesma imagem
+  dentro do mesmo descriptor set.
+- CB_SPD removido por completo (nao usado por nenhum pass real).
+
+AINDA NAO REVISADO COM ESSE NIVEL DE RIGOR: FrameInterpolationVk. Ja
+confirmamos que pelo menos um dos passes dele (ffx_frameinterpolation_pass,
+o combine final) usa uma MISTURA de Load() e Sample() - ou seja, o
+mesmo tipo de problema (bindings colidindo, tipos de descriptor errados)
+provavelmente existe la tambem, mas de forma mais heterogenea (nem
+todo recurso vai ser SAMPLED_IMAGE puro). Precisa do mesmo tratamento
+pass-por-pass com o parser SPIR-V antes de testar em hardware.
+
+
+====================================================================================
+ATUALIZACAO - OpticalFlowVk V4: Pass::ComputeLuminancePyramid REMOVIDO POR COMPLETO
+====================================================================================
+Motivo: mesmo apos a V3 (bindings corretos, confirmados via inspecao
+binaria) e uma tentativa de shader customizado proprio (sem SPD, sem
+operacoes de quad, com formato de imagem explicito via
+[[vk::image_format("r32f")]]), o driver do Adreno 650 continuou
+recusando a criacao do pipeline pra esse pass especifico, devolvendo
+VK_ERROR_UNKNOWN (VkResult=-13) - um erro generico sem explicacao
+especifica do motivo.
+
+Investigacao que levou ate aqui (resumo, pra quem for debugar algo
+parecido no futuro):
+  1. V2: layout generico unico pra todos os 7 passes -> crash (layout
+     incompativel com o shader real).
+  2. V3: layout correto por pass, extraido inspecionando o .spv
+     compilado byte a byte (nao so o .hlsl) -> MESMO crash, mesma
+     mensagem.
+  3. Descoberta: o dxc, sem flags de "shift" na compilacao, numera
+     bindings de tipos HLSL diferentes (b/t/u) de forma independente,
+     causando colisao - corrigido recompilando com
+     -fvk-b-shift/-fvk-t-shift/-fvk-u-shift.
+  4. Pipeline AINDA falhava - inspecao via spirv-dis revelou duas
+     capacidades SPIR-V extras (GroupNonUniformQuad,
+     ComputeDerivativeGroupLinearKHR) vindas de operacoes de quad
+     (OpGroupNonUniformQuadSwap) do algoritmo SPD da AMD.
+  5. Tentativa de desligar via FFX_SPD_NO_WAVE_OPERATIONS -> NAO
+     funcionou de verdade (confirmado via spirv-dis que a operacao de
+     quad sobrevive mesmo com a flag, aparentemente usada em mais
+     lugares do SPD do que o nome da flag sugere).
+  6. Shader CUSTOMIZADO proprio, sem SPD, sem quad ops, formato de
+     imagem explicito -> AINDA deu erro na criacao do pipeline, agora
+     VK_ERROR_UNKNOWN (VkResult=-13) - um erro generico demais do
+     driver Adreno pra diagnosticar estaticamente sem mais
+     ferramentas (ex: validation layers rodando no proprio
+     dispositivo, que nao testamos).
+  7. Decisao final: como NENHUM outro pass consome a saida da piramide
+     de luminancia (confirmado via grep - m_pyramidViews nunca e lido
+     fora do proprio pass que o escreve), e a arquitetura ja era
+     simplificada pra "1 nivel" desde o inicio (nunca implementamos o
+     laco multi-nivel real da AMD que usaria essa piramide pra
+     refinamento coarse-to-fine), o pass inteiro foi REMOVIDO -
+     shader nao carregado, pipeline nao criado, nao despachado,
+     recursos intermediarios (6 imagens de nivel) nao alocados.
+
+IMPACTO FUNCIONAL: nenhum, dentro do escopo ja simplificado deste
+projeto (optical flow de resolucao unica, sem piramide de verdade). Se
+algum dia o projeto evoluir pra implementar o laco multi-nivel real da
+AMD (pra melhor robustez em movimento rapido), esse pass vai precisar
+voltar - e portanto o problema do driver Adreno recusando o pipeline
+vai precisar ser resolvido de verdade nesse momento (sugestao: testar
+com Vulkan Validation Layers rodando no proprio Android, nao so
+inspecao estatica do .spv, pra pegar a mensagem detalhada que
+VK_ERROR_UNKNOWN esconde).
+
+MELHORIA GERAL FEITA JUNTO: todas as mensagens de erro de
+vkCreateComputePipelines agora incluem o VkResult numerico (ex:
+"VkResult=-13") - antes so diziam "falha ao criar pipeline", sem
+codigo nenhum. Isso deve acelerar bastante o diagnostico de qualquer
+problema parecido no futuro, em vez de precisar de varias rodadas de
+investigacao binaria como aconteceu aqui.
+
+
+================================================================
+V5 / V6 - AUDITORIA DE FORMATOS DO OPTICAL FLOW + NOVO FRAME INTERPOLATION
+================================================================
+Arquivos entregues: opticalflow_vk.h/.cpp (V5), frameinterpolation_vk.h/.cpp (V6),
+mandacaru_frameinterpolation_simple.hlsl (+ .spv compilado por voce).
+
+A) BUGS ENCONTRADOS NO OPTICAL FLOW V4 (nunca tinham aparecido porque o jogo
+   fechava antes do primeiro dispatch). Corrigidos na V5. LICAO VALIDA PARA
+   QUALQUER EMULADOR: nao basta o pipeline criar - confira, no HLSL e no SPIR-V,
+   (1) TIPO do recurso (textura x buffer) e (2) FORMATO da imagem.
+
+   Recurso (HLSL real)                         Antes (V4)              Correto (V5)
+   rw_optical_flow_input (luma)                R32_SFLOAT              R32_UINT
+   rw_optical_flow_scd_histogram               STORAGE_BUFFER          imagem 2D R32_UINT  (2304 x 1)
+   rw_optical_flow_scd_previous_histogram      STORAGE_BUFFER          imagem 2D R32_SFLOAT(2304 x 1)
+   rw_optical_flow_scd_temp                    STORAGE_BUFFER          imagem 2D R32_UINT
+   rw_optical_flow_scd_output                  STORAGE_BUFFER          imagem 2D R32_UINT
+   rw_optical_flow (raw / filtered / final)    R16G16_SFLOAT, w x h    R32G32_SINT, ceil(w/8) x ceil(h/8)
+   (Formato SPIR-V: 33 = R32ui, 25 = Rg32i, 3 = R32f.)
+
+   Outras correcoes (conferidas contra ffx_opticalflow.cpp do SDK):
+   - Dispatch do compute OF: x = ((ceil(w/4)*16 + 63)/64), y = ceil(h/16)  (antes: errado)
+   - Filter: ceil(flowW/16) x ceil(flowH/4), flowW = ceil(w/8); escreve DIRETO o vetor final
+     (nivel 0). O pass Scale so roda ENTRE niveis da piramide - removido do dispatch.
+   - Acumuladores do SCD (InterlockedAdd) sao zerados a cada frame (vkCmdClearColorImage);
+     o previous_histogram so no primeiro frame/reset. Removido o vkCmdCopyBuffer.
+   - Vetor do OF esta em PIXELS da resolucao cheia, textura de flow tem 1 texel por bloco 8x8.
+
+B) POR QUE O FRAME INTERPOLATION DA AMD FOI SUBSTITUIDO (V6)
+   O FI original (7 passes) exige depth + motion vectors do jogo (inexistentes no Cemu) e
+   o pass inpainting_pyramid usa SPD/quad ops (Adreno 650 nao cria o pipeline). Sem depth/MV
+   os passes leriam imagens zeradas. Solucao: UM shader proprio, 1 dispatch, sem sampler,
+   sem quad ops, sem WriteWithoutFormat:
+     - warp bidirecional usando o fluxo optico REAL da AMD (bilinear manual com Load());
+     - checagem de consistencia de cor (prev warpado x cur warpado) e fallback para media
+       simples onde o warp e pouco confiavel (reduz ghosting).
+   Bindings (dxc -fvk-b-shift 0 -fvk-t-shift 100 -fvk-u-shift 200):
+     b0 -> 0 cbInterp(48 bytes) | t0 -> 100 prev | t1 -> 101 cur | t2 -> 102 flow(int2) | u0 -> 200 saida RGBA16F
+   Parametro a ajustar SEM recompilar shader: InterpConstants::fFlowSign em frameinterpolation_vk.cpp
+   (+1 = vetor aponta do frame atual para o anterior; se os objetos parecerem andar "pra tras"
+   no frame gerado, troque para -1.0f). fErrThreshold (0.12) controla o fallback.
+   As .spv do FI da AMD e os dois .spv do inpainting customizado NAO sao mais carregados.
+
+C) ARQUIVOS .spv NECESSARIOS AGORA
+   Optical Flow (6): prepare_luma, generate_scd_histogram, compute_scd_divergence,
+   compute_optical_flow_advanced_pass_v5, filter_optical_flow_pass_v5, scale_..._v5 (so a criacao do
+   pipeline; nao e despachado).   Frame Interpolation (1): mandacaru_frameinterpolation_simple.spv.
+
+D) LIMITACAO CONHECIDA (arquitetura, nao do shader)
+   O swapchain_vk apresenta o frame gerado DEPOIS do real mais recente, mas ele representa o
+   instante ENTRE o anterior e o atual -> ordem temporal invertida (pode causar vai-e-volta).
+   O correto e segurar o frame real atual, apresentar o gerado e so entao o real (1 frame de
+   latencia a mais). Proxima etapa depois de confirmar que nao ha crash.
+
+
+================================================================
+V7 - BOTAO "FSR3 Frame Gen" FUNCIONAL + LOGS DE DIAGNOSTICO
+================================================================
+Arquivos: CemuConfig.h/.cpp, NativeSettings.cpp/.kt, ExperimentalSettingsScreen.kt,
+swapchain_vk.h/.cpp (zip botao-framegen-funcional.zip).
+
+- Nova opcao persistida na config: fsr3_frame_gen (bool, padrao false), com get/set via JNI
+  (NativeSettings.getFsr3FrameGen / setFsr3FrameGen) e o Toggle da aba Experimental/Hackers.
+- SwapchainFrameGenVk::UpdateActiveState() le a opcao A CADA FRAME: liga/desliga mesmo com o jogo
+  rodando. Ao ligar, o historico e descartado (m_hasPreviousFrame=false, m_currentCopyIndex=1) para
+  nao interpolar com um frame velho. Padrao DESLIGADO: sem o botao ligado nada e capturado/gerado
+  (os recursos ainda sao alocados na criacao - ~dezenas de MB a 1080p).
+- Logs na log.txt do emulador: "[FrameGen] criado: WxH, formato=N", "[FrameGen] ativado/desativado",
+  "[FrameGen] frame gerado #N dt=.. submit=.. present=.." (5 primeiros e depois 1 a cada 300).
+  present=1000001003 e VK_SUBOPTIMAL_KHR (aviso normal no Android, nao e erro).
+- Teste em Adreno 650: OpticalFlowVk + FrameInterpolationVk criam sem erro e 2 frames foram gerados
+  sem crash. O congelamento do jogo (FSAddClient, antes do GX2Init) ja existia nas versoes antigas -
+  nao e do frame gen.
+
+
+=== V8 - Fix do freeze antes do GX2Init (nao e do frame gen) ===
+Problema do nucleo do emulador, independente do FSR3. Em Android os fibers sao pthreads; o
+thread_local t_assignedCoreIndex ficava velho quando uma thread do jogo migrava de core,
+levando __OSThreadSwitchToNext a trocar para o fiber idle do core errado e travando o scheduler lock.
+Correcao: coreinit_Thread.cpp relê hostThread->selectedCore ao entrar e ao retomar.
+Reuso em outro emulador: qualquer port que implemente fibers como threads reais precisa recarregar
+todo estado thread_local "por core" a cada retomada do fiber.
+
+
+=== V9 - Crash "MP4 Demuxer / OSExitThread" + contador de FPS ===
+Crash (signal 11 em __OSThreadLoadContext, depois de OSExitThread), reproduzido com e sem frame gen.
+Causa: fibers = pthreads com semaforo (FiberUnix.cpp). Fiber::Switch faz sem_post(alvo) e depois
+sem_wait(proprio). O Cemu deleta o OSHostThread (que contem o Fiber) logo apos a thread sair; o
+destrutor destruia o semaforo e liberava o impl enquanto a pthread ainda estava em Switch ->
+sem_wait retornava com memoria liberada e a thread voltava a executar codigo do jogo com ponteiros
+invalidos. Correcao: flag atomica "dying" no impl; o destrutor so sinaliza (sem_post) e a PROPRIA
+pthread libera o impl e termina (pthread_exit). Tambem: sem_wait agora repete em EINTR.
+Regra para outro emulador: nunca destruir primitivas de sincronizacao de um fiber-thread; deixe a
+thread dona se auto-limpar.
+Contador de FPS: FrameGenStats.h (atomics) + TickStats() em swapchain_vk.cpp + linha no overlay.
+
+
+=== V10 - Multiplicador, flow scale, modo performance, limite de FPS, perfil por jogo, FSR upscale ===
+- Extrapolacao em vez de "interpolar depois do frame real": quando o hook roda DEPOIS do present do
+  frame real, interpolar (prev->cur) mostraria um instante ANTERIOR ao que acabou de aparecer.
+  O shader v7 gera "cur + s" usando o vetor optico (pixel m em 1+s veio de cur em m + s*v, v aponta
+  cur->prev). Sem reescrever o SwapBuffer do renderer. Consistencia: se prev(center+v) != cur(center)
+  cai pra cor do frame atual sem warp.
+- Multiplicador M: M-1 apresentacoes por frame real, em t0 + intervalo_medio * k/M; um semaforo e
+  um command buffer por frame gerado; Optical Flow roda 1x por frame real (k==1), as demais so
+  re-rodam o shader de geracao com outro progresso.
+- Flow scale: copia reduzida do backbuffer (vkCmdBlitImage LINEAR) alimenta o OF; o shader converte
+  vetores (px do OF) para px cheios (fFlowScale = largura_cheia / largura_OF) e usa
+  texel_do_fluxo = iSize/iFlowSize em vez de "/8" fixo. Trocar o flow scale em runtime recria o OF.
+- Limite de FPS base: sleep_until no fim do hook (thread de render) -> o jogo espera no flip.
+- Config efetiva = perfil do jogo (std::optional) > config global (FrameGenSettings.h), lida todo frame.
+- FSR Upscale = reaproveita o filtro FSR 1.0 que o Cemu ja tem; FSR3 temporal exige depth/MV.
+- Achado de desempenho (independente do frame gen): VK_SUBOPTIMAL_KHR marcava m_shouldRecreate no
+  acquire e no present; no Adreno vem em todo frame -> swapchain recriado a cada frame.
+  Regra para outro emulador: so recriar em OUT_OF_DATE.
+
+
+=== V11 (2026-10-11) ===
+1) Nomes de thread do jogo (MEMPTR<const char>) devem ser lidos de forma segura em codigo de diagnostico:
+   limitar tamanho, checar memory_isAddressRangeAccessible a cada pagina; nunca passar o ponteiro cru para fmt/strlen.
+2) UI em jogo: painel lateral (Composable FrameGenInGamePanel) sobreposto a tela, opcoes lidas/escritas via
+   getFsr3Option/setFsr3Option; o swapchain relê as configuracoes todo frame, entao nao precisa reiniciar nada.
+   Botao no menu lateral esquerdo libera o painel.
+
+=== V11.1 ===
+Regra de sincronizacao ao apresentar frames extras: o stage do semaforo de acquire (pWaitDstStageMask) deve ser
+o MESMO stage do primeiro uso da imagem (aqui TRANSFER, por causa do blit) e a barreira de layout deve usar esse
+mesmo srcStage. Usar COLOR_ATTACHMENT_OUTPUT no wait e COMPUTE na barreira deixa a escrita comecar antes da
+imagem ser liberada pelo presentation engine (device lost / artefatos em Adreno).

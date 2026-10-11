@@ -1,0 +1,201 @@
+RELATORIO: O QUE SERA PRECISO PARA PORTAR O FSR3 UPSCALER (VULKAN + OPENGL)
+================================================================================
+Escrito ANTES de comecar esse porte - serve de mapa pra quando o FSR3 Frame
+Generation (Optical Flow + Frame Interpolation) estiver terminado e for a
+vez do Upscaler (resolucao, tipo DLSS). Baseado na inspecao real do SDK
+(mesmo fsr3.zip ja usado pro Frame Generation).
+
+NAO CONFUNDIR COM O FSR1 JA EXISTENTE NO CEMU: o Cemu-Android ja tem um
+filtro "FSR1" funcionando (AMD FidelityFX Super Resolution 1.0 - um filtro
+de nitidez/escalonamento simples, sem reconstrucao temporal). O FSR3
+Upscaler deste relatorio e uma tecnologia completamente diferente e mais
+complexa (acumulacao temporal com reprojecao por motion vectors, como o
+DLSS) - os dois podem coexistir como opcoes separadas no app.
+
+
+0. ALERTA MAIS IMPORTANTE DESTE RELATORIO (leia antes de decidir investir tempo nisso)
+-------------------------------------------------------------------------------------------
+O FSR3 Upscaler depende MUITO MAIS de motion vectors reais do jogo do que
+o Frame Generation dependia. O Frame Generation conseguia funcionar no
+modo "optical flow only" (estimando movimento sozinho, sem dado nenhum do
+jogo) com qualidade aceitavel. O Upscaler NAO tem um modo equivalente
+"sem motion vectors" documentado - a tecnica inteira e baseada em pegar
+varios frames de baixa resolucao ao longo do tempo e "acumular" eles numa
+imagem final de alta resolucao, usando os motion vectors pra saber pra
+onde cada pixel se moveu entre um frame e outro (reprojecao). Sem motion
+vectors reais e precisos, a reprojecao erra, e a imagem acumulada fica
+com rastros/fantasmas (ghosting) ou pior que um simples upscale bilinear -
+ou seja, o problema que a tecnica resolve pode virar um problema novo.
+
+Como o Cemu nao expoe motion vectors do jogo de forma generica (mesmo
+motivo ja documentado no Frame Generation), ESTE E UM RISCO MUITO MAIOR
+aqui do que foi para o Frame Generation. Recomendacao: antes de investir
+tempo no porte tecnico (shaders, backend Vulkan), faca um teste de
+viabilidade - pegue 2-3 jogos e investigue se da pra extrair motion
+vectors reais deles via engenharia reversa dos comandos GX2 (alguns jogos
+Wii U podem escrever motion vectors em render targets especificos que o
+Cemu ja captura, por exemplo pra efeitos de motion blur nativos do jogo).
+Se isso nao for viavel na maioria dos jogos, o Upscaler pode nao valer o
+esforco de porte - ou vai precisar rodar sempre no equivalente a "sem
+motion vectors", que nao e um modo suportado/documentado pela AMD.
+
+
+1. ARQUIVOS REAIS NO SDK (ja confirmados via inspecao, mesmo fsr3.zip)
+----------------------------------------------------------------------------
+
+1.1 Localizacao: Kits/FidelityFX/upscalers/ (pasta irma de framegeneration/,
+    nao framegeneration/fsr3/upscaler ou algo assim - sao componentes
+    paralelos dentro do mesmo SDK)
+
+1.2 Os shaders (HLSL) - ATENCAO: existem DOIS conjuntos de shaders juntos
+    nessa pasta, nao confunda:
+
+    CONJUNTO ANTIGO/LEGADO - ffx_fsr2_*.hlsl (9 arquivos) - mantido so
+    por compatibilidade com integracao feitas pra versao anterior do SDK
+    (FSR2). NAO USE este conjunto num porte novo.
+
+    CONJUNTO ATUAL - ffx_fsr3upscaler_*.hlsl (10 arquivos, os que
+    interessam):
+    - ffx_fsr3upscaler_prepare_inputs_pass.hlsl
+    - ffx_fsr3upscaler_prepare_reactivity_pass.hlsl
+    - ffx_fsr3upscaler_luma_pyramid_pass.hlsl
+    - ffx_fsr3upscaler_shading_change_pass.hlsl
+    - ffx_fsr3upscaler_shading_change_pyramid_pass.hlsl
+    - ffx_fsr3upscaler_luma_instability_pass.hlsl
+    - ffx_fsr3upscaler_accumulate_pass.hlsl      (o core - a reprojecao/acumulacao temporal)
+    - ffx_fsr3upscaler_rcas_pass.hlsl            (nitidez final, pos-upscale)
+    - ffx_fsr3upscaler_autogen_reactive_pass.hlsl
+    - ffx_fsr3upscaler_debug_view_pass.hlsl      (opcional, debug)
+
+    Pasta: Kits/FidelityFX/upscalers/fsr3/internal/shaders/
+
+1.3 Headers de shader (.h) compartilhados por esses passes:
+    Kits/FidelityFX/upscalers/fsr3/include/gpu/fsr3upscaler/
+    Kits/FidelityFX/upscalers/fsr3/include/gpu/spd/ (downsample,
+      MESMO componente ja usado pelo Optical Flow - mesmo cuidado com
+      FFX_SPD_NO_WAVE_OPERATIONS documentado no porte OpenGL do Frame Gen)
+    + a mesma base Kits/FidelityFX/api/internal/gpu/ffx_core*.h (ja
+      usada pelo Frame Generation - nao precisa buscar de novo)
+
+1.4 Headers da API em C++ (lado host):
+    Kits/FidelityFX/upscalers/include/ffx_upscale.h
+      -> ffxCreateContextDescUpscale, ffxDispatchDescUpscale - as
+         structs principais, incluindo campos de motion vectors,
+         profundidade, jitter de camera (ver secao 0 - esses campos
+         sao usados a serio aqui, nao sao so documentacao)
+    Kits/FidelityFX/upscalers/fsr3/include/ffx_fsr3upscaler.h
+      -> API especifica do componente
+
+1.5 Backend: MESMA SITUACAO do Frame Generation - so existe
+    Kits/FidelityFX/backend/dx12/. Nao ha backend Vulkan no codigo
+    aberto (confirmado - e o MESMO backend compartilhado entre os dois
+    componentes). A mesma estrategia DXC -> SPIR-V direto serve aqui.
+
+1.6 Implementacao de referencia (LER, nao copiar):
+    Kits/FidelityFX/upscalers/fsr3/internal/ffx_fsr3upscaler.cpp
+    (equivalente ao ffx_frameinterpolation.cpp que ja usamos como mapa
+    de arquitetura)
+
+
+2. O QUE FAZER PARA VULKAN (mesma estrategia ja validada no Frame Gen)
+----------------------------------------------------------------------------
+1. Compilar os 10 shaders fsr3upscaler_*.hlsl com dxc.exe -spirv
+   diretamente pra SPIR-V - SEM porte manual pra GLSL, exatamente como
+   foi feito pro Optical Flow/Frame Interpolation. Reaproveite os
+   mesmos comandos PowerShell (so trocar a lista de arquivos e a pasta
+   de origem pra upscalers/fsr3/internal/shaders/).
+2. Usar -D FFX_HLSL -D FFX_GPU (mesmas defines) e
+   -fspv-target-env=vulkan1.1 (o accumulate_pass e o luma_pyramid_pass
+   devem usar operacoes de wave/subgroup, pelo padrao ja visto no
+   Optical Flow - confirme ao compilar, o proprio dxc avisa se precisar
+   de versao de Vulkan mais nova).
+3. Escrever uma classe nova (ex: Fsr3UpscalerVk), seguindo o MESMO
+   padrao arquitetural do OpticalFlowVk/FrameInterpolationVk: carrega
+   os .spv como VkShaderModule, cria pipelines de compute, aloca os
+   recursos intermediarios (ver lista abaixo), dispatch na ordem do
+   .cpp de referencia (ainda nao mapeada - fazer o mesmo trabalho de
+   grep que foi feito pro Frame Interpolation antes de escrever a
+   ordem de dispatch).
+4. Recursos intermediarios que esse componente precisa (bem mais do
+   que o Optical Flow):
+   - Piramide de luminancia (varios niveis de mip - MESMA simplificacao
+     "1 nivel" pode ser aplicada aqui como primeira versao, com o
+     mesmo aviso de perda de robustez)
+   - Mascara de "shading change cada mask" (detecta onde a cena mudou
+     de forma que a acumulacao temporal nao deve confiar no historico)
+   - Buffer/imagem de instabilidade de luma
+   - Imagem de reatividade (reactive mask) - controla quanto cada
+     pixel deve confiar no frame atual vs. no historico acumulado
+   - A imagem acumulada em si (o "historico" entre frames - isso e
+     NOVO em relacao ao Frame Generation, que so guardava 2 frames;
+     aqui o historico se acumula indefinidamente enquanto a camera nao
+     corta de cena)
+5. Entrada que FALTA no Cemu (ver secao 0): motion vectors reais e
+   depth buffer real por jogo. Diferente do Frame Generation, aqui nao
+   da pra simplesmente "pular" esse dado com um pass alternativo - e o
+   coracao do algoritmo de acumulacao/reprojecao.
+
+
+3. O QUE FAZER PARA OPENGL (depois do Vulkan funcionando)
+----------------------------------------------------------------------------
+Mesma estrategia ja documentada no porte OpenGL do Frame Generation:
+1. Reaproveitar os MESMOS .spv gerados no passo 2 acima, convertendo
+   com spirv-cross.exe --es --version 320 --stage comp.
+2. Esperar os MESMOS tipos de erro ja vistos no Frame Generation:
+   - "subgroup operation only supported in Vulkan semantics" no
+     luma_pyramid_pass (usa SPD, mesma correcao:
+     -D FFX_SPD_NO_WAVE_OPERATIONS numa segunda compilacao so pra
+     gerar a variante GLSL)
+   - Possivel "Cannot use GL_EXT_shader_image_load_formatted" em
+     qualquer imagem que seja lida E escrita (a imagem acumulada e a
+     candidata mais provavel, ja que por definicao ela e lida do
+     frame anterior e escrita de novo a cada frame) - mesma correcao:
+     anotar [[vk::image_format("...")]] explicito na declaracao HLSL
+     antes de gerar o .spv.
+3. A mesma falta de API de swapchain explicita em OpenGL/EGL nao e um
+   problema aqui, ja que o Upscaler NAO mexe em apresentacao/swapchain
+   - ele so processa uma imagem de entrada (baixa resolucao) e produz
+   uma de saida (alta resolucao), dentro do pipeline de renderizacao
+   normal do Cemu, antes do frame ser apresentado. Isso torna a parte
+   OpenGL do Upscaler mais simples que a do Frame Generation (sem
+   equivalente ao swapchain_vk.cpp sendo necessario aqui).
+
+
+4. ONDE ENCAIXAR NO RENDERER DO CEMU (diferente do Frame Generation)
+----------------------------------------------------------------------------
+O Frame Generation roda DEPOIS de tudo, no momento do present (por isso
+precisou do swapchain_vk.cpp). O Upscaler roda ANTES do present, como
+parte do pipeline normal de renderizacao: o Cemu primeiro renderiza o
+frame numa resolucao INTERNA menor que a resolucao de saida, depois o
+Upscaler reconstroi pra resolucao final, e so ENTAO esse resultado seria
+o "backbuffer" que seguiria pro fluxo normal (incluindo, se os dois
+estiverem ativos juntos, pro Frame Generation depois).
+
+Isso significa mexer em outro lugar do VulkanRenderer - no ponto onde o
+Cemu decide a resolucao de renderizacao e copia/blita o resultado final
+pra apresentar, nao no SwapBuffer(). Esse ponto ainda nao foi mapeado -
+sera o primeiro passo de investigacao quando for comecar esse porte de
+verdade (equivalente ao que foi feito aqui: grep por onde a resolucao de
+saida e definida e onde o blit final pro backbuffer acontece).
+
+
+5. RISCOS, RESUMO
+----------------------
+- RISCO MAIOR (secao 0): dependencia de motion vectors reais, sem modo
+  de fallback documentado pela AMD - fazer teste de viabilidade ANTES
+  de investir no porte tecnico.
+- Mesmo backend Vulkan inexistente do SDK aberto - mesma solucao ja
+  validada (dxc -spirv direto).
+- Complexidade de recursos intermediarios bem maior que o Optical Flow
+  (acumulacao com historico, nao so um par atual/anterior).
+- Ponto de integracao no renderer e DIFERENTE do Frame Generation
+  (antes do present, nao depois) - vai exigir mapear uma parte nova do
+  VulkanRenderer.cpp que o trabalho do Frame Gen nao tocou.
+
+
+RECOMENDACAO FINAL
+----------------------
+So comecar isso depois que o Frame Generation estiver 100% funcional e
+testado. E, antes mesmo de abrir o codigo, fazer o teste de viabilidade
+da secao 0 com motion vectors - esse e o fator que decide se o porte do
+Upscaler vale a pena ou nao pro Cemu especificamente.

@@ -1,0 +1,134 @@
+INSTRUCOES DE INTEGRACAO - swapchain_vk dentro do SwapBuffer() real
+=========================================================================
+
+Este arquivo complementa o "patch-cmake-e-renderer.txt" ja entregue.
+Aqui o foco e SO a parte do swapchain_vk - a insercao do frame gerado
+dentro da funcao SwapBuffer() real do Cemu
+(VulkanRenderer.cpp, por volta da linha 3484 na versao que voce me
+mandou).
+
+
+1) VulkanRenderer.h - adicionar o membro novo
+--------------------------------------------------
+Junto com o m_opticalFlowVk que voce ja adicionou (patch anterior),
+adicione tambem (pode remover o m_opticalFlowVk se preferir - o
+SwapchainFrameGenVk ja cria e possui a instancia de OpticalFlowVk e
+FrameInterpolationVk internamente):
+
+    #include "dependencies/ffx-frame-generation/src/swapchain_vk.h"
+    ...
+    std::unique_ptr<SwapchainFrameGenVk> m_frameGen;
+    bool m_frameGenIsFirstFrame = true; // controla a flag "reset" do 1o frame
+
+
+2) VulkanRenderer.cpp - inicializacao
+------------------------------------------
+No mesmo ponto onde voce criou o m_opticalFlowVk antes (logo apos o
+device logico e criado com sucesso), troque por:
+
+    m_frameGen = std::make_unique<SwapchainFrameGenVk>(
+        this,
+        GetTargetWidth(), GetTargetHeight(),   // mesmos nomes reais que voce confirmou antes
+        m_graphicsQueueFamilyIndex);            // confirme o nome real dessa variavel no seu
+                                                 // codigo - procure por "QueueFamilyIndex" perto
+                                                 // de onde m_graphicsQueue e inicializado
+
+
+3) VulkanRenderer.cpp - CaptureBackbuffer() dentro de SwapBuffer()
+------------------------------------------------------------------------
+Dentro de SwapBuffer(bool mainWindow), ANTES do vkQueuePresentKHR real
+(ou seja, logo apos o command buffer do frame real ja ter sido
+submetido, mas voce precisa capturar a imagem ANTES dela ser
+apresentada - o jeito mais seguro e gravar a copia DENTRO do mesmo
+command buffer que ja vai ser submetido, nao depois).
+
+Repare no codigo real que voce ja tem (a funcao SwapBuffer que te
+mostrei): o command buffer principal e submetido em
+"SubmitCommandBuffer(presentSemaphore)", ANTES do vkQueuePresentKHR
+mais abaixo. Isso significa que CaptureBackbuffer() precisa ser
+chamado ANTES dessa linha de submit, gravando o comando de copia no
+MESMO command buffer que sera submetido - nao depois.
+
+Encontre esta sequencia (ja existente no seu codigo):
+
+    const size_t currentFrameCmdBufferID = GetCurrentCommandBufferId();
+
+    VkSemaphore presentSemaphore = chainInfo.m_presentSemaphores[chainInfo.swapchainImageIndex];
+    SubmitCommandBuffer(presentSemaphore); // submit all command and signal semaphore
+
+E adicione a chamada ANTES do SubmitCommandBuffer, pegando o command
+buffer ATUAL (antes dele ser submetido/fechado). Isso provavelmente
+exige acessar o VkCommandBuffer ativo atraves de algum metodo como
+GetCurrentCommandBuffer() - procure por esse padrao no arquivo (deve
+existir, ja que o resto do renderer grava comandos nele o tempo todo).
+Algo no formato de:
+
+    if (mainWindow && m_frameGen)
+        m_frameGen->CaptureBackbuffer(GetCurrentCommandBuffer(), chainInfo.m_swapchainImages[chainInfo.swapchainImageIndex]);
+
+    const size_t currentFrameCmdBufferID = GetCurrentCommandBufferId();
+
+    VkSemaphore presentSemaphore = chainInfo.m_presentSemaphores[chainInfo.swapchainImageIndex];
+    SubmitCommandBuffer(presentSemaphore);
+
+NOTA: uso "mainWindow &&" de proposito - o frame gen deve rodar so na
+tela principal (TV), nao na tela do gamepad/DRC, pra nao dobrar o
+custo de GPU tratando as duas telas.
+
+
+4) VulkanRenderer.cpp - GenerateAndPresentInterpolatedFrame() apos o present real
+---------------------------------------------------------------------------------------
+Logo APOS a chamada real de vkQueuePresentKHR (a que ja existe, mais
+abaixo na mesma funcao SwapBuffer), adicione a chamada que gera e
+apresenta o frame extra:
+
+    VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+    if (result < 0 && result != VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        throw std::runtime_error(fmt::format("Failed to present image: {}", result));
+    }
+    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+        chainInfo.m_shouldRecreate = true;
+
+    // --- NOVO: gera e apresenta o frame interpolado, se habilitado ---
+    if (mainWindow && m_frameGen && result >= 0)
+    {
+        float deltaTime = 1.0f / 60.0f; // TODO: calcule o delta real entre
+                                         // frames (o Cemu deve ter isso em
+                                         // algum lugar - procure por
+                                         // "deltaTime" ou um contador de
+                                         // frame timing existente, em vez
+                                         // de usar um valor fixo)
+        m_frameGen->GenerateAndPresentInterpolatedFrame(chainInfo, m_presentQueue, deltaTime, m_frameGenIsFirstFrame);
+        m_frameGenIsFirstFrame = false;
+    }
+
+    if(result >= 0)
+    {
+        chainInfo.m_queueDepth++;
+        chainInfo.m_presentId++;
+    }
+
+
+5) Ponto de atencao sobre o formato do swapchain
+------------------------------------------------------
+O swapchain_vk.cpp assume VK_FORMAT_B8G8R8A8_UNORM pras copias de
+backbuffer (ver TODO no CreateBackbufferCopies()). Confirme o formato
+real do seu swapchain procurando por "m_surfaceFormat" ou
+"surfaceFormat.format" no SwapchainInfoVk.cpp - se for outro formato
+(ex. VK_FORMAT_B8G8R8A8_SRGB), troque a constante em
+swapchain_vk.cpp (2 lugares: VkImageCreateInfo e VkImageViewCreateInfo
+dentro de CreateBackbufferCopies()) para bater exatamente.
+
+
+6) Ordem de teste recomendada
+-----------------------------------
+1. Compile so com CaptureBackbuffer() chamado (comente a chamada de
+   GenerateAndPresentInterpolatedFrame por enquanto) - confirme que
+   isso sozinho nao quebra o frame real (a tela do jogo continua
+   aparecendo normal, sem stutter visivel).
+2. So depois disso funcionando, habilite
+   GenerateAndPresentInterpolatedFrame() e rode com Vulkan Validation
+   Layers ativas - e onde os TODOs deixados no swapchain_vk.cpp (a
+   transicao de layout que falta antes do blit, principalmente) vao
+   aparecer como erro se nao forem resolvidos.
