@@ -223,27 +223,40 @@ namespace
 				std::string customDir = dir;
 				std::string tmpDir;
 				{
-					std::string pkg;
+					std::error_code ec;
+					// dataDir do app (interno, com permissao de execucao) - definido por CemuApplication.kt
+					fs::path internalRoot = ActiveSettings::GetInternalDir();
+					if (internalRoot.empty())
 					{
+						std::string pkg;
 						std::ifstream cmd("/proc/self/cmdline", std::ios::binary);
 						std::getline(cmd, pkg, '\0');
+						internalRoot = fs::path("/data/data") / pkg;
 					}
-					std::error_code ec;
-					const fs::path internalBase = fs::path("/data/data") / pkg / "code_cache";
+					const fs::path internalBase = internalRoot / "code_cache";
 					fs::path internalDriver = internalBase / "cemu_custom_driver" / fs::path(dir).filename();
 					fs::create_directories(internalDriver, ec);
 					bool copyOk = !ec;
+					if (ec)
+						cemuLog_log(LogType::Force, "[Driver] nao consegui criar {}: {}", internalDriver.string(), ec.message());
 					if (copyOk)
 					{
+						ec.clear();
 						for (const auto& entry : fs::directory_iterator(dir, ec))
 						{
-							if (!entry.is_regular_file()) continue;
+							std::error_code e1;
+							if (!entry.is_regular_file(e1)) continue;
 							const fs::path dst = internalDriver / entry.path().filename();
 							std::error_code e2;
-							if (fs::exists(dst, e2) && fs::file_size(dst, e2) == entry.file_size())
+							if (fs::exists(dst, e2) && fs::file_size(dst, e2) == entry.file_size(e1))
 								continue; // ja copiado
 							fs::copy_file(entry.path(), dst, fs::copy_options::overwrite_existing, e2);
 							if (e2) { cemuLog_log(LogType::Force, "[Driver] falha ao copiar {} para o armazenamento interno: {}", entry.path().string(), e2.message()); copyOk = false; }
+						}
+						if (ec)
+						{
+							cemuLog_log(LogType::Force, "[Driver] nao consegui listar {}: {}", dir, ec.message());
+							copyOk = false;
 						}
 					}
 					if (copyOk)

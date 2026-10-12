@@ -438,3 +438,11 @@ niveis extras da piramide, confirmar fFlowSign, overlay com posicao configuravel
     Se continuar AUSENTE: me mande o CMakeLists.txt de dependencies/libadrenotools (os nomes dos alvos de hook podem ser outros).
 [ ] OpenGL (teste do usuario, Adventure Time): crash SEGV pc=0 logo apos "Recompiler initialized", antes de iniciar o jogo (ponteiro nulo;
     nao e do Frame Gen, que e so Vulkan). Investigar depois que o Vulkan estiver fechado.
+
+=== V11.11 - Turnip: hooks OK, mas o driver em uso continua Qualcomm (log 12/10 08:12) ===
+[x] Hooks agora PRESENTES e "[Driver] driver customizado carregado com sucesso", MAS: "AVISO: nao consegui copiar o driver para o
+    armazenamento interno" (pasta interna calculada por /proc/self/cmdline falhou) e [Diag] ainda mostra Qualcomm/Vulkan 1.1.128.
+[x] VulkanAPI.cpp: usa ActiveSettings::GetInternalDir() (dataDir real do app) em vez de adivinhar o pacote; loga o motivo exato de cada falha de copia.
+[ ] VOCE: build + teste; esperado "[Driver] driver copiado para o armazenamento interno: /data/user/0/.../code_cache/..." e "[Diag] ... Turnip ATIVO".
+[i] Sobre o recompilador: VK_ERROR_DEVICE_LOST e a GPU travando no submit do Vulkan (LatteThread), nao a CPU PPC. Erro de recompilador
+    apareceria como crash/loop na thread de CPU emulada, nao como DEVICE_LOST. Nao ha evidencia nos logs de que o recompilador cause isso.
