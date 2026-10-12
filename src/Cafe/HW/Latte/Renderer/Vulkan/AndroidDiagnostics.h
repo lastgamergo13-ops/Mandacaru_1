@@ -15,6 +15,14 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <functional>
+#include <mutex>
+#include <vector>
+#include <deque>
+#include <map>
+#include <unordered_map>
+#include <algorithm>
+#include <malloc.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/system_properties.h>
@@ -120,6 +128,156 @@ namespace AndroidDiag
 		return n;
 	}
 
+	// provedores extras (ex.: metricas do recompilador) - cada um devolve uma string que vira parte do snapshot
+	inline std::vector<std::function<std::string()>>& Providers() { static std::vector<std::function<std::string()>> v; return v; }
+	inline std::mutex& ProvidersMutex() { static std::mutex m; return m; }
+	inline void AddProvider(std::function<std::string()> f) { std::lock_guard<std::mutex> l(ProvidersMutex()); Providers().push_back(std::move(f)); }
+	inline std::string ExtraInfo()
+	{
+		std::string out;
+		std::lock_guard<std::mutex> l(ProvidersMutex());
+		for (auto& f : Providers()) out += " | " + f();
+		return out;
+	}
+
+
+	// ---------------------------------------------------------------------------------------------
+	// Rastreio de memoria Vulkan (vkAllocateMemory/vkFreeMemory feitos pelo VKRMemoryManager)
+	// ---------------------------------------------------------------------------------------------
+	struct VkMemTracker
+	{
+		std::mutex m;
+		std::unordered_map<uint64_t, std::pair<uint64_t, uint32_t>> live; // handle -> (bytes, tipo de memoria)
+		std::map<uint32_t, uint64_t> bytesPerType;
+		uint64_t liveBytes = 0, peakBytes = 0, allocCount = 0, freeCount = 0, totalAllocBytes = 0;
+		uint64_t bufferBytes = 0, textureBytes = 0; // kind 1 = buffers, 0 = texturas (heap de imagens)
+		std::unordered_map<uint64_t, int> kindOf;
+	};
+	inline VkMemTracker& VkMem() { static VkMemTracker t; return t; }
+	inline void VkMemAlloc(uint64_t handle, uint64_t bytes, uint32_t type, int kind)
+	{
+		auto& t = VkMem(); std::lock_guard<std::mutex> l(t.m);
+		t.live[handle] = { bytes, type }; t.kindOf[handle] = kind;
+		t.bytesPerType[type] += bytes; t.liveBytes += bytes; t.allocCount++; t.totalAllocBytes += bytes;
+		(kind ? t.bufferBytes : t.textureBytes) += bytes;
+		if (t.liveBytes > t.peakBytes) t.peakBytes = t.liveBytes;
+	}
+	inline void VkMemFree(uint64_t handle)
+	{
+		auto& t = VkMem(); std::lock_guard<std::mutex> l(t.m);
+		auto it = t.live.find(handle);
+		if (it == t.live.end()) return;
+		t.bytesPerType[it->second.second] -= it->second.first; t.liveBytes -= it->second.first; t.freeCount++;
+		(t.kindOf[handle] ? t.bufferBytes : t.textureBytes) -= it->second.first;
+		t.kindOf.erase(handle); t.live.erase(it);
+	}
+	inline std::string VkMemInfo()
+	{
+		auto& t = VkMem(); std::lock_guard<std::mutex> l(t.m);
+		std::string types;
+		for (auto& kv : t.bytesPerType) if (kv.second) types += fmt::format("{}tipo{}={}MB", types.empty() ? "" : " ", kv.first, kv.second / 1048576);
+		return fmt::format("VKMEM vivo={}MB (texturas={}MB buffers={}MB) pico={}MB blocos vivos={} alocs={} liberacoes={} [{}]",
+			t.liveBytes / 1048576, t.textureBytes / 1048576, t.bufferBytes / 1048576, t.peakBytes / 1048576, t.live.size(), t.allocCount, t.freeCount, types);
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Detalhe de memoria do processo
+	// ---------------------------------------------------------------------------------------------
+	inline int CountDir(const char* path)
+	{
+		int n = 0;
+		if (DIR* d = opendir(path)) { while (dirent* e = readdir(d)) if (e->d_name[0] != '.') n++; closedir(d); }
+		return n;
+	}
+
+	inline long CountLines(const char* path)
+	{
+		std::ifstream f(path); std::string l; long n = 0;
+		while (std::getline(f, l)) n++;
+		return n;
+	}
+
+	// RAM do processo discriminada: anonima (heap/GPU/emulada) x arquivos x shmem, swap, pico, malloc
+	inline std::string ProcessMemDetail()
+	{
+		const std::string st = ReadAll("/proc/self/status");
+		const std::string sr = ReadAll("/proc/self/smaps_rollup", 4096);
+		std::string mallocInfo;
+#if defined(__BIONIC__) || defined(__ANDROID__)
+		struct mallinfo mi = mallinfo();
+		mallocInfo = fmt::format(" | malloc: arena={}MB emUso={}MB livre(no heap)={}MB mmap={}MB", (long)mi.arena / 1048576, (long)mi.uordblks / 1048576, (long)mi.fordblks / 1048576, (long)mi.hblkhd / 1048576);
+#endif
+		return fmt::format("RssAnon={}MB RssFile={}MB RssShmem={}MB pico(VmHWM)={}MB VmData={}MB swapProc={}MB PrivDirty={}MB | fds={} mapeamentos={}{}",
+			KeyKb(st, "RssAnon:") / 1024, KeyKb(st, "RssFile:") / 1024, KeyKb(st, "RssShmem:") / 1024, KeyKb(st, "VmHWM:") / 1024,
+			KeyKb(st, "VmData:") / 1024, KeyKb(st, "VmSwap:") / 1024, KeyKb(sr, "Private_Dirty:") / 1024,
+			CountDir("/proc/self/fd"), CountLines("/proc/self/maps"), mallocInfo);
+	}
+
+	// Soma de Rss por categoria de mapeamento (le /proc/self/smaps; ~alguns ms) + os maiores mapeamentos
+	struct SmapsCats { std::map<std::string, long> kb; std::vector<std::pair<long, std::string>> top; };
+	inline SmapsCats ReadSmaps()
+	{
+		SmapsCats r;
+		std::ifstream f("/proc/self/smaps");
+		std::string line, cur; bool isHeader;
+		unsigned long long a = 0, b = 0; std::string perms;
+		while (std::getline(f, line))
+		{
+			isHeader = false;
+			if (!line.empty() && ((line[0] >= '0' && line[0] <= '9') || (line[0] >= 'a' && line[0] <= 'f')))
+			{
+				char pr[8] = {}; unsigned long long x, y;
+				if (sscanf(line.c_str(), "%llx-%llx %7s", &x, &y, pr) == 3 && line.find('-') < 17) { isHeader = true; a = x; b = y; perms = pr; }
+			}
+			if (isHeader)
+			{
+				// nome = ultimo campo (depois do inode) se existir
+				std::string name;
+				int fields = 0; size_t i = 0;
+				while (i < line.size() && fields < 5) { while (i < line.size() && line[i] == ' ') i++; while (i < line.size() && line[i] != ' ') i++; fields++; }
+				while (i < line.size() && line[i] == ' ') i++;
+				if (i < line.size()) name = line.substr(i);
+				std::string cat;
+				if (name.find("kgsl") != std::string::npos || name.find("/dev/dri") != std::string::npos) cat = "GPU(kgsl)";
+				else if (name.find("scudo") != std::string::npos || name.find("libc_malloc") != std::string::npos || name.find("[heap]") != std::string::npos) cat = "heap(malloc)";
+				else if (name.find("dalvik") != std::string::npos || name.find(".art") != std::string::npos || name.find(".oat") != std::string::npos || name.find(".vdex") != std::string::npos || name.find(".odex") != std::string::npos) cat = "Java/ART";
+				else if (name.find("memfd") != std::string::npos || name.find("ashmem") != std::string::npos || name.find("/dev/shm") != std::string::npos) cat = "memfd/shmem";
+				else if (name.find(".so") != std::string::npos) cat = "bibliotecas(.so)";
+				else if (name.find('/') != std::string::npos) cat = "outros arquivos";
+				else if (name.find("[stack") != std::string::npos) cat = "pilhas";
+				else if (perms.size() > 2 && perms[2] == 'x') cat = "codigo JIT(anonimo exec)";
+				else cat = "anonima(outra)";
+				cur = cat;
+				// guarda o nome para o top
+				r.top.push_back({ 0, fmt::format("{:x}-{:x} {} {} {}MB virtual", a, b, perms, name.empty() ? "[anonimo]" : name, (long)((b - a) / 1048576)) });
+			}
+			else if (line.compare(0, 4, "Rss:") == 0 && !cur.empty())
+			{
+				long kb = atol(line.c_str() + 4);
+				r.kb[cur] += kb;
+				if (!r.top.empty()) r.top.back().first = kb;
+			}
+		}
+		std::sort(r.top.begin(), r.top.end(), [](auto& x, auto& y) { return x.first > y.first; });
+		if (r.top.size() > 4) r.top.resize(4);
+		return r;
+	}
+
+	// Tendencia de RSS (regressao linear sobre as ultimas amostras) - detector de vazamento
+	struct LeakTrend
+	{
+		std::deque<std::pair<double, double>> samples; // (segundos, MB)
+		double Slope(double windowSec, double nowSec) const // MB por minuto
+		{
+			double sx = 0, sy = 0, sxx = 0, sxy = 0; int n = 0;
+			for (auto& s : samples) if (nowSec - s.first <= windowSec) { sx += s.first; sy += s.second; sxx += s.first * s.first; sxy += s.first * s.second; n++; }
+			if (n < 6) return 0;
+			double den = n * sxx - sx * sx;
+			if (den == 0) return 0;
+			return (n * sxy - sx * sy) / den * 60.0;
+		}
+	};
+
 	inline std::string Snapshot()
 	{
 		const std::string status = ReadAll("/proc/self/status");
@@ -149,7 +307,7 @@ namespace AndroidDiag
 		return fmt::format(
 			"RSS={}MB PSS={}MB VmSize={}MB swapProc={}MB | RAMlivre(MemAvailable)={}MB MemFree={}MB swap={}/{}MB | threads={} | JIT(exec anonima)={} mapeamentos {}MB | temp max={:.1f}C({}) bateria={:.1f}C | GPU={}MHz uso={}% | CPU MHz[{}]",
 			rss / 1024, pss / 1024, vmsz / 1024, swapProc / 1024, memAvail / 1024, memFree / 1024, (swapTotal - swapFree) / 1024, swapTotal / 1024,
-			CountThreads(), jitN, jitKb / 1024, temp, zone, batt > 0 ? batt / 10.0 : -1.0, gpuClk > 0 ? gpuClk / 1000000 : -1, gpuBusy, cpuFreq);
+			CountThreads(), jitN, jitKb / 1024, temp, zone, batt > 0 ? batt / 10.0 : -1.0, gpuClk > 0 ? gpuClk / 1000000 : -1, gpuBusy, cpuFreq) + ExtraInfo();
 	}
 
 	inline void LogSnapshot(const char* reason)
@@ -202,6 +360,11 @@ namespace AndroidDiag
 			auto lastTime = std::chrono::steady_clock::now();
 			int tick = 0;
 			long lastRss = -1;
+			LeakTrend trend;
+			const auto t0 = std::chrono::steady_clock::now();
+			SmapsCats baseCats; bool haveBase = false;
+			double lastPurge = -1000;
+			int leakStrikes = 0;
 			while (true)
 			{
 				std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -217,6 +380,9 @@ namespace AndroidDiag
 					lastFrames = f;
 				}
 				cemuLog_log(LogType::Force, "[Stats] {}{}", Snapshot(), fps);
+				const double nowSec = std::chrono::duration<double>(now - t0).count();
+				if (tick % 2 == 0) // a cada 10 s: detalhe de RAM + memoria Vulkan
+					cemuLog_log(LogType::Force, "[Mem] {} | {}", ProcessMemDetail(), VkMemInfo());
 				const std::string mem = ReadAll("/proc/meminfo");
 				const long avail = KeyKb(mem, "MemAvailable:") / 1024;
 				const long rss = KeyKb(ReadAll("/proc/self/status"), "VmRSS:") / 1024;
@@ -225,6 +391,38 @@ namespace AndroidDiag
 				if (lastRss >= 0 && rss - lastRss > 300)
 					cemuLog_log(LogType::Force, "[Stats] ALERTA: o app cresceu {}MB de RAM em 5 s (agora {}MB) - possivel vazamento/alocacao descontrolada", rss - lastRss, rss);
 				lastRss = rss;
+				// ---- detector de vazamento: tendencia do RSS ----
+				trend.samples.push_back({ nowSec, (double)rss });
+				while (!trend.samples.empty() && nowSec - trend.samples.front().first > 600) trend.samples.pop_front();
+				if (tick % 6 == 0) // a cada 30 s
+				{
+					const double s2 = trend.Slope(120, nowSec), s5 = trend.Slope(300, nowSec);
+					cemuLog_log(LogType::Force, "[Mem] tendencia do RSS: {:+.1f}MB/min (ultimos 2 min) {:+.1f}MB/min (ultimos 5 min)", s2, s5);
+					if (nowSec > 90 && s2 > 15.0 && s5 > 10.0) leakStrikes++; else leakStrikes = 0;
+					if (leakStrikes >= 2)
+						cemuLog_log(LogType::Force, "[Mem] ALERTA: POSSIVEL VAZAMENTO - RSS cresce de forma continua ({:+.1f}MB/min por mais de 1 min). Veja a quebra por categoria abaixo e o VKMEM/RECOMPILADOR(orfao) para achar a origem", s2);
+					SmapsCats c = ReadSmaps();
+					if (!haveBase && nowSec > 60) { baseCats = c; haveBase = true; }
+					std::string cats;
+					for (auto& kv : c.kb)
+					{
+						long delta = haveBase && baseCats.kb.count(kv.first) ? kv.second - baseCats.kb[kv.first] : 0;
+						cats += fmt::format("{}{}={}MB({:+}MB)", cats.empty() ? "" : " | ", kv.first, kv.second / 1024, delta / 1024);
+					}
+					cemuLog_log(LogType::Force, "[Mem] por categoria (Rss, variacao desde ~60s): {}", cats);
+					for (auto& t : c.top)
+						cemuLog_log(LogType::Force, "[Mem]   maior mapeamento: {}MB Rss | {}", t.first / 1024, t.second);
+				}
+				// ---- devolver memoria livre do alocador ao sistema quando a RAM esta apertada (seguro) ----
+				if (avail >= 0 && avail < 900 && nowSec - lastPurge > 30)
+				{
+#if defined(M_PURGE)
+					lastPurge = nowSec;
+					mallopt(M_PURGE, 0);
+					const long rssAfter = KeyKb(ReadAll("/proc/self/status"), "VmRSS:") / 1024;
+					cemuLog_log(LogType::Force, "[Mem] RAM do sistema baixa ({}MB livres): mallopt(M_PURGE) devolveu {}MB ao sistema (RSS {} -> {}MB)", avail, rss - rssAfter, rss, rssAfter);
+#endif
+				}
 				const double t = MaxThermal();
 				if (t >= 45.0 && tick % 6 == 0)
 					cemuLog_log(LogType::Force, "[Stats] ALERTA: aparelho quente ({:.1f}C) - possivel throttling de CPU/GPU", t);
@@ -270,4 +468,11 @@ namespace AndroidDiag
 	inline void LogSystemInfo() {}
 	inline const char* VkResultName(int) { return ""; }
 }
+#endif
+#if defined(__ANDROID__)
+#define VKMEM_TRACK_ALLOC(h, size, type, kind) AndroidDiag::VkMemAlloc((uint64_t)(h), (uint64_t)(size), (uint32_t)(type), (int)(kind))
+#define VKMEM_TRACK_FREE(h) AndroidDiag::VkMemFree((uint64_t)(h))
+#else
+#define VKMEM_TRACK_ALLOC(h, size, type, kind) ((void)0)
+#define VKMEM_TRACK_FREE(h) ((void)0)
 #endif

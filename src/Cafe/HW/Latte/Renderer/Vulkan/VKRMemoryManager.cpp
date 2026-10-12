@@ -1,5 +1,6 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 #include <imgui.h>
 
 /* VKRSynchronizedMemoryBuffer */
@@ -246,6 +247,7 @@ VkTextureChunkedHeap::~VkTextureChunkedHeap()
 	VkDevice device = VulkanRenderer::GetInstance()->GetLogicalDevice();
 	for (auto& i : m_list_chunkInfo)
 	{
+		VKMEM_TRACK_FREE(i.mem);
 		vkFreeMemory(device, i.mem, nullptr);
 	}
 }
@@ -289,6 +291,7 @@ uint32 VkTextureChunkedHeap::allocateNewChunk(uint32 chunkIndex, uint32 minimumA
 			VkResult r = vkAllocateMemory(VulkanRenderer::GetInstance()->GetLogicalDevice(), &allocInfo, nullptr, &imageMemory);
 			if (r != VK_SUCCESS)
 				continue;
+			VKMEM_TRACK_ALLOC(imageMemory, allocationSize, memType, 0);
 			m_list_chunkInfo[chunkIndex].mem = imageMemory;
 			return allocationSize;
 		}
@@ -304,6 +307,7 @@ uint32 VkTextureChunkedHeap::allocateNewChunk(uint32 chunkIndex, uint32 minimumA
 			VkResult r = vkAllocateMemory(VulkanRenderer::GetInstance()->GetLogicalDevice(), &allocInfo, nullptr, &imageMemory);
 			if (r != VK_SUCCESS)
 				continue;
+			VKMEM_TRACK_ALLOC(imageMemory, allocationSize, memType, 0);
 			m_list_chunkInfo[chunkIndex].mem = imageMemory;
 			return allocationSize;
 		}
@@ -354,6 +358,7 @@ VKRBuffer::~VKRBuffer()
 	if (m_mappedMemory)
 		vkUnmapMemory(VulkanRenderer::GetInstance()->GetLogicalDevice(), m_bufferMemory);
 	if (m_bufferMemory != VK_NULL_HANDLE)
+		VKMEM_TRACK_FREE(m_bufferMemory);
 		vkFreeMemory(VulkanRenderer::GetInstance()->GetLogicalDevice(), m_bufferMemory, nullptr);
 	if (m_buffer != VK_NULL_HANDLE)
 		vkDestroyBuffer(VulkanRenderer::GetInstance()->GetLogicalDevice(), m_buffer, nullptr);
@@ -487,6 +492,7 @@ bool VKRMemoryManager::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
 		return false;
 	}
+	VKMEM_TRACK_ALLOC(bufferMemory, allocInfo.allocationSize, allocInfo.memoryTypeIndex, 1);
 	if (vkBindBufferMemory(m_vkr->GetLogicalDevice(), buffer, bufferMemory, 0) != VK_SUCCESS)
 	{
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
@@ -543,6 +549,7 @@ bool VKRMemoryManager::CreateBufferFromHostMemory(void* hostPointer, VkDeviceSiz
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
 		return false;
 	}
+	VKMEM_TRACK_ALLOC(bufferMemory, allocInfo.allocationSize, allocInfo.memoryTypeIndex, 1);
 	if (vkBindBufferMemory(m_vkr->GetLogicalDevice(), buffer, bufferMemory, 0) != VK_SUCCESS)
 	{
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
@@ -557,6 +564,7 @@ void VKRMemoryManager::DeleteBuffer(VkBuffer& buffer, VkDeviceMemory& deviceMem)
 	if (buffer != VK_NULL_HANDLE)
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
 	if (deviceMem != VK_NULL_HANDLE)
+		VKMEM_TRACK_FREE(deviceMem);
 		vkFreeMemory(m_vkr->GetLogicalDevice(), deviceMem, nullptr);
 	buffer = VK_NULL_HANDLE;
 	deviceMem = VK_NULL_HANDLE;

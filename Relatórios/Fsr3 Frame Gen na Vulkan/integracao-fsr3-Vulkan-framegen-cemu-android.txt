@@ -458,3 +458,39 @@ niveis extras da piramide, confirmar fFlowSign, overlay com posicao configuravel
     - nome legivel de VkResult; log de falha em vkGetFenceStatus / vkQueuePresentKHR / vkAcquireNextImageKHR
 [i] Recompilador: o log mostra o tamanho do cache JIT e o modo da CPU (ja existente: "CPU-Mode"); nao ha contadores internos do
     recompilador expostos no codigo que tenho. Se quiser metricas dele (blocos compilados, invalidacoes), preciso do codigo do PPCRecompiler.
+
+==================================================================
+V11.13 - METRICAS DO RECOMPILADOR PPC NO LOG [Stats]
+==================================================================
+Arquivos: PPCRecompiler.cpp/.h, Vulkan/AndroidDiagnostics.h
+- Contadores atomicos (somente leitura, nao mudam o comportamento):
+  funcoes compiladas / do cache / falhas / descartadas, fila, codigo nativo
+  vivo e ORFAO (descartado e nunca liberado: "todo - free x86 code"),
+  invalidacoes (qtde e MB PPC), tempo medio/max/total de compilacao.
+- AndroidDiag::AddProvider(): qualquer modulo adiciona texto ao snapshot.
+- Linha "[Stats] ... | RECOMPILADOR ..." a cada 5 s e nos erros.
+Checklist:
+ [ ] Compila no CI
+ [ ] Log mostra RECOMPILADOR no [Stats]
+ [ ] Se "orfao" crescer sem parar nos jogos que crasham -> evidencia de vazamento de codigo
+
+==================================================================
+V11.14 - DIAGNOSTICO DE RAM / DETECTOR DE VAZAMENTO
+==================================================================
+Arquivos: Vulkan/AndroidDiagnostics.h, Vulkan/VKRMemoryManager.cpp
+Novas linhas no log:
+- [Mem] (a cada 10 s): RssAnon/RssFile/RssShmem, pico (VmHWM), VmData, swap, Private_Dirty,
+  fds abertos, numero de mapeamentos, malloc (arena/em uso/livre/mmap) + VKMEM.
+- VKMEM: memoria Vulkan alocada pelo VKRMemoryManager (texturas x buffers, pico, blocos vivos,
+  alocacoes x liberacoes, bytes por tipo de memoria). Alocacoes fora do gerenciador
+  (blit/FSR1 intermediaria, frame gen) nao entram.
+- [Mem] (a cada 30 s): tendencia do RSS em MB/min (2 e 5 min) e quebra por categoria
+  (GPU kgsl, heap malloc, Java, memfd, .so, JIT, anonima) com a variacao desde ~60 s, e os 4 maiores mapeamentos.
+- ALERTA "POSSIVEL VAZAMENTO" quando o RSS cresce >15MB/min (2 min) e >10MB/min (5 min) por 2 verificacoes seguidas.
+- Com MemAvailable < 900MB: mallopt(M_PURGE) devolve memoria livre do alocador ao sistema (max 1x/30 s), logando quanto liberou.
+Como ler: categoria que cresce = origem. "GPU(kgsl)" ou VKMEM vivo subindo = Vulkan; "heap(malloc)" = C++;
+"codigo JIT" ou RECOMPILADOR orfao subindo = recompilador; fds/mapeamentos subindo = vazamento de handle/mmap.
+Checklist:
+ [ ] Compila no CI
+ [ ] Log mostra [Mem] a cada 10 s e tendencia a cada 30 s
+ [ ] Jogo que crasha: qual categoria cresce antes do crash?

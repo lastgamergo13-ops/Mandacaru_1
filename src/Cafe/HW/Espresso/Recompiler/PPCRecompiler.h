@@ -181,6 +181,23 @@ typedef struct
 
 extern PPCRecompilerInstanceData_t* ppcRecompilerInstanceData;
 
+// Metricas do recompilador (somente leitura; usadas pelo log de diagnostico "[Stats]" no Android).
+struct PPCRecompilerStats
+{
+	uint64 compiled = 0;          // funcoes compiladas agora
+	uint64 fromCache = 0;         // funcoes carregadas do cache AOT em disco
+	uint64 failed = 0;            // compilacoes que falharam
+	uint64 deleted = 0;           // funcoes descartadas por invalidacao (codigo PPC sobrescrito/recarregado)
+	uint64 liveCodeBytes = 0;     // bytes de codigo nativo de funcoes ativas
+	uint64 orphanCodeBytes = 0;   // bytes de codigo nativo de funcoes descartadas (NUNCA liberados - ver "todo - free x86 code")
+	uint64 invalidateCalls = 0;   // chamadas de invalidacao de faixa
+	uint64 invalidatedBytes = 0;  // total de bytes PPC invalidados
+	uint64 compileUsTotal = 0;    // tempo total gasto compilando (microssegundos)
+	uint64 compileUsMax = 0;      // maior tempo de uma unica compilacao (microssegundos)
+	uint64 queueDepth = 0;        // enderecos aguardando compilacao
+};
+PPCRecompilerStats PPCRecompiler_getStats();
+
 void PPCRecompiler_init();
 void PPCRecompiler_Shutdown();
 

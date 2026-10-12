@@ -1,4 +1,6 @@
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
+#include <chrono>
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <thread>
@@ -27,6 +29,9 @@
 #include "BackendAArch64/BackendAArch64.h"
 #endif
 #include "util/highresolutiontimer/HighResolutionTimer.h"
+#if BOOST_PLAT_ANDROID
+#include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
+#endif
 
 #define PPCREC_FORCE_SYNCHRONOUS_COMPILATION	0 // if 1, then function recompilation will block and execute on the thread that called PPCRecompiler_visitAddressNoBlock
 #define PPCREC_LOG_RECOMPILATION_RESULTS		0
@@ -60,6 +65,31 @@ struct
 	// function storage
 	RangeStore<PPCRecFunction_t*, uint32, 7703, 0x2000> functionStorage;
 }s_ppcRecompilerState;
+
+namespace
+{
+	// metricas (apenas contadores; nao alteram o comportamento do recompilador)
+	struct
+	{
+		std::atomic<uint64> compiled{0}, fromCache{0}, failed{0}, deleted{0};
+		std::atomic<uint64> liveCodeBytes{0}, orphanCodeBytes{0};
+		std::atomic<uint64> invalidateCalls{0}, invalidatedBytes{0};
+		std::atomic<uint64> compileUsTotal{0}, compileUsMax{0};
+	} s_recStats;
+}
+
+PPCRecompilerStats PPCRecompiler_getStats()
+{
+	PPCRecompilerStats s;
+	s.compiled = s_recStats.compiled; s.fromCache = s_recStats.fromCache; s.failed = s_recStats.failed; s.deleted = s_recStats.deleted;
+	s.liveCodeBytes = s_recStats.liveCodeBytes; s.orphanCodeBytes = s_recStats.orphanCodeBytes;
+	s.invalidateCalls = s_recStats.invalidateCalls; s.invalidatedBytes = s_recStats.invalidatedBytes;
+	s.compileUsTotal = s_recStats.compileUsTotal; s.compileUsMax = s_recStats.compileUsMax;
+	s_ppcRecompilerState.recompilerSpinlock.lock();
+	s.queueDepth = s_ppcRecompilerState.targetQueue.size();
+	s_ppcRecompilerState.recompilerSpinlock.unlock();
+	return s;
+}
 
 void ATTR_MS_ABI (*PPCRecompiler_enterRecompilerCode)(uint64 codeMem, uint64 ppcInterpreterInstance);
 void ATTR_MS_ABI (*PPCRecompiler_leaveRecompilerCode_visited)();
@@ -509,9 +539,21 @@ void PPCRecompiler_recompileAtAddress(uint32 address)
 	if (func)
 		loadedFromCache = true;
 	else
+	{
+		const auto compileStart = std::chrono::steady_clock::now();
 		func = PPCRecompiler_recompileFunction(range, entryAddresses, functionEntryPoints, funcBoundaries);
+		const uint64 us = (uint64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - compileStart).count();
+		s_recStats.compileUsTotal += us;
+		uint64 prevMax = s_recStats.compileUsMax;
+		while (us > prevMax && !s_recStats.compileUsMax.compare_exchange_weak(prevMax, us)) {}
+	}
 	if (!func)
+	{
+		s_recStats.failed++;
 		return; // recompilation failed
+	}
+	if (loadedFromCache) s_recStats.fromCache++; else s_recStats.compiled++;
+	s_recStats.liveCodeBytes += func->x86Size;
 	if (!loadedFromCache)
 		PPCRecompilerCache_Store(func, functionEntryPoints);
 	PPCRecompiler_makeRecompiledFunctionActive(address, range, func, functionEntryPoints);
@@ -657,6 +699,9 @@ void PPCRecompiler_deleteFunction(PPCRecFunction_t* func)
 		if (ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[entrypoint.ppcAddr / 4] == entrypoint.hostEntrypoint)
 			ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[entrypoint.ppcAddr / 4] = PPCRecompiler_leaveRecompilerCode_unvisited;
 	}
+	s_recStats.deleted++;
+	s_recStats.liveCodeBytes -= std::min<uint64>(s_recStats.liveCodeBytes, func->x86Size);
+	s_recStats.orphanCodeBytes += func->x86Size; // o codigo nativo nao e liberado (todo abaixo)
 	// delete from storage
 	for (auto& r : func->list_ranges)
 	{
@@ -674,6 +719,8 @@ void PPCRecompiler_invalidateRange(uint32 startAddr, uint32 endAddr)
 	if (startAddr >= PPC_REC_CODE_AREA_SIZE)
 		return;
 	cemu_assert_debug(endAddr >= startAddr);
+	s_recStats.invalidateCalls++;
+	s_recStats.invalidatedBytes += (endAddr - startAddr);
 
 	s_ppcRecompilerState.recompilerSpinlock.lock();
 
@@ -771,6 +818,16 @@ void PPCRecompiler_init()
     PPCRecompiler_initPlatform();
 
 	cemuLog_log(LogType::Force, "Recompiler initialized");
+#if BOOST_PLAT_ANDROID
+	AndroidDiag::AddProvider([]() -> std::string
+	{
+		const PPCRecompilerStats s = PPCRecompiler_getStats();
+		return fmt::format("RECOMPILADOR funcoes: compiladas={} do_cache={} falhas={} descartadas={} fila={} | codigo nativo vivo={:.1f}MB orfao(nao liberado)={:.1f}MB | invalidacoes={} ({:.1f}MB PPC) | compilacao media={:.2f}ms max={:.1f}ms total={:.1f}s",
+			s.compiled, s.fromCache, s.failed, s.deleted, s.queueDepth, s.liveCodeBytes / 1048576.0, s.orphanCodeBytes / 1048576.0,
+			s.invalidateCalls, s.invalidatedBytes / 1048576.0,
+			s.compiled ? (s.compileUsTotal / 1000.0 / (double)s.compiled) : 0.0, s.compileUsMax / 1000.0, s.compileUsTotal / 1000000.0);
+	});
+#endif
 
 	s_ppcRecompilerState.initialized = true;
 	s_ppcRecompilerState.recompilerEnableCount = 1; // enabled
