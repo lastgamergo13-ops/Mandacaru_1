@@ -1,4 +1,5 @@
 #include "Cafe/HW/Latte/Core/FrameGenSettings.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
@@ -219,6 +220,14 @@ void VulkanRenderer::DetermineVendor()
 		m_vendor = GfxVendor::Mesa;
 
 	cemuLog_log(LogType::Force, "Using GPU: {}", properties.properties.deviceName);
+#if defined(__ANDROID__)
+	AndroidDiag::LogSystemInfo();      // aparelho, SoC, CPU, RAM, temperatura
+	AndroidDiag::StartPeriodic();      // linha [Stats] a cada 5 s (RAM, JIT, calor, GPU/CPU MHz, alertas)
+	cemuLog_log(LogType::Force, "[Diag] Vulkan: dispositivo apiVersion={}.{}.{} maxImageDimension2D={} maxBoundDescriptorSets={} maxStorageBufferRange={} maxMemoryAllocationCount={} pipeline_robustness_ext={}",
+		VK_API_VERSION_MAJOR(properties.properties.apiVersion), VK_API_VERSION_MINOR(properties.properties.apiVersion), VK_API_VERSION_PATCH(properties.properties.apiVersion),
+		properties.properties.limits.maxImageDimension2D, properties.properties.limits.maxBoundDescriptorSets, properties.properties.limits.maxStorageBufferRange,
+		properties.properties.limits.maxMemoryAllocationCount, (int)m_featureControl.deviceExtensions.pipeline_robustness);
+#endif
 
 	if (m_featureControl.deviceExtensions.driver_properties)
 	{
@@ -1929,6 +1938,7 @@ void VulkanRenderer::UnrecoverableError(const char* errMsg) const
 {
 	cemuLog_log(LogType::Force, "Unrecoverable error in Vulkan renderer");
 	cemuLog_log(LogType::Force, "Msg: {}", errMsg);
+	AndroidDiag::LogSnapshot("erro irrecuperavel do Vulkan"); // RAM/calor/GPU no instante do erro
 	throw std::runtime_error(errMsg);
 }
 
@@ -2241,6 +2251,7 @@ void VulkanRenderer::ProcessFinishedCommandBuffers()
 			// not signaled
 			break;
 		}
+		cemuLog_log(LogType::Force, "[Diag] vkGetFenceStatus falhou: {} ({}) fenceIndex={} totalSubmetidos={}", (sint32)fenceStatus, AndroidDiag::VkResultName((int)fenceStatus), (int)m_commandBufferSyncIndex, (uint64)m_numSubmittedCmdBuffers);
 		UnrecoverableError(fmt::format("vkGetFenceStatus returned unexpected error {}", (sint32)fenceStatus).c_str());
 	}
 	if (finishedCmdBuffers)
@@ -3598,6 +3609,8 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 	VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
 	if (result < 0 && result != VK_ERROR_OUT_OF_DATE_KHR)
 	{
+		cemuLog_log(LogType::Force, "[Diag] vkQueuePresentKHR falhou: {} ({})", (int)result, AndroidDiag::VkResultName((int)result));
+		AndroidDiag::LogSnapshot("falha no present");
 		throw std::runtime_error(fmt::format("Failed to present image: {}", result));
 	}
 	// SUBOPTIMAL nao exige recriar o swapchain. No Adreno ele vem em TODO present e recriar a cada

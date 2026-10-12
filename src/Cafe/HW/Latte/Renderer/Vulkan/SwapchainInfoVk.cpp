@@ -6,6 +6,7 @@
 #include "Cafe/HW/Latte/Core/LatteTiming.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 
 SwapchainInfoVk::SwapchainInfoVk(bool mainWindow, Vector2i size) : mainWindow(mainWindow), m_desiredExtent(size)
 {
@@ -243,7 +244,11 @@ bool SwapchainInfoVk::AcquireImage()
 	{
 		swapchainImageIndex = -1;
 		if (result != VK_ERROR_OUT_OF_DATE_KHR)
+		{
+			cemuLog_log(LogType::Force, "[Diag] vkAcquireNextImageKHR falhou: {} ({})", (int)result, AndroidDiag::VkResultName((int)result));
+			AndroidDiag::LogSnapshot("falha no acquire");
 			throw std::runtime_error(fmt::format("Failed to acquire next image: {}", result));
+		}
 		return false;
 	}
 	m_currentSemaphore = acquireSemaphore;

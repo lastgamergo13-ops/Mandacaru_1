@@ -446,3 +446,15 @@ niveis extras da piramide, confirmar fFlowSign, overlay com posicao configuravel
 [ ] VOCE: build + teste; esperado "[Driver] driver copiado para o armazenamento interno: /data/user/0/.../code_cache/..." e "[Diag] ... Turnip ATIVO".
 [i] Sobre o recompilador: VK_ERROR_DEVICE_LOST e a GPU travando no submit do Vulkan (LatteThread), nao a CPU PPC. Erro de recompilador
     apareceria como crash/loop na thread de CPU emulada, nao como DEVICE_LOST. Nao ha evidencia nos logs de que o recompilador cause isso.
+
+=== V11.12 - LOG DE DIAGNOSTICO AMPLIADO (pedido do usuario) ===
+[x] Novo AndroidDiagnostics.h (header-only, sem mudar CMake):
+    - [Diag] Aparelho/SoC/Android/build, CPU (nucleos, Features, freq max e governor), RAM/swap, estado inicial
+    - [Diag] Vulkan: apiVersion, limites (maxImageDimension2D, maxMemoryAllocationCount...), pipeline_robustness
+    - [Stats] a cada 5 s: RSS/PSS/VmSize/swap do app, RAM livre do sistema, threads, memoria de codigo JIT do recompilador
+      (mapeamentos executaveis anonimos), temperatura maxima + bateria, GPU MHz/uso (kgsl) e CPU MHz por nucleo
+    - [Stats] ALERTA: RAM livre < 400MB, app cresceu > 300MB em 5 s, aparelho >= 45C
+    - [Diag] SNAPSHOT no instante de: erro irrecuperavel do Vulkan, falha de present, falha de acquire
+    - nome legivel de VkResult; log de falha em vkGetFenceStatus / vkQueuePresentKHR / vkAcquireNextImageKHR
+[i] Recompilador: o log mostra o tamanho do cache JIT e o modo da CPU (ja existente: "CPU-Mode"); nao ha contadores internos do
+    recompilador expostos no codigo que tenho. Se quiser metricas dele (blocos compilados, invalidacoes), preciso do codigo do PPCRecompiler.
