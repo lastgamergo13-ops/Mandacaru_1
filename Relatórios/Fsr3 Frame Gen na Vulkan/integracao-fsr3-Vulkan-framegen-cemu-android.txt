@@ -419,3 +419,11 @@ niveis extras da piramide, confirmar fFlowSign, overlay com posicao configuravel
     DEVICE_LOST ocorre tambem sem Frame Gen (nenhuma linha [FrameGen]) => nao e do Frame Gen.
 [ ] VOCE: ativar o Turnip em Configuracoes > Drivers customizados e conferir no log "[Diag] ... Turnip ATIVO"
 [ ] VOCE: testar visual do v8 (bordas de objetos em movimento) e custo "FG GPU"
+
+=== V11.9 - CARREGAMENTO DO DRIVER CUSTOMIZADO (Turnip) ===
+[!] Logs de 12/10: "[Diag] custom_driver_path = .../customDrivers/<id> -> driver em uso NAO e Turnip" (driverName Qualcomm, Vulkan 1.1.128).
+    Causa: o codigo nativo que abre o driver customizado NAO existia (so a config/JNI/UI). DEVICE_LOST ocorre tambem sem Frame Gen.
+[x] VulkanAPI.cpp: dlopen_vulkan_loader no Android usa adrenotools_open_libvulkan (le libraryName do meta.json, respeita o modo do perfil
+    do jogo: Global/Sistema/Custom), uma vez por processo, com fallback para o driver do sistema e logs "[Driver] ..."
+[ ] VOCE: build + testar; no log procure "[Driver] carregando driver customizado", "[Driver] driver customizado carregado com sucesso"
+    e "[Diag] driverName=... Turnip". Se aparecer "libmain_hook.so ... AUSENTE", me mande o log (falta empacotar os libs da libadrenotools).
