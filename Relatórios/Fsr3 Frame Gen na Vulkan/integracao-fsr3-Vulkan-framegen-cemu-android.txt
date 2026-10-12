@@ -427,3 +427,14 @@ niveis extras da piramide, confirmar fFlowSign, overlay com posicao configuravel
     do jogo: Global/Sistema/Custom), uma vez por processo, com fallback para o driver do sistema e logs "[Driver] ..."
 [ ] VOCE: build + testar; no log procure "[Driver] carregando driver customizado", "[Driver] driver customizado carregado com sucesso"
     e "[Diag] driverName=... Turnip". Se aparecer "libmain_hook.so ... AUSENTE", me mande o log (falta empacotar os libs da libadrenotools).
+
+=== V11.10 - Turnip ainda nao carregava (logs de 12/10 06:3x) ===
+[!] Logs: "[Driver] libmain_hook.so / libhook_impl.so / libfile_redirect_hook.so: AUSENTE" e adrenotools_open_libvulkan devolveu nulo.
+    O log do build mostra que so driver.cpp/bcenabler.cpp/linkernsbypass foram compilados: os .so de hook NAO sao construidos.
+[x] src/android/app/src/main/cpp/CMakeLists.txt: add_dependencies(CemuAndroid hook_impl main_hook file_redirect_hook) (so se os alvos existirem)
+[x] VulkanAPI.cpp: o driver e copiado para o armazenamento INTERNO (/data/data/<pkg>/code_cache/cemu_custom_driver/<id>) e o tmp da
+    libadrenotools tambem fica la (a pasta externa /storage/emulated/0/Android/... e noexec); logs de errno/dlerror na falha.
+[ ] VOCE: build; no log: "[Driver] driver copiado...", "libmain_hook.so: presente", "driver customizado carregado com sucesso".
+    Se continuar AUSENTE: me mande o CMakeLists.txt de dependencies/libadrenotools (os nomes dos alvos de hook podem ser outros).
+[ ] OpenGL (teste do usuario, Adventure Time): crash SEGV pc=0 logo apos "Recompiler initialized", antes de iniciar o jogo (ponteiro nulo;
+    nao e do Frame Gen, que e so Vulkan). Investigar depois que o Vulkan estiver fechado.

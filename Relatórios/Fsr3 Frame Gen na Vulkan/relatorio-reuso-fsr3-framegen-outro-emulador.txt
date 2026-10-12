@@ -548,3 +548,5 @@ V11.7: Optical Flow multi-nivel opcional. Novo shader de downsample de luma (med
 V11.8: shader de interpolacao V8 com recuperacao de oclusao (testa vetores vizinhos quando o vetor local nao bate com a cor). Mesmo cbuffer/bindings da V7; carregamento com fallback V8->V7->antigo.
 
 V11.9: (infra do emulador, nao do Frame Gen) carregamento do driver Vulkan customizado via libadrenotools, com diagnostico por log.
+
+V11.10: infra do driver customizado: copia interna do driver + dependencia de build dos .so de hook da libadrenotools.

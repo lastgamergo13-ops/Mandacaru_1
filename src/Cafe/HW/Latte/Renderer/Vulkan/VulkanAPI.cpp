@@ -146,6 +146,9 @@ bool InitializeDeviceVulkan(VkDevice device)
 
 #if BOOST_PLAT_ANDROID
 #include <adrenotools/driver.h>
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include "config/CemuConfig.h"
@@ -214,13 +217,48 @@ namespace
 				cemuLog_log(LogType::Force, "[Driver] meta.json sem libraryName em '{}' - usando o driver do sistema", dir);
 			else
 			{
+				// A pasta externa (/storage/emulated/0/Android/data/...) e montada SEM permissao de execucao:
+				// o linker nao consegue carregar .so de la. Copiamos o driver para o armazenamento INTERNO
+				// do app (code_cache) e usamos ele tambem como pasta temporaria da libadrenotools.
 				std::string customDir = dir;
+				std::string tmpDir;
+				{
+					std::string pkg;
+					{
+						std::ifstream cmd("/proc/self/cmdline", std::ios::binary);
+						std::getline(cmd, pkg, '\0');
+					}
+					std::error_code ec;
+					const fs::path internalBase = fs::path("/data/data") / pkg / "code_cache";
+					fs::path internalDriver = internalBase / "cemu_custom_driver" / fs::path(dir).filename();
+					fs::create_directories(internalDriver, ec);
+					bool copyOk = !ec;
+					if (copyOk)
+					{
+						for (const auto& entry : fs::directory_iterator(dir, ec))
+						{
+							if (!entry.is_regular_file()) continue;
+							const fs::path dst = internalDriver / entry.path().filename();
+							std::error_code e2;
+							if (fs::exists(dst, e2) && fs::file_size(dst, e2) == entry.file_size())
+								continue; // ja copiado
+							fs::copy_file(entry.path(), dst, fs::copy_options::overwrite_existing, e2);
+							if (e2) { cemuLog_log(LogType::Force, "[Driver] falha ao copiar {} para o armazenamento interno: {}", entry.path().string(), e2.message()); copyOk = false; }
+						}
+					}
+					if (copyOk)
+					{
+						customDir = internalDriver.string();
+						cemuLog_log(LogType::Force, "[Driver] driver copiado para o armazenamento interno: {}", customDir);
+					}
+					else
+						cemuLog_log(LogType::Force, "[Driver] AVISO: nao consegui copiar o driver para o armazenamento interno; tentando a pasta original (pode falhar por falta de permissao de execucao)");
+					fs::path tmp = internalBase / "adrenotools_tmp";
+					fs::create_directories(tmp, ec);
+					tmpDir = tmp.string() + "/";
+				}
 				if (customDir.back() != '/') customDir += '/';
 				const std::string hookDir = ActiveSettings::GetNativeLibPath().string() + "/";
-				fs::path tmp = ActiveSettings::GetUserDataPath("tmp_adrenotools");
-				std::error_code ec;
-				fs::create_directories(tmp, ec);
-				const std::string tmpDir = tmp.string() + "/";
 				cemuLog_log(LogType::Force, "[Driver] carregando driver customizado '{}' (lib {}) hook={} tmp={}", customDir, libName, hookDir, tmpDir);
 				for (const char* hookLib : { "libmain_hook.so", "libhook_impl.so", "libfile_redirect_hook.so" })
 				{
@@ -234,7 +272,9 @@ namespace
 					s_handle = h;
 					return s_handle;
 				}
-				cemuLog_log(LogType::Force, "[Driver] FALHA ao carregar o driver customizado (adrenotools_open_libvulkan devolveu nulo) - usando o driver do sistema");
+				const int savedErrno = errno;
+				const char* dlErr = dlerror();
+				cemuLog_log(LogType::Force, "[Driver] FALHA ao carregar o driver customizado (adrenotools_open_libvulkan devolveu nulo; errno={} '{}'; dlerror='{}') - usando o driver do sistema", savedErrno, strerror(savedErrno), dlErr ? dlErr : "");
 			}
 		}
 		s_handle = dlopen("libvulkan.so", RTLD_NOW);

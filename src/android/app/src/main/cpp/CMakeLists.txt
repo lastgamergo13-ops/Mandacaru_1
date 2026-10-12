@@ -39,3 +39,12 @@ target_link_libraries(CemuAndroid PRIVATE
         CemuGui
         ZArchive::zarchive
 )
+
+# libadrenotools: os .so de hook (usados ao carregar driver Vulkan customizado, ex. Turnip) precisam ser
+# COMPILADOS e EMPACOTADOS no APK (lib/arm64-v8a). Sem esta dependencia o ninja nao os constroi.
+foreach(_adrenotools_hook hook_impl main_hook file_redirect_hook)
+    if(TARGET ${_adrenotools_hook})
+        add_dependencies(CemuAndroid ${_adrenotools_hook})
+        message(STATUS "libadrenotools: ${_adrenotools_hook} sera construido junto com o CemuAndroid")
+    endif()
+endforeach()
