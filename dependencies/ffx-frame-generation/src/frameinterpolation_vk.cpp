@@ -31,6 +31,7 @@ static_assert(sizeof(InterpConstants) == 48, "cbInterp deve ter 48 bytes");
 namespace
 {
 	// V7 (extrapolacao + flow scale). Se nao existir, cai pro shader antigo (so interpolacao).
+	constexpr const char* kShaderFileV8 = "mandacaru_frameinterpolation_v8.spv"; // V7 + recuperacao de oclusao
 	constexpr const char* kShaderFileV7 = "mandacaru_frameinterpolation_v7.spv";
 	constexpr const char* kShaderFileOld = "mandacaru_frameinterpolation_simple.spv";
 
@@ -111,8 +112,15 @@ void FrameInterpolationVk::CreatePipeline()
 {
 	VkDevice device = m_renderer->GetLogicalDevice();
 
-	fs::path path = GetShaderPath(kShaderFileV7);
+	fs::path path = GetShaderPath(kShaderFileV8);
 	std::ifstream file(path, std::ios::ate | std::ios::binary);
+	if (file.is_open())
+		cemuLog_log(LogType::Force, "[FrameGen] usando {} (recuperacao de oclusao)", kShaderFileV8);
+	else
+	{
+		path = GetShaderPath(kShaderFileV7);
+		file.open(path, std::ios::ate | std::ios::binary);
+	}
 	m_supportsExtrapolation = file.is_open();
 	if (!file.is_open())
 	{

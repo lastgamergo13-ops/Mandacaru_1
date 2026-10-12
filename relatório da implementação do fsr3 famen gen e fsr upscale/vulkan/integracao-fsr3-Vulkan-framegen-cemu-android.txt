@@ -408,3 +408,14 @@ niveis extras da piramide, confirmar fFlowSign, overlay com posicao configuravel
 [x] swapchain recria o OF ao mudar a opcao (sem laco em caso de falha)
 [ ] VOCE: compilar mandacaru_of_luma_downsample.hlsl -> .spv (ver compilar-downsample-luma.txt)
 [ ] VOCE: testar com a opcao ligada e mandar log (procure "em PIRAMIDE" e o custo "FG GPU")
+
+=== V11.8 - diagnostico + recuperacao de oclusao (shader V8) ===
+[x] LOG: "[Diag] driverName/driverID/conformance/apiVersion" + aviso se ha custom_driver_path mas o driver em uso nao e Turnip
+[x] LOG: falha do vkQueueSubmit mostra o nome do erro (DEVICE_LOST etc.), indice do cmd buffer e total de submits
+[x] mandacaru_frameinterpolation_v8.hlsl (+ .spv ja compilado, mesmo caminho dos outros): pixels com vetor duvidoso testam os vetores
+    dos 8 vizinhos do fluxo e usam o de menor erro (substituto simples de dilate/disocclusion/inpainting da AMD, que exigem depth/MV do jogo)
+[x] frameinterpolation_vk: tenta v8, depois v7, depois o antigo (log "usando mandacaru_frameinterpolation_v8.spv")
+[!] ACHADO: nos logs Mario Kart 8 / 3D World / Forest Escape o driver em uso era o da Qualcomm (db7e7066a2), NAO o Turnip.
+    DEVICE_LOST ocorre tambem sem Frame Gen (nenhuma linha [FrameGen]) => nao e do Frame Gen.
+[ ] VOCE: ativar o Turnip em Configuracoes > Drivers customizados e conferir no log "[Diag] ... Turnip ATIVO"
+[ ] VOCE: testar visual do v8 (bordas de objetos em movimento) e custo "FG GPU"

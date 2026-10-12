@@ -544,3 +544,5 @@ Overlay configuravel: FrameGenStats ganhou gpuMs; opcoes (mostrar, decimais, est
 (ver motivo no checklist de integracao).
 
 V11.7: Optical Flow multi-nivel opcional. Novo shader de downsample de luma (media 2x2); demais shaders AMD reaproveitados sem recompilar (bindings ja compativeis). Fallback para 1 nivel se indisponivel.
+
+V11.8: shader de interpolacao V8 com recuperacao de oclusao (testa vetores vizinhos quando o vetor local nao bate com a cor). Mesmo cbuffer/bindings da V7; carregamento com fallback V8->V7->antigo.

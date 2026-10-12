@@ -223,6 +223,19 @@ void VulkanRenderer::DetermineVendor()
 	if (m_featureControl.deviceExtensions.driver_properties)
 	{
 		cemuLog_log(LogType::Force, "Driver version: {}", driverProperties.driverInfo);
+		// diagnostico: qual driver Vulkan esta REALMENTE em uso (Qualcomm original x Turnip/Mesa x outro)
+		cemuLog_log(LogType::Force, "[Diag] driverName='{}' driverID={} conformance={}.{}.{}.{} apiVersion={}.{}.{} driverVersion=0x{:08x}",
+			driverProperties.driverName, (int)driverProperties.driverID,
+			driverProperties.conformanceVersion.major, driverProperties.conformanceVersion.minor,
+			driverProperties.conformanceVersion.subminor, driverProperties.conformanceVersion.patch,
+			VK_API_VERSION_MAJOR(properties.properties.apiVersion), VK_API_VERSION_MINOR(properties.properties.apiVersion), VK_API_VERSION_PATCH(properties.properties.apiVersion),
+			properties.properties.driverVersion);
+		{
+			const std::string customPath = GetConfig().custom_driver_path.GetValue();
+			cemuLog_log(LogType::Force, "[Diag] custom_driver_path (config global) = '{}'{}", customPath.empty() ? "(vazio)" : customPath,
+				(driverProperties.driverID == VK_DRIVER_ID_MESA_TURNIP) ? " -> Turnip ATIVO" :
+				(customPath.empty() ? "" : " -> ATENCAO: ha driver customizado configurado mas o driver em uso NAO e Turnip"));
+		}
 
 		if(m_vendor == GfxVendor::Nvidia)
 		{
@@ -2295,7 +2308,14 @@ void VulkanRenderer::SubmitCommandBuffer(VkSemaphore signalSemaphore, VkSemaphor
 
 	const VkResult result = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_cmdBufferFences[m_commandBufferIndex]);
 	if (result != VK_SUCCESS)
+	{
+		const char* name = result == VK_ERROR_DEVICE_LOST ? "VK_ERROR_DEVICE_LOST (a GPU travou/reiniciou)" :
+			result == VK_ERROR_OUT_OF_HOST_MEMORY ? "VK_ERROR_OUT_OF_HOST_MEMORY" :
+			result == VK_ERROR_OUT_OF_DEVICE_MEMORY ? "VK_ERROR_OUT_OF_DEVICE_MEMORY" : "outro";
+		cemuLog_log(LogType::Force, "[Diag] vkQueueSubmit falhou: {} ({}) cmdBufIndex={} totalSubmetidos={} aguardaSemaforoExterno={} waitSemaforos={}",
+			(int)result, name, (int)m_commandBufferIndex, (uint64)m_numSubmittedCmdBuffers, waitSemaphore != VK_NULL_HANDLE, (int)submitInfo.waitSemaphoreCount);
 		UnrecoverableError(fmt::format("failed to submit command buffer. Error {}", result).c_str());
+	}
 	m_numSubmittedCmdBuffers++;
 
 	// check if any previously submitted command buffers have finished execution
