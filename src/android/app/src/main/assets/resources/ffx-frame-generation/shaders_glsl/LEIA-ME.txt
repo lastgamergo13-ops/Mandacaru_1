@@ -1,0 +1,17 @@
+SHADERS GLSL ES PRE-CONVERTIDOS (Frame Generation / OpenGL ES)
+Gerados offline: HLSL -> dxc (SPIR-V, sem shifts de binding) -> SPIRV-Cross --es. Validados com glslang (9/9 em es310 e es320).
+Pasta es310: #version 310 es (2 shaders SCD precisam da extensao GL_OES_shader_image_atomic; ja esta no #extension, checar glGetString(GL_EXTENSIONS)).
+Pasta es320: #version 320 es (atomicos de imagem sao core). Preferir es320 quando GL_VERSION >= 3.2.
+manifest.json: local_size, UBOs (binding), imagens (unit = binding, formato, qualificadores), samplers.
+
+REGRAS DE USO (o que o codigo C++ do GL precisa fazer):
+1. Imagens: glBindImageTexture(unit, tex, 0, GL_FALSE, 0, acesso, formato) com o formato EXATO do manifest (r32ui, r32i, r32f, rgba16f).
+2. FLUXO OPTICO = textura GL_R32I com 2 x int16 EMPACOTADOS (x nos 16 bits baixos, y nos altos). Nao use RG32I (o GLES nao permite ler+escrever).
+   Tamanho = mesmo da textura de fluxo do Vulkan. Imagem de fluxo e tambem lida como sampler isampler2D.
+3. Samplers inteiros (isampler2D/usampler2D): GL_NEAREST, MAX_LEVEL 0, sem mipmap. Os nomes sao "SPIRV_Cross_Combined<tex>SPIRV_Cross_DummySampler":
+   chame glUniform1i(glGetUniformLocation(prog, nome), unidade_de_textura) conforme a ordem de bind desejada.
+4. UBOs: layout std140, glBindBufferBase(GL_UNIFORM_BUFFER, binding, buf). Struct v8 = 48 bytes.
+5. Piramide de luma usa 7 image units (0-6): o GL ES exige MAX_IMAGE_UNITS >= 7 (garantido apenas 4 no ES 3.1 minimo; Adreno 650 tem 8). Se menor, desligar a opcao PYRAMID.
+6. Dispatch: grupos = ceil(dim / local_size) (veja local_size no manifest). Barreira entre passes: glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT).
+7. No lugar de subgroup ops foi usada reducao em memoria compartilhada (variante "sem wave"); resultado equivalente, so um pouco mais lento.
+Fontes HLSL alteradas (para regenerar): dependencies/ffx-frame-generation/hlsl_gl/.

@@ -494,3 +494,59 @@ Checklist:
  [ ] Compila no CI
  [ ] Log mostra [Mem] a cada 10 s e tendencia a cada 30 s
  [ ] Jogo que crasha: qual categoria cresce antes do crash?
+
+==================================================================
+V11.15 - ANALISE DO CRASH COM TURNIP + MIGALHAS DE CRASH
+==================================================================
+Log analisado: Super Mario 3D World, Turnip v26.3.0-R5, frame gen LIGADO.
+- Turnip carregou: "driverName='Turnip' ... Turnip ATIVO", GPU "Turnip Adreno (TM) 650". O loader (V11.9-11.11) FUNCIONA.
+- Crash: SIGSEGV, fault 0x1b0 (ponteiro nulo + offset), LatteThread, DENTRO de libvulkan_freedreno.so (+0xa3bebc),
+  ~3 s apos o inicio, "frame 2", frame gen rodando a 0.9 FPS reais (tela de carregamento). Nao e DEVICE_LOST:
+  e crash do proprio driver. O bloco "PPC interpreter/recompiler state" do log e lixo (a thread nao rodava codigo PPC).
+- O cache de shaders "_shaders.bin" e "_vkpipeline.bin" esta corrompido (incomplete file table) - sera recriado.
+- NAO da para dizer so por este log se foi o frame gen ou o driver: falta teste SEM frame gen com Turnip.
+Mudanca V11.15: CrashCrumb.h - o log de crash passa a dizer "Ultima operacao Vulkan/FrameGen desta thread: ..."
+  (vkAllocateMemory, vkQueueSubmit, vkQueuePresentKHR, vkCreateGraphicsPipelines, vkBeginCommandBuffer,
+  vkWaitForFences, vkAcquireNextImageKHR e etapas do frame gen). Custo: 1 escrita em thread_local.
+Checklist:
+ [ ] Compila no CI
+ [ ] Crash seguinte mostra "Ultima operacao Vulkan..."
+ [ ] Teste 3D World com Turnip SEM frame gen (frame gen desligado nas configuracoes)
+ [ ] Teste com outra versao de Turnip (ex.: build estavel anterior)
+
+V11.15 (atualizacao) - ANALISE DOS LOGS COM PurpleVK (mrpurple T19) COM e SEM frame gen
+- Driver carregou (PurpleVK 25.1.0-devel, Vulkan 1.4.305). Crash IDENTICO nos dois testes: SIGSEGV na LatteThread
+  dentro de vulkan.purple.so (+0x70340c), fault 0x1a0, frame 2/3, ~3 s apos "Run title".
+- SEM frame gen tambem crasha => o frame gen NAO e a causa.
+- Turnip v26.3.0-R5: SIGSEGV tambem na LatteThread, fault 0x1b0. Driver Qualcomm original: VK_ERROR_DEVICE_LOST.
+  Tres drivers diferentes falham nos mesmos jogos logo no inicio => suspeita: algo que o Cemu envia ao driver
+  nesses jogos (3D World, Mario Kart 8, Forest Escape); Adventure Time funciona.
+- Migalhas (CrashCrumb) agora tambem em vkCmdBegin*/BindPipeline/BindDescriptorSets/BindIndex/BindVertex/Draw (VulkanRendererCore.cpp).
+
+V11.15b - Relatorio do porte OpenGL reescrito (v3): 9 shaders (nao 18), bindings/wave/formatos rg32i, pre-requisito: backend GL nao inicia (pc=0).
+
+=== V11.16 - OpenGL ES: correcao do crash de init + shaders GLSL ES pre-convertidos ===
+Arquivos: OpenGLRenderer.cpp, AndroidOpenGLCanvas.cpp, shaders_glsl/ (es310, es320, manifest.json, LEIA-ME.txt), hlsl_gl/ (fontes alteradas)
+Causa do crash (pc=0): ponteiros EGL carregados tarde demais. Agora LoadEGLImportsAndroid() roda no inicio de AndroidOpenGLCanvas::Initialize.
+Funcoes GL desktop inexistentes no ES: viram stub que loga "[GL] AVISO ..." (nao crasham). glPrimitiveRestartIndex -> glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX).
+Shaders: 9/9 validados (glslang) em 310 es e 320 es. Fluxo optico em R32I empacotado (2xint16) por limite do ES (rg32i nao permite leitura+escrita).
+Checklist:
+ [x] Fix init EGL (sem build/teste ainda)
+ [x] 9 shaders GLSL ES gerados e validados offline
+ [ ] Testar no aparelho: procurar "[GL] N funcoes ... trocadas por stub" e "[GL] AVISO" no log
+ [ ] Proximo: geometry shader #version 450 em OpenGLRendererCore.cpp:704; implementar o dispatch GL do frame gen usando o manifest
+
+=== V11.17 - Frame Generation no OpenGL ES (pacote completo, substitui o V11.16) ===
+Novos: FrameGenGL.cpp/.h (src/Cafe/HW/Latte/Renderer/OpenGL), CMakeLists.txt (Cafe) com os 2 arquivos, OpenGLRenderer.cpp (SwapBuffers chama o frame gen).
+Fluxo: CaptureRealFrame (copia backbuffer -> textura; blit reduzido se flow scale < 100) -> swap real -> GenerateAfterRealSwap: k=1 roda Optical Flow
+ (luma atual/anterior, histograma SCD, divergencia, busca, filtro) e todos os k rodam a extrapolacao v8 (fT = 1+progresso) + desenho no backbuffer + swap.
+Mesmo pacing do Vulkan: multiplicador 2-4, limite de FPS base, nao gera se o intervalo real > 120 ms, estatisticas no overlay ([FrameGen] FPS real/gerado ... (OpenGL ES)).
+Seguranca: estado GL salvo/restaurado (programa, texturas/samplers das unidades 0-2, VAO, FBOs, viewport, caps, unpack); UBO em binding 15 (shaders reescritos em runtime).
+Requisitos: GLES 3.1+ (es320 se 3.2); em 3.1 exige GL_OES_shader_image_atomic; senao desativa e loga o motivo.
+NAO incluido ainda: modo piramide no GL (usa Optical Flow de nivel unico), correcao de cena por reset.
+Checklist:
+ [x] FrameGenGL escrito e com sintaxe validada (sem build/teste)
+ [ ] Build via GitHub Actions
+ [ ] Teste: log deve mostrar "[FrameGenGL] GL_VERSION=...", "recursos criados" e "[FrameGen] FPS real=... (OpenGL ES)"
+ [ ] Se aparecer "shader ... NAO compilou" / "NAO linkou", enviar o log (traz a mensagem do driver)
+ [ ] Verificar qualidade visual/orientacao da imagem gerada

@@ -7,6 +7,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 
 SwapchainInfoVk::SwapchainInfoVk(bool mainWindow, Vector2i size) : mainWindow(mainWindow), m_desiredExtent(size)
 {
@@ -229,6 +230,7 @@ bool SwapchainInfoVk::AcquireImage()
 	ResetAvailableFence();
 
 	VkSemaphore acquireSemaphore = m_acquireSemaphores[m_acquireIndex];
+	CRUMB("SwapchainInfoVk: vkAcquireNextImageKHR");
 	VkResult result = vkAcquireNextImageKHR(m_logicalDevice, m_swapchain, 1'000'000'000, acquireSemaphore, m_imageAvailableFence, &swapchainImageIndex);
 	// SUBOPTIMAL ainda entrega a imagem; no Adreno ele vem em TODO acquire/present e recriar o
 	// swapchain a cada frame destroi o desempenho. So OUT_OF_DATE exige recriar.

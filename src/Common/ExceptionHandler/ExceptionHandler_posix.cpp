@@ -9,6 +9,7 @@
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/HW/Espresso/Debugger/GDBBreakpoints.h"
 #include "Cemu/Logging/CemuLogging.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 
 #if defined(__ANDROID__)
 #include "Cafe/HW/Espresso/PPCState.h"
@@ -449,6 +450,10 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 	std::string watchdogStatus = AndroidGetWatchdogStatusForThread(crashingTid);
 	if (!watchdogStatus.empty())
 		CrashLog_WriteLine(fmt::format("Last known status of this thread: {}", watchdogStatus));
+	if (CrashCrumb::g_text)
+		CrashLog_WriteLine(fmt::format("Ultima operacao Vulkan/FrameGen desta thread (migalha #{}): {}", CrashCrumb::g_count, CrashCrumb::g_text));
+	else
+		CrashLog_WriteLine("Ultima operacao Vulkan/FrameGen desta thread: (nenhuma registrada - a thread nao estava em chamada Vulkan rastreada)");
 
 #if defined(__aarch64__)
 	AndroidPrintRegisters(context);

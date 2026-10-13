@@ -553,3 +553,11 @@ V11.10: infra do driver customizado: copia interna do driver + dependencia de bu
 
 V11.13 - Diagnostico: metricas do recompilador via provider no log [Stats] (nao faz parte do FSR3; reutilizavel como padrao de telemetria).
 V11.14 - Diagnostico: telemetria de RAM por categoria + detector de tendencia (padrao reutilizavel).
+V11.15 - Diagnostico de crash: migalha (thread_local) da ultima chamada Vulkan impressa no crash log; util para crashes dentro de drivers sem simbolos.
+Porte OpenGL v3: ver porte-opengl-framegen-cemu-android.txt (testes reais de conversao SPIRV-Cross; so 9 shaders; ajustes wave/formato/bindings).
+
+--- V11.16 (OpenGL ES) ---
+Para portar o frame gen ao GLES sem subgroup ops: usar a variante "sem wave" (FFX_SPD_NO_WAVE_OPERATIONS + reducao em groupshared) e guardar o fluxo optico empacotado em 1 canal int32 (R32I). Samplers inteiros: NEAREST. SPIRV-Cross gera samplers combinados sem binding: atribuir unidades via glUniform1i.
+
+--- V11.17 (GL ES, implementacao) ---
+Ao integrar num renderer GL existente: carregue os ponteiros GL proprios (dlsym libGLESv3) para nao depender dos headers do emulador; salve/restaure o estado GL (o emulador mantem cache de estado); capture com glCopyTexSubImage2D antes do eglSwapBuffers; reescreva o binding do UBO dos shaders para um indice alto; gere os frames extras logo apos o swap real.

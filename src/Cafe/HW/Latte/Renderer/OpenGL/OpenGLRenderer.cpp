@@ -10,6 +10,7 @@
 #include "Cafe/HW/Latte/Renderer/OpenGL/RendererShaderGL.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/CachedFBOGL.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLTextureReadback.h"
+#include "Cafe/HW/Latte/Renderer/OpenGL/FrameGenGL.h"
 
 #include "Cafe/HW/Latte/LegacyShaderDecompiler/LatteDecompiler.h"
 
@@ -293,6 +294,10 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 
 #elif defined(__ANDROID__)
 #include <dlfcn.h>
+#include <mutex>
+#include <unordered_set>
+#include <cstring>
+#include <string>
 
 // Mirrors the Linux/BSD dlopen+dlsym approach above, but against libEGL.so/libGLESv3.so
 // instead of libGL.so/libGLX. Unlike desktop GLX, eglGetProcAddress is guaranteed by the
@@ -322,6 +327,114 @@ GL_IMPORT _GetOpenGLFunction(void* libGLESv3, const char* name)
 	return r;
 }
 
+// ---------------------------------------------------------------------------------------------
+// CORRECAO DO CRASH "pc=0" DO OPENGL NO ANDROID
+// AndroidOpenGLCanvas::Initialize() chama eglGetDisplay/eglInitialize/... ANTES de o OpenGLRenderer
+// existir, mas esses ponteiros EGL so eram preenchidos dentro de OpenGLRenderer::Initialize()
+// (LoadOpenGLImports). Resultado: chamada a ponteiro nulo -> SIGSEGV com pc=0.
+// LoadEGLImportsAndroid() carrega SO as funcoes EGL (nao precisa de contexto) e e chamada no
+// inicio de AndroidOpenGLCanvas::Initialize().
+// ---------------------------------------------------------------------------------------------
+bool LoadEGLImportsAndroid()
+{
+	if (!g_libEGL)
+		g_libEGL = dlopen("libEGL.so", RTLD_NOW | RTLD_GLOBAL);
+	if (!g_libEGL)
+	{
+		cemuLog_log(LogType::Force, "[GL] ERRO: dlopen(libEGL.so) falhou");
+		return false;
+	}
+#define GLFUNC(__type, __name)
+#define EGLFUNC(__type, __name)	__name = (__type)dlsym(g_libEGL, STRINGIFY(__name));
+#include "Common/GLInclude/glFunctions.h"
+#undef GLFUNC
+#undef EGLFUNC
+	return true;
+}
+
+// ---------------------------------------------------------------------------------------------
+// REDE DE SEGURANCA: funcoes de OpenGL desktop que nao existem no GLES (ex.: glPrimitiveRestartIndex,
+// glDrawBuffer, glClearDepth, glPolygonMode...) ficam NULL e uma chamada direta derruba o app (pc=0).
+// Para cada funcao ausente que o codigo SEMPRE chama diretamente (nunca testa se e nula), instalamos
+// um stub que registra o nome UMA vez no log e retorna 0. As funcoes que o Cemu usa para DETECTAR
+// recursos (kFeatureDetected - gerada por varredura do codigo) continuam NULL de proposito.
+// ---------------------------------------------------------------------------------------------
+static const char* const kFeatureDetected[] = {
+	"glBeginTransformFeedback",
+	"glBindTexture",
+	"glBindTextureUnit",
+	"glBufferStorage",
+	"glClearTexImage",
+	"glClearTexSubImage",
+	"glClipControl",
+	"glCompressedTextureSubImage1D",
+	"glCompressedTextureSubImage2D",
+	"glCompressedTextureSubImage3D",
+	"glCopyImageSubData",
+	"glCopyImageSubDataEXT",
+	"glCopyImageSubDataOES",
+	"glCopyNamedBufferSubData",
+	"glCreateBuffers",
+	"glCreateFramebuffers",
+	"glCreateTextures",
+	"glDepthRangedNV",
+	"glGenTextures",
+	"glGetProgramBinary",
+	"glGetTextureSubImage",
+	"glMaxShaderCompilerThreadsARB",
+	"glNamedBufferStorage",
+	"glNamedBufferSubData",
+	"glProgramBinary",
+	"glTextureBarrier",
+	"glTextureParameteri",
+	"glTextureStorage1D",
+	"glTextureStorage2D",
+	"glTextureStorage3D",
+	"glTextureSubImage1D",
+	"glTextureSubImage2D",
+	"glTextureSubImage3D",
+	"glTextureView",
+	"glTextureViewEXT",
+	"glTextureViewOES",
+	"wglSwapIntervalEXT"
+};
+
+static bool IsFeatureDetectedFunction(const char* name)
+{
+	for (const char* n : kFeatureDetected)
+		if (strcmp(n, name) == 0)
+			return true;
+	return false;
+}
+
+static void GLStubReport(const char* name)
+{
+	static std::mutex s_mutex;
+	static std::unordered_set<std::string> s_seen;
+	std::lock_guard<std::mutex> l(s_mutex);
+	if (s_seen.insert(name).second)
+		cemuLog_log(LogType::Force, "[GL] AVISO: a funcao '{}' nao existe no OpenGL ES; chamada ignorada (retorna 0). Ela precisa de um caminho GLES proprio.", name);
+}
+
+#define GLFUNC(__type, __name)	static uintptr_t GLStub_##__name() { GLStubReport(STRINGIFY(__name)); return 0; }
+#define EGLFUNC(__type, __name)
+#include "Common/GLInclude/glFunctions.h"
+#undef GLFUNC
+#undef EGLFUNC
+
+static void InstallGLStubsForMissingFunctions()
+{
+	std::string stubbed, detected;
+	int numStubbed = 0, numDetected = 0;
+#define GLFUNC(__type, __name)	if (!__name) { if (IsFeatureDetectedFunction(STRINGIFY(__name))) { detected += STRINGIFY(__name) " "; numDetected++; } else { __name = (__type)(void*)&GLStub_##__name; stubbed += STRINGIFY(__name) " "; numStubbed++; } }
+#define EGLFUNC(__type, __name)
+#include "Common/GLInclude/glFunctions.h"
+#undef GLFUNC
+#undef EGLFUNC
+	cemuLog_log(LogType::Force, "[GL] {} funcoes de GL desktop ausentes no GLES foram trocadas por stub com log: {}", numStubbed, stubbed);
+	cemuLog_log(LogType::Force, "[GL] {} funcoes ausentes usadas apenas para detectar recurso (mantidas nulas): {}", numDetected, detected);
+}
+
 void LoadOpenGLImports()
 {
 	g_libGLESv3 = dlopen("libGLESv3.so", RTLD_NOW | RTLD_GLOBAL);
@@ -336,6 +449,7 @@ void LoadOpenGLImports()
 #include "Common/GLInclude/glFunctions.h"
 #undef GLFUNC
 #undef EGLFUNC
+	InstallGLStubsForMissingFunctions();
 }
 
 #elif BOOST_OS_MACOS
@@ -371,6 +485,7 @@ void OpenGLRenderer::Initialize()
 	cemuLog_log(LogType::Force, "ARB_copy_image: {}", (glCopyImageSubData != NULL) ? "available" : "not supported");
 	cemuLog_log(LogType::Force, "NV_depth_buffer_float: {}", (glDepthRangedNV != NULL) ? "available" : "not supported");
 
+#if !defined(__ANDROID__)
 	// enable framebuffer SRGB support
 	glEnable(GL_FRAMEBUFFER_SRGB);
 
@@ -385,6 +500,10 @@ void OpenGLRenderer::Initialize()
 		// since we are using compatibility profile point sprites are disabled by default (e.g. gl_PointCoord wont work)
 		glEnable(GL_POINT_SPRITE);
 	}
+#else
+	// GLES: GL_FRAMEBUFFER_SRGB / GL_PROGRAM_POINT_SIZE / GL_POINT_SPRITE nao existem (dariam GL_INVALID_ENUM);
+	// o tamanho do ponto sempre vem do shader e o sRGB do framebuffer e decidido pela surface.
+#endif
 
 	// check if clip control is available
 	if (glClipControl)
@@ -405,8 +524,14 @@ void OpenGLRenderer::Initialize()
 		glClampColor(GL_CLAMP_FRAGMENT_COLOR, GL_FALSE);
 
 
+#if !defined(__ANDROID__)
 	glEnable(GL_PRIMITIVE_RESTART);
 	glPrimitiveRestartIndex(0xFFFFFFFF);
+#else
+	// GLES nao tem glPrimitiveRestartIndex (ponteiro NULL -> crash). Usa o "primitive restart" de indice fixo
+	// (GL_PRIMITIVE_RESTART_FIXED_INDEX = 0x8D69): o indice de reinicio e o maior valor do tipo (0xFFFF/0xFFFFFFFF).
+	glEnable(0x8D69);
+#endif
 
 	glGenProgramPipelines(1, &m_pipeline);
 	glBindProgramPipeline(m_pipeline);
@@ -602,9 +727,26 @@ void OpenGLRenderer::EnableDebugMode()
 	glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, true);
 }
 
+#if defined(__ANDROID__)
+static void FrameGenGL_PresentMain()
+{
+	GLCanvas_SwapBuffers(true, false);
+}
+#endif
+
 void OpenGLRenderer::SwapBuffers(bool swapTV, bool swapDRC)
 {
+#if defined(__ANDROID__)
+	// Frame Generation: captura o frame real ANTES do swap...
+	if (swapTV)
+		FrameGenGL::CaptureRealFrame();
+#endif
 	GLCanvas_SwapBuffers(swapTV, swapDRC);
+#if defined(__ANDROID__)
+	// ...e gera/apresenta os frames extras DEPOIS dele
+	if (swapTV)
+		FrameGenGL::GenerateAfterRealSwap(&FrameGenGL_PresentMain);
+#endif
 
 	if (swapTV)
 		cleanupAfterFrame();

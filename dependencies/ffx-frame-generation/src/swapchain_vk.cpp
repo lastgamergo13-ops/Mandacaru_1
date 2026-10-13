@@ -8,6 +8,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/SwapchainInfoVk.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 
 #include "Cemu/Logging/CemuLogging.h"
 #include "config/CemuConfig.h"
@@ -452,7 +453,8 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	{
 		// Flow scale < 100%: o Optical Flow le as copias REDUZIDAS (m_scaledViews).
 		const bool scaled = m_appliedFlowScalePercent < 100 && m_scaledViews[currentIdx] != VK_NULL_HANDLE;
-		m_opticalFlow->Dispatch(cb,
+		CRUMB("FrameGen: gravando OpticalFlow");
+	m_opticalFlow->Dispatch(cb,
 			scaled ? m_scaledViews[currentIdx] : m_backbufferCopyViews[currentIdx],
 			scaled ? m_scaledViews[previousIdx] : m_backbufferCopyViews[previousIdx], reset);
 	}
@@ -467,6 +469,7 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 		vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			0, 1, &mb, 0, nullptr, 0, nullptr);
 	}
+	CRUMB("FrameGen: gravando Interpolacao");
 	m_frameInterpolation->Dispatch(cb, m_backbufferCopyViews[currentIdx], m_backbufferCopyViews[previousIdx], *m_opticalFlow, deltaTimeSeconds, reset, progress);
 	if (timing)
 		vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, m_queryPool, 1);
@@ -568,6 +571,7 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	m_semaphoreIndex = (m_semaphoreIndex + 1) % kSemaphoreRing;
 	submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
+	CRUMB("FrameGen: vkQueueSubmit (frame gerado)");
 	VkResult submitResult = vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
 	if (submitResult != VK_SUCCESS)
 		cemuLog_log(LogType::Force, "[FrameGen] ERRO vkQueueSubmit do frame gerado: {}", (int)submitResult);
@@ -580,6 +584,7 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	presentInfo.pSwapchains = &chainInfo.m_swapchain;
 	presentInfo.pImageIndices = &imageIndex;
 
+	CRUMB("FrameGen: vkQueuePresentKHR (frame gerado)");
 	VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
 	if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
 		cemuLog_log(LogType::Force, "[FrameGen] ERRO vkQueuePresentKHR do frame gerado: {}", (int)result);

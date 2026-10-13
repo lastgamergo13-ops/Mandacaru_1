@@ -1,0 +1,244 @@
+PORTE DO FRAME GENERATION PARA O BACKEND OPENGL DO CEMU-ANDROID (v3)
+================================================================================
+Reescrito depois de o Vulkan estar implementado e depois de testar de verdade
+a conversao dos shaders (SPIRV-Cross + DXC rodados aqui). Substitui a v2.
+Complementa "integracao-fsr3-Vulkan-framegen-cemu-android.txt".
+
+RESPOSTA CURTA: o relatorio v2 estava DESATUALIZADO em varios pontos
+importantes (lista abaixo). Esta v3 corrige tudo com base no que o Vulkan
+realmente usa e no que os testes de conversao mostraram.
+
+
+0. O QUE ESTAVA ERRADO / MUDOU EM RELACAO A v2
+--------------------------------------------------------------------------------
+ 1) "18 shaders" -> sao SO 9. O que o Vulkan realmente executa:
+      7 de Optical Flow (prepare_luma, luminance_pyramid, scd_histogram,
+        scd_divergence, optical_flow_advanced_v5, filter_v5, scale_v5)
+      + 1 custom: mandacaru_of_luma_downsample (piramide por nivel)
+      + 1 custom: mandacaru_frameinterpolation_v8 (frame gerado)
+    Os 11 ffx_frameinterpolation_* da AMD NAO sao usados (dependem de depth
+    e motion vectors do jogo, que o Cemu nao tem). Foram substituidos pelo
+    shader unico v8.
+ 2) O frame gerado e EXTRAPOLADO (usa atual + anterior, fT>1), nao so
+    interpolado: nao adiciona latencia. O v8 inclui recuperacao de oclusao
+    (testa os 8 vizinhos do fluxo e escolhe o de menor erro de cor).
+ 3) Os .spv do Vulkan NAO servem direto no GL: foram compilados com
+    -fvk-b-shift 0 / -fvk-t-shift 100 / -fvk-u-shift 200, entao ha bindings
+    100-102 (texturas) e 200-206 (imagens). Esses numeros estouram os limites
+    de unidades de textura/imagem do GLES. Precisam ser renumerados (secao 3).
+ 4) Dois dos sete shaders de Optical Flow USAM operacoes de wave/subgroup
+    (luminance_pyramid como esta no repo e optical_flow_advanced_v5). O
+    SPIRV-Cross NAO converte isso para GLES ("subgroup operation is only
+    supported in Vulkan semantics"). Precisam de variantes sem wave (secao 3).
+ 5) Formato de imagem rg32i (fluxo optico) NAO e permitido como formato de
+    imagem no GLES 3.1 (so rgba32i, r32i, r32f, r32ui, rgba16f, rgba8 etc.).
+ 6) NOVO PRE-REQUISITO: o renderer OpenGL do Cemu-Android hoje nem inicia
+    neste aparelho (secao 1). Sem isso nao ha onde testar o porte.
+ 7) A camada de apresentacao ja tem desenho validado no Vulkan (captura do
+    backbuffer, frame extra por frame real, limitador de FPS base,
+    multiplicador 2-4, pulo durante carregamento). A Fase E agora
+    espelha isso.
+ 8) Existe codigo reaproveitavel que a v2 nao citava: configuracoes (chaves
+    0-10 do JNI/Config), overlay de FPS, telemetria de GPU, logs [Diag].
+
+
+1. PRE-REQUISITO: O BACKEND OPENGL PRECISA RODAR PRIMEIRO
+--------------------------------------------------------------------------------
+Estado medido (log do Adventure Time com OpenGL, 12/10):
+  - SIGSEGV com pc=0 (chamada a ponteiro de funcao NULO) na thread
+    "DefaultDispatch", logo depois de "Recompiler initialized" e ANTES da linha
+    "Render API". O backend GL nunca chegou a iniciar.
+  - Causa MUITO provavel (precisa confirmar): o OpenGLRenderer do Cemu e
+    escrito para OpenGL DESKTOP 4.x (glCreateBuffers, glNamedBufferStorage,
+    glGetTexImage, glGetTexLevelParameteriv, texturas 1D...). As funcoes sao
+    carregadas via eglGetProcAddress, e no GLES varias dessas retornam NULL.
+    Chamar uma delas gera exatamente "pc=0". O proprio codigo comenta que
+    ha caminhos GLES em LatteTextureGL.cpp/TextureReadbackGL.cpp, mas o
+    construtor do renderer e outras rotinas ainda chamam funcoes DSA.
+  - O contexto EGL e criado com EGL_CONTEXT_CLIENT_VERSION 3 (GLES 3.x).
+    Compute shader exige GLES 3.1+: pedir a versao 3.1 (ou 3.2) explicitamente
+    e logar GL_VERSION / GL_RENDERER / GL_EXTENSIONS.
+Acoes antes de qualquer trabalho de frame gen:
+  a) Adicionar no startup do GL um log de TODAS as funcoes GL carregadas que
+     vieram NULL (lista de nomes) + migalha de crash (CrashCrumb.h do V11.15).
+  b) Corrigir os pontos que chamam funcoes NULL (usar equivalentes GLES:
+     glGenBuffers+glBufferStorageEXT/glBufferData, glBindTexture etc.).
+  c) So entao validar um jogo simples (Adventure Time) no GL sem frame gen.
+Sem (a)-(c) o porte do frame gen nao tem como ser testado.
+
+
+2. O QUE SE REAPROVEITA DO VULKAN (JA PRONTO)
+--------------------------------------------------------------------------------
+  - Logica dos 9 shaders (via SPIR-V -> GLSL ES; secao 3).
+  - Ordem dos passes e tamanhos de nivel (codigo C++ em opticalflow_vk.cpp):
+      Optical Flow: prepare_luma -> piramide de luma (ate 7 niveis; tamanho
+      do nivel L = max(w>>L,1)) -> SCD histogram/divergence (corte de cena)
+      -> para L = N-1..0: busca (advanced) -> filtro -> escala para o proximo
+      nivel (L>0). Tamanhos dos niveis de fluxo: divisao com teto a partir
+      de ceil(w/8). Flow scale (%), modo desempenho e piramide on/off.
+  - Configuracao e UI: chaves 0-10 (FRAME_GEN, MULTIPLIER, FLOW_SCALE,
+    PERFORMANCE_MODE, BASE_FPS_LIMIT, UPSCALE, OVERLAY_*, PYRAMID), tela
+    ExperimentalSettingsScreen, painel in-game, FrameGenSettings.h. Nada disso
+    muda: so a implementacao por baixo.
+  - Estrategia de apresentacao e regras de pacing (ver Fase E).
+  - Diagnostico: AndroidDiagnostics.h ([Stats]/[Mem]), CrashCrumb.h, logs
+    [FrameGen].
+O QUE NAO SE REAPROVEITA: swapchain_vk.cpp, opticalflow_vk.cpp e
+frameinterpolation_vk.cpp (tudo Vulkan) - reescrever como *_gl.cpp.
+
+
+3. SHADERS: RESULTADO REAL DA CONVERSAO (testado)
+--------------------------------------------------------------------------------
+Teste: spirv-cross (master) --es --version 310 sobre os .spv + DXC local.
+ Convertem direto, sem mudar nada no HLSL:
+   prepare_luma, scd_histogram, scd_divergence, filter_v5, scale_v5  (OK)
+   mandacaru_of_luma_downsample  (OK)
+ Precisam de ajuste de HLSL:
+   a) luminance_pyramid: recompilar com  -D FFX_HLSL -D FFX_GPU
+      -D FFX_SPD_NO_WAVE_OPERATIONS  (sem -fvk-*-shift; ver item d).
+      Resultado: converte (OK). Usa 7 imagens r32ui (bindings 0..6) e
+      memoria compartilhada pequena (4 x float[16][16]).
+   b) optical_flow_advanced_v5: usa ffxWaveSum/ffxWaveMin/ffxWaveLaneCount
+      (e "#define FFX_WAVE 1" no .hlsl). Variante sem wave TESTADA e
+      convertida: remover o define e trocar BlockSad64 / SadMapMinReduction256
+      por reducao em groupshared (arvore de 6 passos sobre 64 threads; o
+      grupo do advanced e 64 threads, entao e o grupo inteiro). Custo:
+      uma pequena area compartilhada (use uint sRed[64]) + 6 barriers.
+      Header a alterar: include/gpu/opticalflow/
+      ffx_opticalflow_compute_optical_flow_v5.h.
+   c) mandacaru_frameinterpolation_v8: o cbuffer tem "int3 _pad" que o DXC
+      empacota em offset 36 (layout DX), o que NAO e expressavel em std140
+      (erro do SPIRV-Cross). Trocar por "int _pad0; int _pad1; int _pad2;"
+      -> mesmos offsets (36/40/44), mesmo tamanho (48 bytes), lado C++ nao
+      muda. Testado: converte (OK).
+   d) Bindings: para o GL, compilar SEM -fvk-*-shift. No GL cada classe tem
+      seu proprio espaco (UBO, textura, imagem), entao nao ha colisao.
+      Se mesmo assim sobrar numero alto, renumerar no loader (regex sobre
+      "layout(binding = N" por classe) antes do glShaderSource.
+   e) Formatos de imagem: o fluxo optico usa rg32i (rw_optical_flow,
+      rw_optical_flow_next_level) - INVALIDO no GLES 3.1. Opcoes:
+        1) mudar o fluxo para rgba32i (gasta 2x memoria; edita os
+           callbacks de leitura/escrita do fluxo no HLSL), ou
+        2) empacotar o int2 em um r32i (cabe: os vetores sao pequenos).
+      As demais imagens ja usam formatos validos: r32ui, r32f, rgba16f.
+   f) Amostradores: o SPIRV-Cross gera "uniform sampler2D
+      SPIRV_Cross_Combined<tex>SPIRV_Cross_DummySampler" SEM binding. Ligar
+      cada um com glUniform1i(glGetUniformLocation(...), unidade) apos o
+      link (nomes sao estaveis).
+ Resumo: os 9 convertem depois dos ajustes a)-c); falta o ajuste e) (formato
+ do fluxo) e confirmar a compilacao num driver GLES real (Adreno/Mali), onde
+ o compilador e mais fragil.
+ Comandos de exemplo (uma linha, PowerShell):
+   dxc.exe -spirv "-fspv-target-env=vulkan1.1" -T cs_6_0 -E CS -D FFX_HLSL -D FFX_GPU -D FFX_SPD_NO_WAVE_OPERATIONS -I $incGpu ffx_opticalflow_compute_luminance_pyramid_pass.hlsl -Fo gl_spv\ffx_opticalflow_compute_luminance_pyramid_pass.spv
+   spirv-cross.exe gl_spv\ARQUIVO.spv --es --version 310 --output gl_glsl\ARQUIVO.comp.glsl
+
+
+4. LIMITES DE HARDWARE A CHECAR NO GLES (Fase B)
+--------------------------------------------------------------------------------
+Ler em runtime e desligar o recurso (com mensagem no log) se nao der:
+  - GL_VERSION >= 3.1 (compute).
+  - GL_MAX_COMPUTE_IMAGE_UNIFORMS / GL_MAX_IMAGE_UNITS >= 7 (a piramide usa
+    7 imagens; o minimo do padrao ES e 4). Se < 7: usar o shader
+    mandacaru_of_luma_downsample nivel a nivel (ja existe) em vez do SPD.
+  - GL_MAX_COMPUTE_SHARED_MEMORY_SIZE (os shaders usam bem menos de 16 KB).
+  - GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS >= 256.
+  - Extensoes: EGL_ANDROID_presentation_time (pacing), EGL_KHR_fence_sync /
+    EGL_ANDROID_native_fence_sync, GL_EXT_disjoint_timer_query (custo de GPU
+    no overlay, equivalente aos timestamps do Vulkan).
+
+
+5. PASSO A PASSO ATUALIZADO
+--------------------------------------------------------------------------------
+FASE A - Conserto do backend GL (secao 1): log das funcoes NULL, corrigir,
+         validar jogo sem frame gen.
+FASE B - Pre-requisitos (secao 4) com log [Diag] de GL_VERSION, limites e
+         extensoes.
+FASE C - Shaders: gerar a pasta gl_glsl com os 9 (ajustes 3a-3f), compilar
+         cada um isolado no aparelho e logar o infoLog de cada
+         glCompileShader/glLinkProgram.
+FASE D - opticalflow_gl.cpp / frameinterpolation_gl.cpp: mesma sequencia de
+         passes do Vulkan. Trocas: vkCmdDispatch -> glDispatchCompute;
+         vkCmdPipelineBarrier -> glMemoryBarrier(SHADER_IMAGE_ACCESS_BARRIER_BIT
+         | TEXTURE_FETCH_BARRIER_BIT | SHADER_STORAGE_BARRIER_BIT);
+         descriptor set -> glBindImageTexture / glBindTexture + glUniform1i /
+         glBindBufferBase (UBO). Texturas: criar com glTexStorage2D
+         (formatos imutaveis), tamanhos de nivel como no Vulkan.
+FASE E - Captura e apresentacao (copia do que o swapchain_vk faz):
+   1. Depois que o Cemu desenhou o frame e antes do eglSwapBuffers: copiar o
+      backbuffer para o par atual/anterior (glCopyImageSubData ou blit para
+      textura propria; no GL a imagem final esta no framebuffer padrao, entao
+      renderizar o quad final em uma FBO propria e depois blitar).
+   2. Apresentar o frame real (eglSwapBuffers) - fluxo existente.
+   3. Calcular Optical Flow + Interpolacao v8 (fT > 1: extrapolacao).
+   4. Para k = 1..multiplicador-1: esperar o instante (t0 + intervalo*k/m),
+      desenhar o frame gerado e dar outro eglSwapBuffers; sugerir o horario
+      com eglPresentationTimeANDROID.
+   5. Limitador de FPS base (dorme ate completar o periodo).
+   6. Pular a geracao se o frame real demorou > 120 ms (carregamento) e
+      resetar o fluxo em corte de cena (SCD).
+   Atencao especifica do GL: TV e DRC (Gamepad) compartilham o contexto:
+   gerar so para a janela principal (SwapBuffers(swapTV...)). eglSwapInterval
+   do Cemu e um stub no Android; o pacing deve vir do eglPresentationTime.
+FASE F - Integracao: OpenGLFrameGen.h/.cpp chamado de
+         OpenGLRenderer::SwapBuffers (ponto unico), lendo as mesmas chaves
+         de configuracao do Vulkan. Overlay de FPS/GPU ms identico.
+FASE G - Validacao: Adventure Time primeiro (jogo leve), depois os demais.
+         Testar com e sem frame gen, v-sync ligado/desligado; comparar
+         stutter e tearing. Testar em Adreno e em Mali.
+
+
+6. RISCOS ESPECIFICOS (revisados)
+--------------------------------------------------------------------------------
+  - ALTO: o backend GL ainda nao roda (secao 1). E o maior risco de prazo.
+  - ALTO: pacing/tearing no EGL. Sem VK_KHR_present_wait; o resultado depende
+    do compositor. Pode nao ficar no mesmo nivel do Vulkan.
+  - MEDIO: compiladores GLSL de Adreno/Mali/PowerVR sao menos tolerantes que
+    SPIR-V; barrier() em fluxo nao uniforme e perda de precisao em highp.
+  - MEDIO: limites de imagem (7 unidades) em GPUs fracas.
+  - MEDIO: reducao sem wave e mais lenta que a original; medir o custo
+    (referencia do Vulkan: ~6 ms de GPU no Adreno 650 com piramide de 6
+    niveis a 1152x536).
+  - BAIXO: manutencao duplicada (qualquer ajuste de qualidade precisa ser
+    feito nos dois backends; manter a logica em HLSL unico e gerar os dois).
+  - O Vulkan NAO esta 100% validado: o crash atual com drivers customizados
+    (Turnip/PurpleVK, SIGSEGV dentro do driver no frame 2 em todos os jogos)
+    esta em investigacao (V11.15). Resolver isso antes ajuda tambem o GL, pois
+    a camada de captura/apresentacao e a mesma ideia.
+
+
+7. PESQUISA: EXISTE BASE PRONTA?
+--------------------------------------------------------------------------------
+  - Nao ha implementacao publica de Frame Generation (interpolacao/
+    extrapolacao) em OpenGL. FSR3Unity porta so o upscaler.
+  - O suporte Vulkan da AMD (FidelityFX API 3.1.x) so existe em DLL fechada.
+  - A cadeia DXC -> SPIR-V -> SPIRV-Cross e a unica via automatica; o teste
+    desta versao confirma que funciona para os 9 shaders com os ajustes
+    da secao 3.
+
+
+8. RECOMENDACAO DE PRIORIDADE (atualizada)
+--------------------------------------------------------------------------------
+ 1. Fechar o Vulkan: confirmar a chamada que derruba o driver (V11.15),
+    jogos rodando, qualidade visual aprovada.
+ 2. Fase A do GL (consertar o backend OpenGL) - e util mesmo sem frame gen,
+    e pode ser feita em paralelo ao ponto 1.
+ 3. Fases B-C (limites + shaders GLSL) podem ser preparadas offline, sem
+    tocar no emulador: so geram arquivos.
+ 4. Fases D-G so depois de A concluida.
+
+
+ARQUIVOS RELACIONADOS
+--------------------------------------------------------------------------------
+  - integracao-fsr3-Vulkan-framegen-cemu-android.txt  (checklist V11.x)
+  - relatorio-reuso-fsr3-framegen-outro-emulador.txt
+  - comandos-powershell-conversao-fsr3-v2.txt
+  - recompilar-luminance-pyramid-combinado.txt  (flag sem wave do SPD)
+
+
+=== ATUALIZACAO V11.16 ===
+- Causa do crash da Fase A CONFIRMADA: ordem de init do EGL (corrigida em AndroidOpenGLCanvas.cpp/OpenGLRenderer.cpp).
+- Formato do fluxo optico: solucao testada = R32I empacotado (2 x int16). As opcoes rg32i/rgba32i foram descartadas (glslang rejeita leitura+escrita).
+- Shaders GLSL ES 310/320 ja prontos em pacote-v11-16 (manifest.json + LEIA-ME.txt).
+
+=== ATUALIZACAO V11.17 ===
+Fase de implementacao do frame gen GL concluida em codigo (FrameGenGL.cpp). Pendente: build e teste no aparelho. Piramide no GL fica para depois (shaders ja prontos em shaders_glsl/).

@@ -172,6 +172,8 @@ add_library(CemuCafe
   HW/Latte/Renderer/OpenGL/OpenGLQuery.cpp
   HW/Latte/Renderer/OpenGL/OpenGLRendererCore.cpp
   HW/Latte/Renderer/OpenGL/OpenGLRenderer.cpp
+  HW/Latte/Renderer/OpenGL/FrameGenGL.cpp
+  HW/Latte/Renderer/OpenGL/FrameGenGL.h
   HW/Latte/Renderer/OpenGL/OpenGLRenderer.h
   HW/Latte/Renderer/OpenGL/OpenGLRendererStreamout.cpp
   HW/Latte/Renderer/OpenGL/OpenGLRendererUniformData.cpp

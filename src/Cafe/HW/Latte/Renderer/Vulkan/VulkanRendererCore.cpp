@@ -1,4 +1,5 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/RendererShaderVk.h"
@@ -1226,6 +1227,7 @@ void VulkanRenderer::draw_setRenderPass()
 
 	if (m_featureControl.deviceExtensions.dynamic_rendering)
 	{
+		CRUMB("Latte draw: vkCmdBeginRenderingKHR");
 		vkCmdBeginRenderingKHR(m_state.currentCommandBuffer, fboVk->GetRenderingInfo());
 	}
 	else
@@ -1241,6 +1243,7 @@ void VulkanRenderer::draw_setRenderPass()
 		renderPassInfo.renderArea.offset = { 0, 0 };
 		renderPassInfo.renderArea.extent = extend;
 		renderPassInfo.clearValueCount = 0;
+		CRUMB("Latte draw: vkCmdBeginRenderPass");
 		vkCmdBeginRenderPass(m_state.currentCommandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 	}
 
@@ -1411,6 +1414,7 @@ void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, 
 				vkType = VK_INDEX_TYPE_UINT32;
 			else
 				cemu_assert(false);
+			CRUMB("Latte draw: vkCmdBindIndexBuffer");
 			vkCmdBindIndexBuffer(m_state.currentCommandBuffer, indexReservation->vkBuffer, indexBufferOffset, vkType);
 		}
 	}
@@ -1458,6 +1462,7 @@ void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, 
 
 	if (m_state.currentPipeline != vkObjPipeline->GetPipeline())
 	{
+		CRUMB("Latte draw: vkCmdBindPipeline");
 		vkCmdBindPipeline(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->GetPipeline());
 		vkObjPipeline->flagForCurrentCommandBuffer();
 		m_state.currentPipeline = vkObjPipeline->GetPipeline();
@@ -1487,31 +1492,41 @@ void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, 
 		dsArray[0] = vertexDS->m_vkObjDescriptorSet->descriptorSet;
 		dsArray[1] = pixelDS->m_vkObjDescriptorSet->descriptorSet;
 
+		CRUMB("Latte draw: vkCmdBindDescriptorSets");
 		vkCmdBindDescriptorSets(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->m_pipelineLayout, 0, 2, dsArray, numDynOffsetsVS + numDynOffsetsPS, dynamicOffsets);
 	}
 	else if (vertexDS)
 	{
 		sint32 numDynOffsets;
 		draw_prepareDynamicOffsetsForDescriptorSet(VulkanRendererConst::SHADER_STAGE_INDEX_VERTEX, dynamicOffsets, numDynOffsets, pipeline_info);
+		CRUMB("Latte draw: vkCmdBindDescriptorSets");
 		vkCmdBindDescriptorSets(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->m_pipelineLayout, 0, 1, &vertexDS->m_vkObjDescriptorSet->descriptorSet, numDynOffsets, dynamicOffsets);
 	}
 	else if (pixelDS)
 	{
 		sint32 numDynOffsets;
 		draw_prepareDynamicOffsetsForDescriptorSet(VulkanRendererConst::SHADER_STAGE_INDEX_FRAGMENT, dynamicOffsets, numDynOffsets, pipeline_info);
+		CRUMB("Latte draw: vkCmdBindDescriptorSets");
 		vkCmdBindDescriptorSets(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->m_pipelineLayout, 1, 1, &pixelDS->m_vkObjDescriptorSet->descriptorSet, numDynOffsets, dynamicOffsets);
 	}
 	if (geometryDS)
 	{
 		sint32 numDynOffsets;
 		draw_prepareDynamicOffsetsForDescriptorSet(VulkanRendererConst::SHADER_STAGE_INDEX_GEOMETRY, dynamicOffsets, numDynOffsets, pipeline_info);
+		CRUMB("Latte draw: vkCmdBindDescriptorSets");
 		vkCmdBindDescriptorSets(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->m_pipelineLayout, 2, 1, &geometryDS->m_vkObjDescriptorSet->descriptorSet, numDynOffsets, dynamicOffsets);
 	}
 	// draw
 	if (hostIndexType != INDEX_TYPE::NONE)
+	{
+		CRUMB("Latte draw: vkCmdDrawIndexed");
 		vkCmdDrawIndexed(m_state.currentCommandBuffer, hostIndexCount, instanceCount, 0, baseVertex, baseInstance);
+	}
 	else
+	{
+		CRUMB("Latte draw: vkCmdDraw");
 		vkCmdDraw(m_state.currentCommandBuffer, count, instanceCount, baseVertex, baseInstance);
+	}
 	LatteStreamout_FinishDrawcall(m_useHostMemoryForCache);
 }
 
@@ -1579,6 +1594,7 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 				vkType = VK_INDEX_TYPE_UINT32;
 			else
 				cemu_assert(false);
+			CRUMB("Latte draw: vkCmdBindIndexBuffer");
 			vkCmdBindIndexBuffer(m_state.currentCommandBuffer, indexReservation->vkBuffer, indexBufferOffset, vkType);
 		}
 	}
@@ -1652,6 +1668,7 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 
 	if (m_state.currentPipeline != vkObjPipeline->GetPipeline())
 	{
+		CRUMB("Latte draw: vkCmdBindPipeline");
 		vkCmdBindPipeline(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->GetPipeline());
 		vkObjPipeline->flagForCurrentCommandBuffer();
 		m_state.currentPipeline = vkObjPipeline->GetPipeline();
@@ -1694,6 +1711,7 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 	}
 	if (dsArraySize > 0)
 	{
+		CRUMB("Latte draw: vkCmdBindDescriptorSets");
 		vkCmdBindDescriptorSets(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->m_pipelineLayout, dsArrayBase, dsArraySize, dsArray, numDynOffsets, dynamicOffsets);
 	}
 
@@ -1727,14 +1745,21 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 	{
 		sint32 numDynOffsets;
 		draw_prepareDynamicOffsetsForDescriptorSet(VulkanRendererConst::SHADER_STAGE_INDEX_GEOMETRY, dynamicOffsets, numDynOffsets, pipeline_info);
+		CRUMB("Latte draw: vkCmdBindDescriptorSets");
 		vkCmdBindDescriptorSets(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->m_pipelineLayout, 2, 1, &geometryDS->m_vkObjDescriptorSet->descriptorSet, numDynOffsets, dynamicOffsets);
 	}
 
 	// draw
 	if (hostIndexType != INDEX_TYPE::NONE)
+	{
+		CRUMB("Latte draw: vkCmdDrawIndexed");
 		vkCmdDrawIndexed(m_state.currentCommandBuffer, hostIndexCount, instanceCount, 0, baseVertex, baseInstance);
+	}
 	else
+	{
+		CRUMB("Latte draw: vkCmdDraw");
 		vkCmdDraw(m_state.currentCommandBuffer, count, instanceCount, baseVertex, baseInstance);
+	}
 
 	LatteStreamout_FinishDrawcall(m_useHostMemoryForCache);
 }
@@ -1771,6 +1796,7 @@ void VulkanRenderer::draw_updateVertexBuffersDirectAccess()
 		cemu_assert_debug(bufferAddress < 0x50000000);
 		VkBuffer attrBuffer = m_importedMem;
 		VkDeviceSize attrOffset = bufferAddress - m_importedMemBaseAddress;
+		CRUMB("Latte draw: vkCmdBindVertexBuffers");
 		vkCmdBindVertexBuffers(m_state.currentCommandBuffer, bufferIndex, 1, &attrBuffer, &attrOffset);
 	}
 }

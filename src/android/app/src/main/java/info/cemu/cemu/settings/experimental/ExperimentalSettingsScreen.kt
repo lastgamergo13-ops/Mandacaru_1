@@ -133,7 +133,7 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
                         "synthesize what the in-between frame should look like. This raises the number of " +
                         "frames shown per second without the GPU having to fully render each one, making " +
                         "motion look smoother.\n\n" +
-                        "Status: EXPERIMENTAL, Vulkan only. Uses AMD's real Optical Flow plus a custom " +
+                        "Status: EXPERIMENTAL (Vulkan; OpenGL ES em teste). Uses AMD's real Optical Flow plus a custom " +
                         "interpolation shader (the game's depth/motion vectors are not available in " +
                         "Cemu). Can be toggled while a game is running; costs extra GPU time and may " +
                         "show artifacts."
@@ -142,7 +142,7 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
         Toggle(
             label = tr("FSR3 Frame Gen"),
             description = tr(
-                "Experimental (so Vulkan). Liga/desliga na hora, ate com o jogo rodando.\n" +
+                "Experimental (Vulkan; OpenGL ES em teste). Liga/desliga na hora, ate com o jogo rodando.\n" +
                         "Resumo: gera um frame extra entre dois frames reais, estimando o movimento " +
                         "entre eles, pra deixar o movimento na tela mais suave sem a GPU ter que " +
                         "renderizar cada frame por completo."

@@ -1,6 +1,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 #include <imgui.h>
 
 /* VKRSynchronizedMemoryBuffer */
@@ -288,6 +289,7 @@ uint32 VkTextureChunkedHeap::allocateNewChunk(uint32 chunkIndex, uint32 minimumA
 			allocInfo.memoryTypeIndex = memType;
 
 			VkDeviceMemory imageMemory;
+			CRUMB("VKRMemoryManager: vkAllocateMemory (heap de texturas)");
 			VkResult r = vkAllocateMemory(VulkanRenderer::GetInstance()->GetLogicalDevice(), &allocInfo, nullptr, &imageMemory);
 			if (r != VK_SUCCESS)
 				continue;
@@ -304,6 +306,7 @@ uint32 VkTextureChunkedHeap::allocateNewChunk(uint32 chunkIndex, uint32 minimumA
 			allocInfo.memoryTypeIndex = memType;
 
 			VkDeviceMemory imageMemory;
+			CRUMB("VKRMemoryManager: vkAllocateMemory (heap de texturas)");
 			VkResult r = vkAllocateMemory(VulkanRenderer::GetInstance()->GetLogicalDevice(), &allocInfo, nullptr, &imageMemory);
 			if (r != VK_SUCCESS)
 				continue;
@@ -487,6 +490,7 @@ bool VKRMemoryManager::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
 		return false;
 	}
+	CRUMB("VKRMemoryManager: vkAllocateMemory (buffer)");
 	if (vkAllocateMemory(m_vkr->GetLogicalDevice(), &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
 	{
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
@@ -544,6 +548,7 @@ bool VKRMemoryManager::CreateBufferFromHostMemory(void* hostPointer, VkDeviceSiz
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);
 		return false;
 	}
+	CRUMB("VKRMemoryManager: vkAllocateMemory (buffer)");
 	if (vkAllocateMemory(m_vkr->GetLogicalDevice(), &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
 	{
 		vkDestroyBuffer(m_vkr->GetLogicalDevice(), buffer, nullptr);

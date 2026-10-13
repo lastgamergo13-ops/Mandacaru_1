@@ -1,0 +1,378 @@
+{
+ "ffx_opticalflow_compute_luminance_pyramid_pass": {
+  "local_size": [
+   256,
+   1,
+   1
+  ],
+  "ubos": [],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "readonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input"
+   },
+   {
+    "unit": 1,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "coherent",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input_level_1"
+   },
+   {
+    "unit": 2,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "coherent",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input_level_2"
+   },
+   {
+    "unit": 3,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "coherent",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input_level_3"
+   },
+   {
+    "unit": 4,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "coherent",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input_level_4"
+   },
+   {
+    "unit": 5,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "coherent",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input_level_5"
+   },
+   {
+    "unit": 6,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "coherent",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input_level_6"
+   }
+  ],
+  "samplers": [],
+  "needs_image_atomic_ext_310": false
+ },
+ "ffx_opticalflow_compute_optical_flow_advanced_pass_v5": {
+  "local_size": [
+   64,
+   1,
+   1
+  ],
+  "ubos": [
+   {
+    "name": "type_cbOF",
+    "binding": 0
+   }
+  ],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32i",
+    "qualifiers": [
+     "uniform",
+     "highp"
+    ],
+    "name": "rw_optical_flow"
+   },
+   {
+    "unit": 1,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "readonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_scd_output"
+   }
+  ],
+  "samplers": [
+   {
+    "name": "SPIRV_Cross_Combinedr_optical_flow_inputSPIRV_Cross_DummySampler"
+   },
+   {
+    "name": "SPIRV_Cross_Combinedr_optical_flow_previous_inputSPIRV_Cross_DummySampler"
+   }
+  ],
+  "needs_image_atomic_ext_310": false
+ },
+ "ffx_opticalflow_compute_scd_divergence_pass": {
+  "local_size": [
+   256,
+   1,
+   1
+  ],
+  "ubos": [],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "highp"
+    ],
+    "name": "rw_optical_flow_scd_histogram"
+   },
+   {
+    "unit": 1,
+    "format": "r32f",
+    "qualifiers": [
+     "uniform",
+     "highp"
+    ],
+    "name": "rw_optical_flow_scd_previous_histogram"
+   },
+   {
+    "unit": 2,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "highp"
+    ],
+    "name": "rw_optical_flow_scd_temp"
+   },
+   {
+    "unit": 3,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "highp"
+    ],
+    "name": "rw_optical_flow_scd_output"
+   }
+  ],
+  "samplers": [],
+  "needs_image_atomic_ext_310": true
+ },
+ "ffx_opticalflow_filter_optical_flow_pass_v5": {
+  "local_size": [
+   16,
+   4,
+   1
+  ],
+  "ubos": [],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32i",
+    "qualifiers": [
+     "uniform",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow"
+   }
+  ],
+  "samplers": [
+   {
+    "name": "SPIRV_Cross_Combinedr_optical_flow_previousSPIRV_Cross_DummySampler"
+   }
+  ],
+  "needs_image_atomic_ext_310": false
+ },
+ "ffx_opticalflow_generate_scd_histogram_pass": {
+  "local_size": [
+   32,
+   8,
+   1
+  ],
+  "ubos": [
+   {
+    "name": "type_cbOF",
+    "binding": 0
+   }
+  ],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "highp"
+    ],
+    "name": "rw_optical_flow_scd_histogram"
+   }
+  ],
+  "samplers": [
+   {
+    "name": "SPIRV_Cross_Combinedr_optical_flow_inputSPIRV_Cross_DummySampler"
+   }
+  ],
+  "needs_image_atomic_ext_310": true
+ },
+ "ffx_opticalflow_prepare_luma_pass": {
+  "local_size": [
+   16,
+   16,
+   1
+  ],
+  "ubos": [
+   {
+    "name": "type_cbOF",
+    "binding": 0
+   }
+  ],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_input"
+   }
+  ],
+  "samplers": [
+   {
+    "name": "SPIRV_Cross_Combinedr_input_colorSPIRV_Cross_DummySampler"
+   }
+  ],
+  "needs_image_atomic_ext_310": false
+ },
+ "ffx_opticalflow_scale_optical_flow_advanced_pass_v5": {
+  "local_size": [
+   4,
+   4,
+   4
+  ],
+  "ubos": [
+   {
+    "name": "type_cbOF",
+    "binding": 0
+   }
+  ],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32i",
+    "qualifiers": [
+     "uniform",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_next_level"
+   },
+   {
+    "unit": 1,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "readonly",
+     "highp"
+    ],
+    "name": "rw_optical_flow_scd_output"
+   }
+  ],
+  "samplers": [
+   {
+    "name": "SPIRV_Cross_Combinedr_optical_flowSPIRV_Cross_DummySampler"
+   },
+   {
+    "name": "SPIRV_Cross_Combinedr_optical_flow_inputSPIRV_Cross_DummySampler"
+   },
+   {
+    "name": "SPIRV_Cross_Combinedr_optical_flow_previous_inputSPIRV_Cross_DummySampler"
+   }
+  ],
+  "needs_image_atomic_ext_310": false
+ },
+ "mandacaru_frameinterpolation_v8": {
+  "local_size": [
+   8,
+   8,
+   1
+  ],
+  "ubos": [
+   {
+    "name": "type_cbInterp",
+    "binding": 0
+   }
+  ],
+  "images": [
+   {
+    "unit": 0,
+    "format": "rgba16f",
+    "qualifiers": [
+     "uniform",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_out"
+   }
+  ],
+  "samplers": [
+   {
+    "name": "SPIRV_Cross_Combinedr_flowSPIRV_Cross_DummySampler"
+   },
+   {
+    "name": "SPIRV_Cross_Combinedr_curSPIRV_Cross_DummySampler"
+   },
+   {
+    "name": "SPIRV_Cross_Combinedr_prevSPIRV_Cross_DummySampler"
+   }
+  ],
+  "needs_image_atomic_ext_310": false
+ },
+ "mandacaru_of_luma_downsample": {
+  "local_size": [
+   8,
+   8,
+   1
+  ],
+  "ubos": [],
+  "images": [
+   {
+    "unit": 0,
+    "format": "r32ui",
+    "qualifiers": [
+     "uniform",
+     "writeonly",
+     "highp"
+    ],
+    "name": "rw_dst"
+   }
+  ],
+  "samplers": [
+   {
+    "name": "SPIRV_Cross_Combinedr_srcSPIRV_Cross_DummySampler"
+   }
+  ],
+  "needs_image_atomic_ext_310": false
+ }
+}

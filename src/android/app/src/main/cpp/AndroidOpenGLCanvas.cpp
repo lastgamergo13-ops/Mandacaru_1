@@ -8,8 +8,20 @@ void AndroidOpenGLCanvas::LogEGLError(const char* where) const
 	cemuLog_log(LogType::Force, "AndroidOpenGLCanvas: {} failed (EGL error 0x{:04x})", where, (uint32)err);
 }
 
+// definida em OpenGLRenderer.cpp (ramo Android)
+bool LoadEGLImportsAndroid();
+
 bool AndroidOpenGLCanvas::Initialize(ANativeWindow* mainWindow)
 {
+	// CORRECAO: as funcoes EGL sao ponteiros carregados por dlsym. Antes desta correcao eles so eram carregados
+	// em OpenGLRenderer::Initialize() - DEPOIS deste metodo - e o primeiro eglGetDisplay chamava um ponteiro nulo (pc=0).
+	if (!LoadEGLImportsAndroid())
+		return false;
+	if (!eglGetDisplay || !eglInitialize || !eglBindAPI || !eglChooseConfig || !eglCreateContext || !eglCreateWindowSurface || !eglMakeCurrent || !eglSwapBuffers)
+	{
+		cemuLog_log(LogType::Force, "AndroidOpenGLCanvas: funcoes EGL essenciais nao encontradas na libEGL.so");
+		return false;
+	}
 	m_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
 	if (m_display == EGL_NO_DISPLAY)
 	{
