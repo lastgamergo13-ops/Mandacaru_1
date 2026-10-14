@@ -51,6 +51,8 @@ void LatteShader_prepareSeparableUniforms(LatteDecompilerShader* shader)
 	shader->uniform.loc_alphaTestRef = glGetUniformLocation(shaderGL->GetProgram(), "uf_alphaTestRef");
 	shader->uniform.loc_pointSize = glGetUniformLocation(shaderGL->GetProgram(), "uf_pointSize");
 	shader->uniform.loc_fragCoordScale = glGetUniformLocation(shaderGL->GetProgram(), "uf_fragCoordScale");
+	shader->uniform.loc_clipFlipY = glGetUniformLocation(shaderGL->GetProgram(), "uf_clipFlipY");
+	shader->uniform.ufCurrentValueClipFlipY = 0.0f;
 	// alternative (SSBO-based) transform feedback path - see OpenGLRenderer::UseTFViaSSBO()
 	// and OpenGLRendererStreamout.cpp. Harmless no-op query (-1) for shaders that don't
 	// declare these, i.e. every shader when streamout isn't used or the native GL_TRANSFORM_FEEDBACK

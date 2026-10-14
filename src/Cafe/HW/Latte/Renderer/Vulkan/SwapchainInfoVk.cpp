@@ -163,6 +163,7 @@ void SwapchainInfoVk::Create()
 
 void SwapchainInfoVk::Cleanup()
 {
+	FrameGenPresenterWaitIdle(); // presents de frames gerados pendentes usam este swapchain
 	m_swapchainImages.clear();
 
 	for (auto& sem: m_acquireSemaphores)

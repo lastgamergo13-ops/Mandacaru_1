@@ -74,8 +74,17 @@ public:
 	// particular need to diverge from the desktop code.
 	static bool IsGLES() { return s_isGLES; }
 
+	// True quando o driver GLES nao tem clip control (nem GL_EXT_clip_control): origem Y (UPPER_LEFT) e
+	// faixa Z (0..1) sao emuladas nos vertex/geometry shaders (uf_clipFlipY + SET_POSITION) e no front face.
+	static bool IsClipControlEmulated() { return s_clipControlEmulated; }
+	// +1/-1 aplicado em gl_Position.y pelos shaders (-1 = emulando UPPER_LEFT)
+	float GetClipFlipY() const { return (s_clipControlEmulated && !_prevInvertY) ? -1.0f : 1.0f; }
+	void ApplyFrontFace();
+	bool m_guestFrontFaceCCW = true;
+
   private:
 	static inline bool s_isGLES = false;
+	static inline bool s_clipControlEmulated = false;
 
   public:
 	// imgui

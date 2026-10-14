@@ -1,5 +1,6 @@
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/RendererShaderGL.h"
+#include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 
 #include "Cemu/FileCache/FileCache.h"
 
@@ -10,6 +11,64 @@ extern std::atomic_int g_compiled_shaders_total;
 extern std::atomic_int g_compiled_shaders_async;
 
 bool s_isLoadingShaders{false};
+
+// Prints the source lines referenced by the driver error log (GLSL ES drivers are much less forgiving than desktop ones,
+// the log alone usually isn't enough to tell what the offending generated code looks like)
+static void LogShaderCompileFailureContext(const std::string& glslSource, const char* infoLog, uint64 baseHash, GLenum glShaderType)
+{
+	static std::atomic_int s_dumpCount{0};
+	if (s_dumpCount.fetch_add(1) >= 24)
+		return; // don't flood the log
+	const char* typeName = glShaderType == GL_VERTEX_SHADER ? "vertex" : (glShaderType == GL_FRAGMENT_SHADER ? "fragment" : "geometry");
+	cemuLog_log(LogType::Force, "[GLSL] {} shader {:016x} failed to compile", typeName, baseHash);
+	// split source into lines
+	std::vector<std::string_view> lines;
+	{
+		size_t pos = 0;
+		while (pos <= glslSource.size())
+		{
+			size_t e = glslSource.find('\n', pos);
+			if (e == std::string::npos)
+				e = glslSource.size();
+			size_t len = e - pos;
+			if (len > 0 && glslSource[pos + len - 1] == '\r')
+				len--;
+			lines.emplace_back(glslSource.data() + pos, len);
+			pos = e + 1;
+		}
+	}
+	// find "0:<line>" occurrences in the log (Adreno/Mali/Mesa all use this form: "ERROR: 0:123: ...", "0:123(5): error: ...")
+	std::vector<int> errorLines;
+	for (const char* c = infoLog; *c; c++)
+	{
+		if (c[0] == '0' && c[1] == ':' && c[2] >= '0' && c[2] <= '9' && (c == infoLog || c[-1] == ' ' || c[-1] == '\n'))
+		{
+			int ln = atoi(c + 2);
+			if (ln > 0 && std::find(errorLines.begin(), errorLines.end(), ln) == errorLines.end())
+				errorLines.push_back(ln);
+			if (errorLines.size() >= 4)
+				break;
+		}
+	}
+	for (int ln : errorLines)
+	{
+		for (int l = ln - 1; l <= ln + 1; l++)
+		{
+			if (l < 1 || l > (int)lines.size())
+				continue;
+			std::string_view lineStr = lines[l - 1];
+			if (lineStr.size() > 300)
+				lineStr = lineStr.substr(0, 300);
+			cemuLog_log(LogType::Force, "[GLSL]  {}{:5}: {}", l == ln ? ">" : " ", l, lineStr);
+		}
+	}
+	if (errorLines.empty())
+	{
+		// no line numbers in the log, show the beginning of the shader
+		for (size_t l = 0; l < lines.size() && l < 12; l++)
+			cemuLog_log(LogType::Force, "[GLSL]   {:5}: {}", l + 1, lines[l]);
+	}
+}
 
 bool RendererShaderGL::loadBinary()
 {
@@ -113,11 +172,15 @@ RendererShaderGL::RendererShaderGL(ShaderType type, uint64 baseHash, uint64 auxH
 	glGetShaderiv(m_shader_object, GL_INFO_LOG_LENGTH, &log_length);
 	if (log_length > 0)
 	{
-		char log[2048]{};
+		char log[4096]{};
 		GLsizei log_size;
 		glGetShaderInfoLog(m_shader_object, std::min<uint32>(log_length, sizeof(log) - 1), &log_size, log);
 		cemuLog_log(LogType::Force, "Error/Warning in shader:");
 		cemuLog_log(LogType::Force, log);
+		GLint compileOk = GL_TRUE;
+		glGetShaderiv(m_shader_object, GL_COMPILE_STATUS, &compileOk);
+		if (compileOk == GL_FALSE)
+			LogShaderCompileFailureContext(m_glslSource, log, m_baseHash, glShaderType);
 	}
 
 	// set debug name
@@ -280,7 +343,8 @@ void RendererShaderGL::ShaderCacheLoading_begin(uint64 cacheTitleId)
 
 	if (usePrecompiled)
 	{
-		const uint32 cacheMagic = GeneratePrecompiledCacheId();
+		// GLES: invalida binarios antigos (shaders ES mudaram na V11.19 e com clip control emulado o codigo do VS/GS e outro)
+		const uint32 cacheMagic = GeneratePrecompiledCacheId() ^ (OpenGLRenderer::IsGLES() ? 0x11190000u : 0u) ^ (OpenGLRenderer::IsClipControlEmulated() ? 0xC11B0001u : 0u);
 		const std::string cacheFilename = fmt::format("{:016x}_gl.bin", cacheTitleId);
         s_programBinaryCache = FileCache::Open(ActiveSettings::GetCachePath("shaderCache/precompiled/{}", cacheFilename), true, cacheMagic);
 		if (s_programBinaryCache == nullptr)

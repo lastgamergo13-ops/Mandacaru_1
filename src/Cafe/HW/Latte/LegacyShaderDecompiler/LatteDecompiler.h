@@ -199,6 +199,8 @@ struct LatteDecompilerShader
 		sint32 loc_alphaTestRef; // uf_alphaTestRef
 		sint32 loc_pointSize; // uf_pointSize
 		sint32 loc_fragCoordScale;
+		sint32 loc_clipFlipY; // uf_clipFlipY (emulacao de clip control no GLES)
+		float ufCurrentValueClipFlipY;
 		std::vector<LatteUniformTextureScaleEntry_t> list_ufTexRescale; // list of mappings for uf_tex*Scale <-> uniform location
 		float ufCurrentValueAlphaTestRef;
 		float ufCurrentValueFragCoordScale[2];

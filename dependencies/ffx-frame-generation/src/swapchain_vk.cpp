@@ -20,6 +20,126 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+
+// ---------------------------------------------------------------------------------------------
+// Thread de apresentacao dos frames gerados
+// ---------------------------------------------------------------------------------------------
+std::mutex& FrameGenQueueMutex()
+{
+	static std::mutex s_mutex;
+	return s_mutex;
+}
+
+namespace
+{
+	struct PresentJob
+	{
+		VkQueue queue = VK_NULL_HANDLE;
+		VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+		uint32_t imageIndex = 0;
+		VkSemaphore waitSemaphore = VK_NULL_HANDLE;
+		std::chrono::steady_clock::time_point when{};
+	};
+
+	class FrameGenPresenter
+	{
+	public:
+		static FrameGenPresenter& Get()
+		{
+			static FrameGenPresenter s_instance;
+			return s_instance;
+		}
+
+		~FrameGenPresenter()
+		{
+			{
+				std::lock_guard<std::mutex> lock(m_mutex);
+				m_stop = true;
+			}
+			m_cvWork.notify_all();
+			if (m_thread.joinable())
+				m_thread.join();
+		}
+
+		void Enqueue(const PresentJob& job)
+		{
+			std::lock_guard<std::mutex> lock(m_mutex);
+			if (!m_thread.joinable())
+				m_thread = std::thread(&FrameGenPresenter::Run, this);
+			m_queue.push_back(job);
+			m_cvWork.notify_one();
+		}
+
+		void WaitIdle()
+		{
+			std::unique_lock<std::mutex> lock(m_mutex);
+			m_cvIdle.wait(lock, [&] { return m_queue.empty() && !m_busy; });
+		}
+
+		bool ConsumeOutOfDate() { return m_outOfDate.exchange(false); }
+		int LastResult() const { return m_lastResult.load(); }
+
+	private:
+		void Run()
+		{
+			std::unique_lock<std::mutex> lock(m_mutex);
+			while (true)
+			{
+				m_cvWork.wait(lock, [&] { return m_stop || !m_queue.empty(); });
+				if (m_stop && m_queue.empty())
+					return;
+				PresentJob job = m_queue.front();
+				m_queue.pop_front();
+				m_busy = true;
+				lock.unlock();
+
+				if (job.when > std::chrono::steady_clock::now())
+					std::this_thread::sleep_until(job.when);
+
+				VkPresentInfoKHR presentInfo{};
+				presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+				presentInfo.waitSemaphoreCount = 1;
+				presentInfo.pWaitSemaphores = &job.waitSemaphore;
+				presentInfo.swapchainCount = 1;
+				presentInfo.pSwapchains = &job.swapchain;
+				presentInfo.pImageIndices = &job.imageIndex;
+				CRUMB("FrameGen: vkQueuePresentKHR (frame gerado, thread de apresentacao)");
+				VkResult result;
+				{
+					std::lock_guard<std::mutex> qlock(FrameGenQueueMutex());
+					result = vkQueuePresentKHR(job.queue, &presentInfo);
+				}
+				m_lastResult.store((int)result);
+				if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+					cemuLog_log(LogType::Force, "[FrameGen] ERRO vkQueuePresentKHR do frame gerado: {}", (int)result);
+				if (result == VK_ERROR_OUT_OF_DATE_KHR)
+					m_outOfDate.store(true);
+
+				lock.lock();
+				m_busy = false;
+				m_cvIdle.notify_all();
+			}
+		}
+
+		std::mutex m_mutex;
+		std::condition_variable m_cvWork, m_cvIdle;
+		std::deque<PresentJob> m_queue;
+		bool m_busy = false;
+		bool m_stop = false;
+		std::thread m_thread;
+		std::atomic<bool> m_outOfDate{ false };
+		std::atomic<int> m_lastResult{ 0 };
+	};
+}
+
+void FrameGenPresenterWaitIdle()
+{
+	FrameGenPresenter::Get().WaitIdle();
+}
 
 SwapchainFrameGenVk::SwapchainFrameGenVk(VulkanRenderer* renderer, uint32_t width, uint32_t height, uint32_t graphicsQueueFamilyIndex, VkFormat backbufferFormat)
 	: m_renderer(renderer), m_width(width), m_height(height)
@@ -205,6 +325,8 @@ void SwapchainFrameGenVk::CaptureBackbuffer(VkCommandBuffer commandBuffer, VkIma
 {
 	if (!UpdateActiveState())
 		return;
+	// garante que o frame gerado anterior ja foi apresentado ANTES do proximo frame real (ordem na tela)
+	FrameGenPresenterWaitIdle();
 	TickStats(true);
 
 	// intervalo medio entre frames reais (usado no pacing dos frames gerados)
@@ -341,9 +463,9 @@ bool SwapchainFrameGenVk::GenerateAndPresentInterpolatedFrame(SwapchainInfoVk& c
 	{
 		const float progress = (float)k / (float)multiplier; // posicao dentro do intervalo
 		const auto target = t0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(m_realFrameInterval * progress));
-		if (target > std::chrono::steady_clock::now())
-			std::this_thread::sleep_until(target);
-		if (!PresentGeneratedFrame(chainInfo, presentQueue, reset && k == 1, k == 1, progress))
+		// NAO dorme aqui: a thread do Latte precisa seguir para o proximo frame real. O horario (target) vai para a
+		// thread de apresentacao, que espera e chama o vkQueuePresentKHR.
+		if (!PresentGeneratedFrame(chainInfo, presentQueue, reset && k == 1, k == 1, progress, target))
 			break;
 		anyPresented = true;
 	}
@@ -370,8 +492,10 @@ void SwapchainFrameGenVk::ApplyBaseFpsLimit()
 		m_limiterNext = now; // atrasou: ressincroniza em vez de tentar "compensar"
 }
 
-bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset, bool runOpticalFlow, float progress)
+bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset, bool runOpticalFlow, float progress, std::chrono::steady_clock::time_point presentAt)
 {
+	if (FrameGenPresenter::Get().ConsumeOutOfDate())
+		chainInfo.m_shouldRecreate = true;
 	VkDevice device = m_renderer->GetLogicalDevice();
 
 	// Calcula o tempo real (relogio de parede) desde a ultima vez que
@@ -572,22 +696,24 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 	submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
 	CRUMB("FrameGen: vkQueueSubmit (frame gerado)");
-	VkResult submitResult = vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
+	VkResult submitResult;
+	{
+		std::lock_guard<std::mutex> qlock(FrameGenQueueMutex());
+		submitResult = vkQueueSubmit(presentQueue, 1, &submitInfo, m_inFlightFence);
+	}
 	if (submitResult != VK_SUCCESS)
 		cemuLog_log(LogType::Force, "[FrameGen] ERRO vkQueueSubmit do frame gerado: {}", (int)submitResult);
 
-	VkPresentInfoKHR presentInfo{};
-	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-	presentInfo.waitSemaphoreCount = 1;
-	presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
-	presentInfo.swapchainCount = 1;
-	presentInfo.pSwapchains = &chainInfo.m_swapchain;
-	presentInfo.pImageIndices = &imageIndex;
-
-	CRUMB("FrameGen: vkQueuePresentKHR (frame gerado)");
-	VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
-	if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
-		cemuLog_log(LogType::Force, "[FrameGen] ERRO vkQueuePresentKHR do frame gerado: {}", (int)result);
+	// O present (que espera o horario) vai para a thread de apresentacao - a thread do Latte nao bloqueia.
+	PresentJob job;
+	job.queue = presentQueue;
+	job.swapchain = chainInfo.m_swapchain;
+	job.imageIndex = imageIndex;
+	job.waitSemaphore = renderFinishedSemaphore;
+	job.when = presentAt;
+	if (submitResult == VK_SUCCESS)
+		FrameGenPresenter::Get().Enqueue(job);
+	const VkResult result = (submitResult == VK_SUCCESS) ? VK_SUCCESS : submitResult;
 
 	if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
 		TickStats(false);
@@ -597,7 +723,7 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 		static uint32_t s_generatedCount = 0;
 		s_generatedCount++;
 		if (s_generatedCount <= 5 || (s_generatedCount % 300) == 0)
-			cemuLog_log(LogType::Force, "[FrameGen] frame gerado #{} dt={:.4f}s submit={} present={}", s_generatedCount, deltaTimeSeconds, (int)submitResult, (int)result);
+			cemuLog_log(LogType::Force, "[FrameGen] frame gerado #{} dt={:.4f}s submit={} present=enfileirado(thread)", s_generatedCount, deltaTimeSeconds, (int)submitResult);
 	}
 
 	// NAO libera o command buffer agora - a GPU pode ainda estar
@@ -609,15 +735,13 @@ bool SwapchainFrameGenVk::PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQu
 
 	// SUBOPTIMAL nao exige recriar o swapchain (no Adreno ele aparece em TODO present e recriar a
 	// cada frame destroi o desempenho); so OUT_OF_DATE exige.
-	if (result == VK_ERROR_OUT_OF_DATE_KHR)
-		chainInfo.m_shouldRecreate = true;
-
 	chainInfo.swapchainImageIndex = (uint32)-1;
 	return result >= 0;
 }
 
 void SwapchainFrameGenVk::DestroyAll()
 {
+	FrameGenPresenterWaitIdle();
 	VkDevice device = m_renderer->GetLogicalDevice();
 	vkDeviceWaitIdle(device); // garante que a GPU ja terminou tudo, inclusive o ultimo m_pendingCommandBuffer
 

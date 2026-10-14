@@ -242,3 +242,71 @@ ARQUIVOS RELACIONADOS
 
 === ATUALIZACAO V11.17 ===
 Fase de implementacao do frame gen GL concluida em codigo (FrameGenGL.cpp). Pendente: build e teste no aparelho. Piramide no GL fica para depois (shaders ja prontos em shaders_glsl/).
+
+=== ATUALIZACAO V11.18 ===
+Crash de init agora: glCreateBuffers (DSA) nulo. Corrigido com camada ESShim (emulacao GLES das funcoes DSA/desktop). Proximo risco: shaders GLSL desktop do Cemu (RendererShaderGL / LatteDecompiler) nao compilam no GLES - precisa gerar "#version 320 es" com precision/ layouts/ extensoes ajustadas, geometry shader (OpenGLRendererCore.cpp:704) e clip control ausente (ARB_clip_control).
+
+=== V11.19 - GLSL ES para os shaders do Cemu (pacote-v11-19-glsl-es.zip, 8 arquivos) ===
+O codigo base ja emitia "#version 320 es" no decompilador; faltavam os trechos desktop-only e as conversoes implicitas
+(GLSL ES nao permite int->uint, int->float etc.). Corrigido:
+- Decompilador (EmitGLSL/Header/AttrDecoder): literais hex >=0x80000000 e constante 0 unsigned explicitos (0u, int(0x..u)),
+  testes de sinal com floatBitsToUint, decodificador de atributos com sufixo u (166 trechos validados com glslang ES e 430),
+  sem "noperspective" em ES, V2G_LAYOUT com location em ES, textureQueryLod -> 0 em ES, VertexID em registrador float,
+  precisoes de todos os samplers (shadow/cube/array), extensao GL_EXT_texture_shadow_lod (enable).
+- Shaders fixos: LatteDefaultShaders.cpp e OpenGLSurfaceCopy.cpp (#version 420 -> 320 es), geometry shader de RECTS
+  (#version 450 -> 320 es, sem redeclarar gl_PerVertex), bicubic (literais float).
+- RendererShaderGL.cpp: se um shader falhar, o log mostra "[GLSL] ... failed to compile" com as linhas do erro
+  (max 24 shaders) - mande o log para ajustar o que sobrar.
+Validado so com glslang (ES 3.20); o compilador do Adreno pode reclamar de outros pontos. Nada rodou no aparelho.
+Pendente em GL: ARB_clip_control ausente, buffers persistentes, baseInstance.
+
+
+=====================================================================
+V11.20 - CLIP CONTROL, BASE INSTANCE, BUFFERS PERSISTENTES (pacote cumulativo)
+=====================================================================
+O pacote pacote-v11-20-completo-cumulativo.zip contem TODOS os arquivos alterados
+desde a V11.18 (inclui V11.18 + V11.19). Basta extrair sobre o repositorio.
+
+1) ARB_clip_control ausente no GLES
+   - Primeiro tenta GL_EXT_clip_control (glClipControlEXT): mesma semantica do ARB, o codigo
+     existente de renderTarget_setViewport passa a funcionar sem mudanca.
+   - Se a extensao nao existir (log: "[GL] GL_EXT_clip_control ausente: emulando..."), emula:
+     * Y (origem UPPER_LEFT): todo VS (sem GS) ou GS decompilado ganha "uniform float uf_clipFlipY"
+       e SET_POSITION faz gl_Position.y *= uf_clipFlipY (-1 normal, +1 quando o viewport tem altura
+       negativa = LOWER_LEFT). Viewport/scissor nao mudam (o mapeamento de linha fica identico).
+     * Z (ZERO_TO_ONE, DX_CLIP_SPACE_DEF): z = 2z - w no SET_POSITION; glDepthRange continua igual.
+     * Sentido dos poligonos: glFrontFace e invertido quando o flip esta ativo (ApplyFrontFace),
+       reaplicado quando a altura do viewport muda de sinal.
+     * Shaders internos (copia de superficie, default shaders, shader de saida/blit) tambem
+       invertem Y no modo emulado.
+   - VS com geometry shader guest: o flip e aplicado so no GS (evita flip duplo). Rect GS nao muda
+     (operacao afim sobre posicoes ja transformadas pelo VS).
+   - FrameGenGL desenha em orientacao nativa: com EXT clip control, o estado e trocado para
+     LOWER_LEFT durante a geracao e restaurado depois.
+   - Cache de binarios de programa (shaderCache/precompiled/*_gl.bin) usa magic diferente no GLES
+     (e no modo emulado), entao binarios antigos sao descartados automaticamente.
+   RISCO: a regra de sentido dos poligonos (front face) segue a especificacao do clip control
+   (sentido preservado no clip space). Se o culling aparecer invertido nos jogos, trocar a condicao
+   em OpenGLRenderer::ApplyFrontFace(). Nada disso rodou em aparelho.
+
+2) baseInstance
+   - GLES nao tem glDrawElementsInstancedBaseVertexBaseInstance de forma confiavel. Agora e
+     emulado em _setupVertexAttributes: atributos por instancia (aluDivisor > 0, stride != 0)
+     deslocam o ponteiro em (baseInstance / divisor) * stride. Exato quando baseInstance e
+     multiplo do divisor (caso comum, divisor 1). Sem aviso no log.
+
+3) Buffers persistentes
+   - Auditado: o unico uso de GL_MAP_PERSISTENT_BIT e o buffer de upload de texturas, que ja vem
+     desligado (useTextureUploadBuffer = false). Leituras (TextureReadbackGL) usam glMapBufferRange
+     normal. Nenhuma mudanca necessaria; o shim continua criando buffer comum se alguem pedir.
+
+4) Shaders de compute do FrameGenGL (plano dos grupos A/B/C)
+   - O pipeline GL usa so 6 passes (prepare_luma, histogram, divergence, search v5, filter,
+     interp v8) e todos ja existem em shaders_glsl/es310 e es320. Os grupos A/B/C do plano
+     (pyramid/inpainting, SpdReduceQuad, formato de imagem do inpainting) so valem para os modos
+     piramide/inpainting, que o GL ainda nao usa. Continuam pendentes SO para esses modos.
+
+O QUE OLHAR NO PROXIMO LOG
+   "[GL] usando GL_EXT_clip_control" OU "[GL] ... emulando clip control"
+   imagem de cabeca para baixo / culling invertido / profundidade errada nos jogos
+   "[GLSL] ... failed to compile" (agora com linhas do erro)

@@ -550,3 +550,26 @@ Checklist:
  [ ] Teste: log deve mostrar "[FrameGenGL] GL_VERSION=...", "recursos criados" e "[FrameGen] FPS real=... (OpenGL ES)"
  [ ] Se aparecer "shader ... NAO compilou" / "NAO linkou", enviar o log (traz a mensagem do driver)
  [ ] Verificar qualidade visual/orientacao da imagem gerada
+
+=== V11.18 - FPS do frame gen (Vulkan) + OpenGL ES: funcoes DSA emuladas ===
+Analise dos logs (Turnip-Z): o frame gen funciona (real ~30-45 + gerado), mas a thread do Latte dormia (sleep_until) ~meio intervalo
+entre frames reais para espacar o frame gerado. Efeito: periodo real = 2*(W+g) -> FPS real cai ~pela metade e o total fica ~igual ao FPS sem frame gen.
+Correcao: o Latte so grava+submete o trabalho de GPU; a espera do horario e o vkQueuePresentKHR do frame gerado vao para a thread "FrameGenPresent".
+Como duas threads usam a mesma VkQueue, vkQueueSubmit/vkQueuePresentKHR agora seguram FrameGenQueueMutex() (VulkanRenderer.cpp, swapchain_vk.cpp).
+O Latte espera a fila de presents esvaziar antes do proximo frame real (ordem na tela) e antes de destruir/recriar swapchain (SwapchainInfoVk::Cleanup).
+Nao mexido: ApplyBaseFpsLimit (limite de FPS base escolhido pelo usuario) ainda dorme na thread do Latte, de proposito.
+PurpleVK T19: crash dentro do driver (vulkan.purple.so+0x70340c, fault 0x1a0) em vkQueueSubmit dos comandos do jogo, frames 1-2, todos os jogos. Causa no driver; usar Turnip-Z.
+OpenGL ES: o crash agora era glCreateBuffers nulo (OpenGLRenderer.cpp, buffer de blit). Agora 40+ funcoes desktop/DSA sao EMULADAS com chamadas GLES
+ (namespace ESShim: CreateBuffers, NamedBufferStorage/SubData, ViewportIndexedf, DrawBuffer, MapBuffer*, NamedFramebufferTexture*, VAO DSA, queries, GetTexImage...) em vez de stubs vazios.
+ Log: "[GL] N funcoes desktop emuladas com chamadas do GLES: ...". Frame gen GL tambem sem sleep.
+Proximo obstaculo esperado no OpenGL: o GLSL gerado pelo Cemu e desktop (#version 4xx core) - o compilador do Adreno vai recusar; sera preciso converter/gerar GLSL ES.
+Checklist:
+ [x] Fix de FPS (thread de apresentacao) - sintaxe do presenter testada isolada; sem build
+ [ ] Teste: FPS real com frame gen ligado deve ficar proximo do FPS sem frame gen; log "[FrameGen] FPS real=.. gerado=.."
+ [ ] Teste OpenGL: enviar log (procurar "[GL] ... emuladas", "AVISO", proximo crash)
+
+
+--- V11.20 (nota) ---
+Pacote cumulativo pacote-v11-20-completo-cumulativo.zip: backend OpenGL ES ganhou clip control
+(EXT ou emulado nos shaders), baseInstance emulado e shaders GLSL ES. Nenhuma mudanca no backend
+Vulkan; detalhes em porte-opengl-framegen-cemu-android.txt.

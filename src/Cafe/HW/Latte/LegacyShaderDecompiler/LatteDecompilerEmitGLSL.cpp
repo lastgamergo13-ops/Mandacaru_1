@@ -897,8 +897,10 @@ void _emitOperandInputCode(LatteDecompilerShaderContext* shaderContext, LatteDec
 	}
 	else if( GPU7_ALU_SRC_IS_CONST_0F(aluInstruction->sourceOperand[operandIndex].sel) )
 	{
-		if(requiredType == LATTE_DECOMPILER_DTYPE_SIGNED_INT || requiredType == LATTE_DECOMPILER_DTYPE_UNSIGNED_INT)
+		if(requiredType == LATTE_DECOMPILER_DTYPE_SIGNED_INT)
 			src->add("0");
+		else if(requiredType == LATTE_DECOMPILER_DTYPE_UNSIGNED_INT)
+			src->add("0u"); // GLSL ES has no implicit int->uint conversion
 		else if( requiredType == LATTE_DECOMPILER_DTYPE_FLOAT )
 			src->add("0.0");
 	}
@@ -933,9 +935,16 @@ void _emitOperandInputCode(LatteDecompilerShaderContext* shaderContext, LatteDec
 	else if( GPU7_ALU_SRC_IS_LITERAL(aluInstruction->sourceOperand[operandIndex].sel) )
 	{
 		if( requiredType == LATTE_DECOMPILER_DTYPE_SIGNED_INT )
-			src->addFmt("0x{:x}", aluInstruction->literalData.w[aluInstruction->sourceOperand[operandIndex].chan]);
+		{
+			// hex literals >= 0x80000000 have type uint in GLSL, GLSL ES has no implicit uint->int conversion
+			uint32 literalValue = aluInstruction->literalData.w[aluInstruction->sourceOperand[operandIndex].chan];
+			if (literalValue > 0x7FFFFFFFu)
+				src->addFmt("int(0x{:x}u)", literalValue);
+			else
+				src->addFmt("0x{:x}", literalValue);
+		}
 		else if( requiredType == LATTE_DECOMPILER_DTYPE_UNSIGNED_INT )
-			src->addFmt("uint(0x{:x})", aluInstruction->literalData.w[aluInstruction->sourceOperand[operandIndex].chan]);
+			src->addFmt("uint(0x{:x}u)", aluInstruction->literalData.w[aluInstruction->sourceOperand[operandIndex].chan]);
 		else if (requiredType == LATTE_DECOMPILER_DTYPE_FLOAT)
 		{
 			uint32 constVal = aluInstruction->literalData.w[aluInstruction->sourceOperand[operandIndex].chan];
@@ -946,7 +955,7 @@ void _emitOperandInputCode(LatteDecompilerShaderContext* shaderContext, LatteDec
 				src->add(_FormatFloatAsGLSLConstant(*(float*)&constVal));
 			}
 			else
-				src->addFmt("intBitsToFloat(0x{:08x})", constVal);
+				src->addFmt("uintBitsToFloat(0x{:08x}u)", constVal);
 		}
 	}
 	else if( GPU7_ALU_SRC_IS_CFILE(aluInstruction->sourceOperand[operandIndex].sel) )
@@ -1197,9 +1206,9 @@ void _emitALUOP2InstructionCode(LatteDecompilerShaderContext* shaderContext, Lat
 		_emitOperandInputCode(shaderContext, aluInstruction, 0, LATTE_DECOMPILER_DTYPE_FLOAT);
 		src->add(");" _CRLF);
 		// INF becomes 0.0
-		src->add("if( isinf(tempResultf) == true && (floatBitsToInt(tempResultf)&0x80000000) == 0 ) tempResultf = 0.0;" _CRLF);
+		src->add("if( isinf(tempResultf) == true && (floatBitsToUint(tempResultf)&0x80000000u) == 0u ) tempResultf = 0.0;" _CRLF);
 		// -INF becomes -0.0
-		src->add("else if( isinf(tempResultf) == true && (floatBitsToInt(tempResultf)&0x80000000) != 0 ) tempResultf = -0.0;" _CRLF);
+		src->add("else if( isinf(tempResultf) == true && (floatBitsToUint(tempResultf)&0x80000000u) != 0u ) tempResultf = -0.0;" _CRLF);
 		// assign result to output
 		_emitInstructionOutputVariableName(shaderContext, aluInstruction);
 		src->add(" = ");
@@ -1219,14 +1228,14 @@ void _emitALUOP2InstructionCode(LatteDecompilerShaderContext* shaderContext, Lat
 		if (aluInstruction->opcode == ALU_OP2_INST_RECIPSQRT_CLAMPED)
 		{
 			// note: if( -INF < 0.0 ) does not resolve to true
-			src->add("if( isinf(tempResultf) == true && (floatBitsToInt(tempResultf)&0x80000000) != 0 ) tempResultf = -3.40282347E+38F;" _CRLF);
-			src->add("else if( isinf(tempResultf) == true && (floatBitsToInt(tempResultf)&0x80000000) == 0 ) tempResultf = 3.40282347E+38F;" _CRLF);
+			src->add("if( isinf(tempResultf) == true && (floatBitsToUint(tempResultf)&0x80000000u) != 0u ) tempResultf = -3.40282347E+38F;" _CRLF);
+			src->add("else if( isinf(tempResultf) == true && (floatBitsToUint(tempResultf)&0x80000000u) == 0u ) tempResultf = 3.40282347E+38F;" _CRLF);
 		}
 		else if (aluInstruction->opcode == ALU_OP2_INST_RECIPSQRT_FF)
 		{
 			// untested (BotW bombs)
-			src->add("if( isinf(tempResultf) == true && (floatBitsToInt(tempResultf)&0x80000000) != 0 ) tempResultf = -0.0;" _CRLF);
-			src->add("else if( isinf(tempResultf) == true && (floatBitsToInt(tempResultf)&0x80000000) == 0 ) tempResultf = 0.0;" _CRLF);
+			src->add("if( isinf(tempResultf) == true && (floatBitsToUint(tempResultf)&0x80000000u) != 0u ) tempResultf = -0.0;" _CRLF);
+			src->add("else if( isinf(tempResultf) == true && (floatBitsToUint(tempResultf)&0x80000000u) == 0u ) tempResultf = 0.0;" _CRLF);
 		}
 		// assign result to output
 		_emitInstructionOutputVariableName(shaderContext, aluInstruction);
@@ -2820,7 +2829,12 @@ void _emitTEXGetCompTexLodCode(LatteDecompilerShaderContext* shaderContext, Latt
 	src->add(" = ");
 	_emitTypeConversionPrefix(shaderContext, LATTE_DECOMPILER_DTYPE_FLOAT, shaderContext->typeTracker.defaultDataType);
 
-	if( shaderContext->shader->textureUnitDim[texInstruction->textureFetch.textureIndex] == Latte::E_DIM::DIM_CUBEMAP )
+	if (OpenGLRenderer::IsGLES())
+	{
+		// GLSL ES has no textureQueryLod() - report LOD 0
+		src->add("vec4(0.0)");
+	}
+	else if( shaderContext->shader->textureUnitDim[texInstruction->textureFetch.textureIndex] == Latte::E_DIM::DIM_CUBEMAP )
 	{
 		// 3 coordinates
 		if(shaderContext->typeTracker.defaultDataType == LATTE_DECOMPILER_DTYPE_FLOAT)
@@ -3879,7 +3893,7 @@ void LatteDecompiler_emitGLSLHelperFunctions(LatteDecompilerShaderContext* shade
 	"{\r\n"
 		"if( v == 0x7FFFFFFF )\r\n"
 		"	return floatBitsToInt(1.0);\r\n"
-		"else if( v == 0xFFFFFFFF )\r\n"
+		"else if( v == -1 )\r\n"
 		"	return floatBitsToInt(0.0);\r\n"
 		"return floatBitsToInt(clamp(intBitsToFloat(v), 0.0, 1.0));\r\n"
 	"}\r\n");
@@ -3978,6 +3992,9 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 		// (see Etapa 0/8 of the OpenGL-on-Android technical report) - GL_EXT_separate_shader_objects
 		// would need to be added here for those.
 		src->add("#version 320 es" _CRLF);
+		// textureLod() on sampler2DArrayShadow (needed for SAMPLE_C_L/SAMPLE_C_LZ on 2D array shadow maps) is not part of core ES 3.2.
+		// "enable" (not "require") so drivers lacking the extension just see a warning and only fail if such a sample is actually used
+		src->add("#extension GL_EXT_texture_shadow_lod : enable" _CRLF);
 		src->add("precision highp float;" _CRLF);
 		src->add("precision highp int;" _CRLF);
 		src->add("precision highp sampler2D;" _CRLF);
@@ -3986,6 +4003,17 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 		src->add("precision highp samplerCubeArray;" _CRLF);
 		src->add("precision highp usampler2D;" _CRLF);
 		src->add("precision highp isampler2D;" _CRLF);
+		// sampler types other than sampler2D/samplerCube have no default precision in GLSL ES -
+		// declare all of them so shadow samplers etc. don't fail to compile
+		src->add("precision highp samplerCube;" _CRLF);
+		src->add("precision highp sampler2DShadow;" _CRLF);
+		src->add("precision highp sampler2DArrayShadow;" _CRLF);
+		src->add("precision highp samplerCubeShadow;" _CRLF);
+		src->add("precision highp samplerCubeArrayShadow;" _CRLF);
+		src->add("precision highp usampler2DArray;" _CRLF);
+		src->add("precision highp isampler2DArray;" _CRLF);
+		src->add("precision highp usampler3D;" _CRLF);
+		src->add("precision highp isampler3D;" _CRLF);
 		// Streamout/geometry-shader output on GLES does NOT go through GL_ARB_enhanced_layouts
 		// (desktop-only, no GLES equivalent) - it uses the same SSBO-based manual streamout
 		// path Vulkan and Metal already rely on instead of native transform feedback (see
@@ -4144,7 +4172,12 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 			if (shaderContext->typeTracker.defaultDataType == LATTE_DECOMPILER_DTYPE_SIGNED_INT)
 				src->addFmt("{} = ivec4(gl_VertexID, 0, 0, gl_InstanceID);" _CRLF, _getRegisterVarName(shaderContext, 0));
 			else if (shaderContext->typeTracker.defaultDataType == LATTE_DECOMPILER_DTYPE_FLOAT)
-				src->addFmt("{} = floatBitsToInt(ivec4(gl_VertexID, 0, 0, gl_InstanceID));" _CRLF, _getRegisterVarName(shaderContext, 0));
+			{
+				if (OpenGLRenderer::IsGLES()) // floatBitsToInt() does not accept an ivec4 in GLSL ES (no implicit int->float conversion)
+					src->addFmt("{} = intBitsToFloat(ivec4(gl_VertexID, 0, 0, gl_InstanceID));" _CRLF, _getRegisterVarName(shaderContext, 0));
+				else
+					src->addFmt("{} = floatBitsToInt(ivec4(gl_VertexID, 0, 0, gl_InstanceID));" _CRLF, _getRegisterVarName(shaderContext, 0));
+			}
 			else
 				cemu_assert_unimplemented();
 		}

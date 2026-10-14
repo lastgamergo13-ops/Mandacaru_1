@@ -422,8 +422,423 @@ static void GLStubReport(const char* name)
 #undef GLFUNC
 #undef EGLFUNC
 
+
+// ---------------------------------------------------------------------------------------------
+// IMPLEMENTACOES GLES das funcoes de OpenGL desktop (DSA, 1D, glGetTexImage, ...).
+// Antes elas viravam stubs que nao faziam nada (ou ponteiro nulo -> crash). Aqui cada uma e emulada com
+// as chamadas equivalentes do OpenGL ES 3.2 (bind -> chamada normal -> restaura o bind anterior).
+// Carregadas sob demanda por _GetOpenGLFunction (EGL/GLESv3).
+// ---------------------------------------------------------------------------------------------
+namespace ESShim
+{
+	struct Fn
+	{
+		void (*BindBuffer)(GLenum, GLuint);
+		void (*BufferData)(GLenum, GLsizeiptr, const void*, GLenum);
+		void (*BufferSubData)(GLenum, GLintptr, GLsizeiptr, const void*);
+		void* (*MapBufferRange)(GLenum, GLintptr, GLsizeiptr, GLbitfield);
+		void (*GetBufferParameteriv)(GLenum, GLenum, GLint*);
+		void (*GenBuffers)(GLsizei, GLuint*);
+		void (*DrawBuffers)(GLsizei, const GLenum*);
+		void (*Viewport)(GLint, GLint, GLsizei, GLsizei);
+		void (*ClearDepthf)(GLfloat);
+		void (*DepthRangef)(GLfloat, GLfloat);
+		void (*BindFramebuffer)(GLenum, GLuint);
+		void (*FramebufferTexture)(GLenum, GLenum, GLuint, GLint);
+		void (*FramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
+		void (*FramebufferTextureLayer)(GLenum, GLenum, GLuint, GLint, GLint);
+		void (*InvalidateFramebuffer)(GLenum, GLsizei, const GLenum*);
+		void (*GenFramebuffers)(GLsizei, GLuint*);
+		void (*DeleteFramebuffers)(GLsizei, const GLuint*);
+		void (*GetIntegerv)(GLenum, GLint*);
+		void (*GenVertexArrays)(GLsizei, GLuint*);
+		void (*BindVertexArray)(GLuint);
+		void (*EnableVertexAttribArray)(GLuint);
+		void (*DisableVertexAttribArray)(GLuint);
+		void (*BindVertexBuffer)(GLuint, GLuint, GLintptr, GLsizei);
+		void (*VertexAttribBinding)(GLuint, GLuint);
+		void (*VertexAttribIFormat)(GLuint, GLint, GLenum, GLuint);
+		void (*VertexBindingDivisor)(GLuint, GLuint);
+		void (*BeginQuery)(GLenum, GLuint);
+		void (*EndQuery)(GLenum);
+		void (*GetQueryiv)(GLenum, GLenum, GLint*);
+		void (*GetQueryObjectuiv)(GLuint, GLenum, GLuint*);
+		void (*GetTexLevelParameteriv)(GLenum, GLint, GLenum, GLint*);
+		void (*BindTexture)(GLenum, GLuint);
+		void (*DrawElementsInstancedBaseVertex)(GLenum, GLsizei, GLenum, const void*, GLsizei, GLint);
+		void (*ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
+	};
+	static Fn g;
+	static bool g_loaded = false;
+
+	static void Load()
+	{
+		if (g_loaded)
+			return;
+		g_loaded = true;
+#define L(member, name) g.member = (decltype(g.member))_GetOpenGLFunction(g_libGLESv3, name)
+		L(BindBuffer, "glBindBuffer"); L(BufferData, "glBufferData"); L(BufferSubData, "glBufferSubData");
+		L(MapBufferRange, "glMapBufferRange"); L(GetBufferParameteriv, "glGetBufferParameteriv"); L(GenBuffers, "glGenBuffers");
+		L(DrawBuffers, "glDrawBuffers"); L(Viewport, "glViewport"); L(ClearDepthf, "glClearDepthf"); L(DepthRangef, "glDepthRangef");
+		L(BindFramebuffer, "glBindFramebuffer"); L(FramebufferTexture, "glFramebufferTexture");
+		L(FramebufferTexture2D, "glFramebufferTexture2D"); L(FramebufferTextureLayer, "glFramebufferTextureLayer");
+		L(InvalidateFramebuffer, "glInvalidateFramebuffer"); L(GenFramebuffers, "glGenFramebuffers"); L(DeleteFramebuffers, "glDeleteFramebuffers");
+		L(GetIntegerv, "glGetIntegerv"); L(GenVertexArrays, "glGenVertexArrays"); L(BindVertexArray, "glBindVertexArray");
+		L(EnableVertexAttribArray, "glEnableVertexAttribArray"); L(DisableVertexAttribArray, "glDisableVertexAttribArray");
+		L(BindVertexBuffer, "glBindVertexBuffer"); L(VertexAttribBinding, "glVertexAttribBinding");
+		L(VertexAttribIFormat, "glVertexAttribIFormat"); L(VertexBindingDivisor, "glVertexBindingDivisor");
+		L(BeginQuery, "glBeginQuery"); L(EndQuery, "glEndQuery"); L(GetQueryiv, "glGetQueryiv"); L(GetQueryObjectuiv, "glGetQueryObjectuiv");
+		L(GetTexLevelParameteriv, "glGetTexLevelParameteriv"); L(BindTexture, "glBindTexture");
+		L(DrawElementsInstancedBaseVertex, "glDrawElementsInstancedBaseVertex"); L(ReadPixels, "glReadPixels");
+#undef L
+	}
+
+	static void Warn(const char* what)
+	{
+		static std::mutex m;
+		static std::unordered_set<std::string> seen;
+		std::lock_guard<std::mutex> l(m);
+		if (seen.insert(what).second)
+			cemuLog_log(LogType::Force, "[GL] AVISO: {}", what);
+	}
+
+	constexpr GLenum kCopyWrite = 0x8F37, kFramebuffer = 0x8D40, kDrawFbo = 0x8CA9, kFboBinding = 0x8CA6, kVaoBinding = 0x85B5, kTex2D = 0x0DE1;
+	constexpr GLenum kBufferSize = 0x8764, kTexBinding2D = 0x8069;
+
+	// ---- buffers (DSA) ----
+	static void CreateBuffers(GLsizei n, GLuint* buffers)
+	{
+		Load();
+		g.GenBuffers(n, buffers);
+		// o objeto so passa a existir no primeiro bind
+		GLint prev = 0;
+		g.GetIntegerv(kCopyWrite, &prev);
+		for (GLsizei i = 0; i < n; i++)
+			g.BindBuffer(kCopyWrite, buffers[i]);
+		g.BindBuffer(kCopyWrite, (GLuint)prev);
+	}
+	static void NamedBufferStorage(GLuint buffer, GLsizeiptr size, const void* data, GLbitfield flags)
+	{
+		Load();
+		if (flags & 0x0040 /*GL_MAP_PERSISTENT_BIT*/)
+			Warn("glNamedBufferStorage com GL_MAP_PERSISTENT_BIT nao existe no GLES; criando buffer normal (mapeamento persistente indisponivel)");
+		GLint prev = 0;
+		g.GetIntegerv(kCopyWrite, &prev);
+		g.BindBuffer(kCopyWrite, buffer);
+		g.BufferData(kCopyWrite, size, data, 0x88E8 /*DYNAMIC_DRAW*/);
+		g.BindBuffer(kCopyWrite, (GLuint)prev);
+	}
+	static void NamedBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr size, const void* data)
+	{
+		Load();
+		GLint prev = 0;
+		g.GetIntegerv(kCopyWrite, &prev);
+		g.BindBuffer(kCopyWrite, buffer);
+		g.BufferSubData(kCopyWrite, offset, size, data);
+		g.BindBuffer(kCopyWrite, (GLuint)prev);
+	}
+	static GLbitfield AccessToMapBits(GLenum access)
+	{
+		switch (access)
+		{
+		case 0x88B8: return 0x0001; // READ_ONLY -> MAP_READ_BIT
+		case 0x88B9: return 0x0002; // WRITE_ONLY -> MAP_WRITE_BIT
+		default: return 0x0003;
+		}
+	}
+	static void* MapBuffer(GLenum target, GLenum access)
+	{
+		Load();
+		GLint size = 0;
+		g.GetBufferParameteriv(target, kBufferSize, &size);
+		return g.MapBufferRange(target, 0, size, AccessToMapBits(access));
+	}
+	static void* MapNamedBuffer(GLuint buffer, GLenum access)
+	{
+		Load();
+		GLint prev = 0;
+		g.GetIntegerv(kCopyWrite, &prev);
+		g.BindBuffer(kCopyWrite, buffer);
+		void* p = MapBuffer(kCopyWrite, access);
+		g.BindBuffer(kCopyWrite, (GLuint)prev);
+		return p;
+	}
+	static void* MapNamedBufferRange(GLuint buffer, GLintptr offset, GLsizeiptr length, GLbitfield access)
+	{
+		Load();
+		GLint prev = 0;
+		g.GetIntegerv(kCopyWrite, &prev);
+		g.BindBuffer(kCopyWrite, buffer);
+		access &= ~(GLbitfield)0x0040; // sem PERSISTENT/COHERENT no ES
+		access &= ~(GLbitfield)0x0080;
+		void* p = g.MapBufferRange(kCopyWrite, offset, length, access);
+		g.BindBuffer(kCopyWrite, (GLuint)prev);
+		return p;
+	}
+	static void GetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void* data)
+	{
+		Load();
+		void* p = g.MapBufferRange(target, offset, size, 0x0001);
+		if (p)
+		{
+			memcpy(data, p, (size_t)size);
+			using UnmapFn = GLboolean(*)(GLenum);
+			static UnmapFn unmap = (UnmapFn)_GetOpenGLFunction(g_libGLESv3, "glUnmapBuffer");
+			if (unmap)
+				unmap(target);
+		}
+	}
+	static void GetNamedBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr size, void* data)
+	{
+		Load();
+		GLint prev = 0;
+		g.GetIntegerv(kCopyWrite, &prev);
+		g.BindBuffer(kCopyWrite, buffer);
+		GetBufferSubData(kCopyWrite, offset, size, data);
+		g.BindBuffer(kCopyWrite, (GLuint)prev);
+	}
+
+	// ---- estado simples ----
+	static void ViewportIndexedf(GLuint index, GLfloat x, GLfloat y, GLfloat w, GLfloat h)
+	{
+		Load();
+		if (index == 0)
+			g.Viewport((GLint)x, (GLint)y, (GLsizei)w, (GLsizei)h);
+	}
+	static void DrawBuffer(GLenum mode)
+	{
+		Load();
+		g.DrawBuffers(1, &mode);
+	}
+	static void ClearDepth(GLdouble d) { Load(); g.ClearDepthf((GLfloat)d); }
+	static void DepthRange(GLdouble n, GLdouble f) { Load(); g.DepthRangef((GLfloat)n, (GLfloat)f); }
+	static void Noop2(GLenum, GLenum) {}
+	static void NoopU(GLuint) {}
+	static void NoopBindFragDataLocation(GLuint, GLuint, const GLchar*) {}
+	static void NoopTexImage1D(GLenum, GLint, GLint, GLsizei, GLint, GLenum, GLenum, const void*) { Warn("texturas 1D nao existem no GLES (ignorado)"); }
+	static void NoopTexSubImage1D(GLenum, GLint, GLint, GLsizei, GLenum, GLenum, const void*) {}
+	static void NoopTexStorage1D(GLenum, GLsizei, GLenum, GLsizei) { Warn("texturas 1D nao existem no GLES (ignorado)"); }
+	static void NoopCompressedTexImage1D(GLenum, GLint, GLenum, GLsizei, GLint, GLsizei, const void*) {}
+	static void NoopCompressedTexSubImage1D(GLenum, GLint, GLint, GLsizei, GLenum, GLsizei, const void*) {}
+	static void NoopInvalidateTexImage(GLuint, GLint) {}
+	static void NoopSSBBinding(GLuint, GLuint, GLuint) {}
+	static void NoopQueryCounter(GLuint, GLenum) {}
+
+	// ---- framebuffers (DSA) ----
+	struct FboScope
+	{
+		GLint prev = 0;
+		explicit FboScope(GLuint fbo) { g.GetIntegerv(kFboBinding, &prev); g.BindFramebuffer(kDrawFbo, fbo); }
+		~FboScope() { g.BindFramebuffer(kDrawFbo, (GLuint)prev); }
+	};
+	static void NamedFramebufferTexture(GLuint fbo, GLenum attachment, GLuint texture, GLint level)
+	{
+		Load();
+		FboScope s(fbo);
+		if (texture == 0)
+			g.FramebufferTexture2D(kDrawFbo, attachment, kTex2D, 0, 0);
+		else if (g.FramebufferTexture)
+			g.FramebufferTexture(kDrawFbo, attachment, texture, level);
+		else
+			g.FramebufferTexture2D(kDrawFbo, attachment, kTex2D, texture, level);
+	}
+	static void NamedFramebufferTexture2DEXT(GLuint fbo, GLenum attachment, GLenum textarget, GLuint texture, GLint level)
+	{
+		Load();
+		FboScope s(fbo);
+		g.FramebufferTexture2D(kDrawFbo, attachment, textarget, texture, level);
+	}
+	static void NamedFramebufferTextureLayer(GLuint fbo, GLenum attachment, GLuint texture, GLint level, GLint layer)
+	{
+		Load();
+		FboScope s(fbo);
+		g.FramebufferTextureLayer(kDrawFbo, attachment, texture, level, layer);
+	}
+	static void InvalidateNamedFramebufferData(GLuint fbo, GLsizei n, const GLenum* attachments)
+	{
+		Load();
+		FboScope s(fbo);
+		g.InvalidateFramebuffer(kDrawFbo, n, attachments);
+	}
+
+	// ---- queries ----
+	static void BeginQueryIndexed(GLenum target, GLuint index, GLuint id)
+	{
+		Load();
+		if (index == 0)
+			g.BeginQuery(target, id);
+	}
+	static void EndQueryIndexed(GLenum target, GLuint index)
+	{
+		Load();
+		if (index == 0)
+			g.EndQuery(target);
+	}
+	static void GetQueryIndexediv(GLenum target, GLuint index, GLenum pname, GLint* params)
+	{
+		Load();
+		if (index == 0)
+			g.GetQueryiv(target, pname, params);
+		else if (params)
+			*params = 0;
+	}
+	static void GetQueryObjecti64v(GLuint id, GLenum pname, GLint64* params)
+	{
+		Load();
+		GLuint v = 0;
+		g.GetQueryObjectuiv(id, pname, &v);
+		*params = (GLint64)v;
+	}
+	static void GetQueryObjectiv(GLuint id, GLenum pname, GLint* params)
+	{
+		Load();
+		GLuint v = 0;
+		g.GetQueryObjectuiv(id, pname, &v);
+		*params = (GLint)v;
+	}
+
+	// ---- texturas ----
+	static void GetTextureLevelParameteriv(GLuint texture, GLint level, GLenum pname, GLint* params)
+	{
+		Load();
+		GLint prev = 0;
+		g.GetIntegerv(kTexBinding2D, &prev);
+		g.BindTexture(kTex2D, texture);
+		g.GetTexLevelParameteriv(kTex2D, level, pname, params);
+		g.BindTexture(kTex2D, (GLuint)prev);
+	}
+	// leitura da textura 2D atualmente ligada via FBO + glReadPixels
+	static void GetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void* pixels)
+	{
+		Load();
+		if (target != kTex2D || !pixels)
+			return;
+		GLint tex = 0, w = 0, h = 0;
+		g.GetIntegerv(kTexBinding2D, &tex);
+		g.GetTexLevelParameteriv(kTex2D, level, 0x1000 /*WIDTH*/, &w);
+		g.GetTexLevelParameteriv(kTex2D, level, 0x1001 /*HEIGHT*/, &h);
+		if (w <= 0 || h <= 0)
+			return;
+		GLint prevFbo = 0;
+		g.GetIntegerv(kFboBinding, &prevFbo);
+		GLuint fbo = 0;
+		g.GenFramebuffers(1, &fbo);
+		g.BindFramebuffer(0x8CA8 /*READ_FRAMEBUFFER*/, fbo);
+		g.FramebufferTexture2D(0x8CA8, 0x8CE0, kTex2D, (GLuint)tex, level);
+		if (format == 0x1907 /*GL_RGB*/ && type == 0x1401)
+		{
+			std::vector<uint8> rgba((size_t)w * (size_t)h * 4);
+			g.ReadPixels(0, 0, w, h, 0x1908, 0x1401, rgba.data());
+			uint8* dst = (uint8*)pixels;
+			for (size_t i = 0; i < (size_t)w * (size_t)h; i++)
+			{
+				dst[i * 3 + 0] = rgba[i * 4 + 0];
+				dst[i * 3 + 1] = rgba[i * 4 + 1];
+				dst[i * 3 + 2] = rgba[i * 4 + 2];
+			}
+		}
+		else
+			g.ReadPixels(0, 0, w, h, format, type, pixels);
+		g.FramebufferTexture2D(0x8CA8, 0x8CE0, kTex2D, 0, 0);
+		g.BindFramebuffer(0x8CA8, (GLuint)prevFbo);
+		g.DeleteFramebuffers(1, &fbo);
+	}
+
+	// ---- desenho ----
+	static void DrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei instanceCount, GLint baseVertex, GLuint baseInstance)
+	{
+		Load();
+		// baseInstance e emulado em _setupVertexAttributes (deslocamento dos ponteiros dos atributos por instancia)
+		g.DrawElementsInstancedBaseVertex(mode, count, type, indices, instanceCount, baseVertex);
+	}
+
+	// ---- vertex arrays (DSA) ----
+	struct VaoScope
+	{
+		GLint prev = 0;
+		explicit VaoScope(GLuint vao) { g.GetIntegerv(kVaoBinding, &prev); g.BindVertexArray(vao); }
+		~VaoScope() { g.BindVertexArray((GLuint)prev); }
+	};
+	static void CreateVertexArrays(GLsizei n, GLuint* arrays)
+	{
+		Load();
+		g.GenVertexArrays(n, arrays);
+		GLint prev = 0;
+		g.GetIntegerv(kVaoBinding, &prev);
+		for (GLsizei i = 0; i < n; i++)
+			g.BindVertexArray(arrays[i]);
+		g.BindVertexArray((GLuint)prev);
+	}
+	static void DisableVertexArrayAttrib(GLuint vao, GLuint index) { Load(); VaoScope s(vao); g.DisableVertexAttribArray(index); }
+	static void EnableVertexArrayAttrib(GLuint vao, GLuint index) { Load(); VaoScope s(vao); g.EnableVertexAttribArray(index); }
+	static void VertexArrayElementBuffer(GLuint vao, GLuint buffer) { Load(); VaoScope s(vao); g.BindBuffer(0x8893 /*ELEMENT_ARRAY_BUFFER*/, buffer); }
+	static void VertexArrayVertexBuffer(GLuint vao, GLuint bindingIndex, GLuint buffer, GLintptr offset, GLsizei stride) { Load(); VaoScope s(vao); g.BindVertexBuffer(bindingIndex, buffer, offset, stride); }
+	static void VertexArrayAttribBinding(GLuint vao, GLuint attribIndex, GLuint bindingIndex) { Load(); VaoScope s(vao); g.VertexAttribBinding(attribIndex, bindingIndex); }
+	static void VertexArrayAttribIFormat(GLuint vao, GLuint attribIndex, GLint size, GLenum type, GLuint relOffset) { Load(); VaoScope s(vao); g.VertexAttribIFormat(attribIndex, size, type, relOffset); }
+	static void VertexArrayBindingDivisor(GLuint vao, GLuint bindingIndex, GLuint divisor) { Load(); VaoScope s(vao); g.VertexBindingDivisor(bindingIndex, divisor); }
+}
+
+// instala as implementacoes acima nas funcoes que estao nulas. Retorna quantas foram instaladas.
+#define ESSHIM_SET(name, fn) do { if (!name) { name = (decltype(name))(void*)&ESShim::fn; n++; installed += #name " "; } } while (0)
+static int InstallESShims(std::string& installed)
+{
+	int n = 0;
+	// usadas SEM teste de nulo no Cemu (a falta de qualquer uma delas derrubava o app com pc=0)
+	ESSHIM_SET(glCreateBuffers, CreateBuffers);
+	ESSHIM_SET(glNamedBufferStorage, NamedBufferStorage);
+	ESSHIM_SET(glNamedBufferSubData, NamedBufferSubData);
+	ESSHIM_SET(glViewportIndexedf, ViewportIndexedf);
+	ESSHIM_SET(glDrawBuffer, DrawBuffer);
+	ESSHIM_SET(glClearDepth, ClearDepth);
+	ESSHIM_SET(glDepthRange, DepthRange);
+	ESSHIM_SET(glPolygonMode, Noop2);
+	ESSHIM_SET(glPrimitiveRestartIndex, NoopU);
+	ESSHIM_SET(glClampColor, Noop2);
+	ESSHIM_SET(glBindFragDataLocation, NoopBindFragDataLocation);
+	ESSHIM_SET(glTexImage1D, NoopTexImage1D);
+	ESSHIM_SET(glTexSubImage1D, NoopTexSubImage1D);
+	ESSHIM_SET(glTexStorage1D, NoopTexStorage1D);
+	ESSHIM_SET(glCompressedTexImage1D, NoopCompressedTexImage1D);
+	ESSHIM_SET(glCompressedTexSubImage1D, NoopCompressedTexSubImage1D);
+	ESSHIM_SET(glInvalidateTexImage, NoopInvalidateTexImage);
+	ESSHIM_SET(glShaderStorageBlockBinding, NoopSSBBinding);
+	ESSHIM_SET(glQueryCounter, NoopQueryCounter);
+	ESSHIM_SET(glGetTexImage, GetTexImage);
+	ESSHIM_SET(glMapBuffer, MapBuffer);
+	ESSHIM_SET(glMapNamedBuffer, MapNamedBuffer);
+	ESSHIM_SET(glMapNamedBufferRange, MapNamedBufferRange);
+	ESSHIM_SET(glGetBufferSubData, GetBufferSubData);
+	ESSHIM_SET(glGetNamedBufferSubData, GetNamedBufferSubData);
+	ESSHIM_SET(glNamedFramebufferTexture, NamedFramebufferTexture);
+	ESSHIM_SET(glNamedFramebufferTexture2DEXT, NamedFramebufferTexture2DEXT);
+	ESSHIM_SET(glNamedFramebufferTextureLayer, NamedFramebufferTextureLayer);
+	ESSHIM_SET(glInvalidateNamedFramebufferData, InvalidateNamedFramebufferData);
+	ESSHIM_SET(glBeginQueryIndexed, BeginQueryIndexed);
+	ESSHIM_SET(glEndQueryIndexed, EndQueryIndexed);
+	ESSHIM_SET(glGetQueryIndexediv, GetQueryIndexediv);
+	ESSHIM_SET(glGetQueryObjecti64v, GetQueryObjecti64v);
+	ESSHIM_SET(glGetQueryObjectiv, GetQueryObjectiv);
+	ESSHIM_SET(glGetTextureLevelParameteriv, GetTextureLevelParameteriv);
+	ESSHIM_SET(glDrawElementsInstancedBaseVertexBaseInstance, DrawElementsInstancedBaseVertexBaseInstance);
+	ESSHIM_SET(glCreateVertexArrays, CreateVertexArrays);
+	ESSHIM_SET(glDisableVertexArrayAttrib, DisableVertexArrayAttrib);
+	ESSHIM_SET(glEnableVertexArrayAttrib, EnableVertexArrayAttrib);
+	ESSHIM_SET(glVertexArrayElementBuffer, VertexArrayElementBuffer);
+	ESSHIM_SET(glVertexArrayVertexBuffer, VertexArrayVertexBuffer);
+	ESSHIM_SET(glVertexArrayAttribBinding, VertexArrayAttribBinding);
+	ESSHIM_SET(glVertexArrayAttribIFormat, VertexArrayAttribIFormat);
+	ESSHIM_SET(glVertexArrayBindingDivisor, VertexArrayBindingDivisor);
+	return n;
+}
+#undef ESSHIM_SET
+
 static void InstallGLStubsForMissingFunctions()
 {
+	{
+		std::string installedShims;
+		const int numShims = InstallESShims(installedShims);
+		cemuLog_log(LogType::Force, "[GL] {} funcoes desktop emuladas com chamadas do GLES: {}", numShims, installedShims);
+	}
 	std::string stubbed, detected;
 	int numStubbed = 0, numDetected = 0;
 #define GLFUNC(__type, __name)	if (!__name) { if (IsFeatureDetectedFunction(STRINGIFY(__name))) { detected += STRINGIFY(__name) " "; numDetected++; } else { __name = (__type)(void*)&GLStub_##__name; stubbed += STRINGIFY(__name) " "; numStubbed++; } }
@@ -470,6 +885,27 @@ void OpenGLRenderer::Initialize()
 	GetVendorInformation();	
 	QuerySupportedFormats();
 
+#if defined(__ANDROID__)
+	// GLES: tenta GL_EXT_clip_control (mesma semantica do ARB); sem ela, emula no vertex shader
+	if (!glClipControl && IsGLES())
+	{
+		if (IsGLExtensionSupported("GL_EXT_clip_control"))
+		{
+			void* fn = _GetOpenGLFunction(g_libGLESv3, "glClipControlEXT");
+			if (fn)
+			{
+				glClipControl = (decltype(glClipControl))fn;
+				cemuLog_log(LogType::Force, "[GL] usando GL_EXT_clip_control");
+			}
+		}
+		if (!glClipControl)
+		{
+			s_clipControlEmulated = true;
+			cemuLog_log(LogType::Force, "[GL] GL_EXT_clip_control ausente: emulando clip control (flip Y + Z 0..1) nos shaders");
+		}
+	}
+#endif
+
 #if BOOST_OS_WINDOWS
 	if (wglSwapIntervalEXT)
 		wglSwapIntervalEXT(0); // disable V-Sync per default
@@ -509,6 +945,10 @@ void OpenGLRenderer::Initialize()
 	if (glClipControl)
 	{
 		glClipControl(GL_UPPER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
+	}
+	else if (s_clipControlEmulated)
+	{
+		ApplyFrontFace();
 	}
 	else
 	{
@@ -745,7 +1185,18 @@ void OpenGLRenderer::SwapBuffers(bool swapTV, bool swapDRC)
 #if defined(__ANDROID__)
 	// ...e gera/apresenta os frames extras DEPOIS dele
 	if (swapTV)
+	{
+		// os shaders do FrameGenGL desenham em orientacao nativa (origem inferior-esquerda)
+		if (glClipControl)
+			glClipControl(GL_LOWER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
 		FrameGenGL::GenerateAfterRealSwap(&FrameGenGL_PresentMain);
+		if (glClipControl)
+		{
+			glClipControl(GL_UPPER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
+			_prevInvertY = false;
+			_prevHalfZ = false;
+		}
+	}
 #endif
 
 	if (swapTV)
@@ -1012,6 +1463,14 @@ void OpenGLRenderer::DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 ima
 		GLCanvas_MakeCurrent(false);
 }
 
+void OpenGLRenderer::ApplyFrontFace()
+{
+	bool ccw = m_guestFrontFaceCCW;
+	if (s_clipControlEmulated && !_prevInvertY)
+		ccw = !ccw; // emulando UPPER_LEFT: o flip de Y espelha o sentido (clip control preserva o sentido no clip space)
+	glFrontFace(ccw ? GL_CCW : GL_CW);
+}
+
 void OpenGLRenderer::renderTarget_setViewport(float x, float y, float width, float height, float nearZ, float farZ, bool halfZ /*= false*/)
 {
 	if (prevNearZ != nearZ || prevFarZ != farZ || _prevHalfZ != halfZ)
@@ -1043,6 +1502,14 @@ void OpenGLRenderer::renderTarget_setViewport(float x, float y, float width, flo
 			glClipControl(GL_UPPER_LEFT, clipDepth); // DX style (default for GX2)
 		_prevInvertY = invertY;
 		_prevHalfZ = halfZ;
+	}
+	else if (s_clipControlEmulated && (_prevInvertY != invertY || _prevHalfZ != halfZ))
+	{
+		const bool invertChanged = (_prevInvertY != invertY);
+		_prevInvertY = invertY;
+		_prevHalfZ = halfZ;
+		if (invertChanged)
+			ApplyFrontFace(); // o flip de Y inverte o sentido dos poligonos
 	}
 
 	if (prevViewportX == x && prevViewportY == y && prevViewportWidth == width && prevViewportHeight == height)
@@ -2143,11 +2610,12 @@ void OpenGLRenderer::renderstate_updateBlendingAndColorControl()
 	if (prevCullFrontFace != frontFace)
 	{
 		if (frontFace == Latte::LATTE_PA_SU_SC_MODE_CNTL::E_FRONTFACE::CCW)
-			glFrontFace(GL_CCW);
+			m_guestFrontFaceCCW = true;
 		else if (frontFace == Latte::LATTE_PA_SU_SC_MODE_CNTL::E_FRONTFACE::CW)
-			glFrontFace(GL_CW);
+			m_guestFrontFaceCCW = false;
 		else
 			cemu_assert_unimplemented();
+		ApplyFrontFace();
 		prevCullFrontFace = frontFace;
 	}
 	if (prevCullFront != cullFront || prevCullBack != cullBack)

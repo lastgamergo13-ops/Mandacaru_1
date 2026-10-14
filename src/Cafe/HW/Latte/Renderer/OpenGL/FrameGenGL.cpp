@@ -983,14 +983,11 @@ namespace FrameGenGL
 
 		const int mult = std::clamp(S.multiplier, 2, 4);
 		const int curIdx = S.curIdx, prevIdx = 1 - S.curIdx;
-		const auto t0 = (S.lastCapture != std::chrono::steady_clock::time_point{}) ? S.lastCapture : std::chrono::steady_clock::now();
-
 		for (int k = 1; k < mult; k++)
 		{
 			const float progress = (float)k / (float)mult;
-			const auto target = t0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(S.realInterval * progress));
-			if (target > std::chrono::steady_clock::now())
-				std::this_thread::sleep_until(target);
+			// SEM sleep: dormir na thread do Latte atrasava o proximo frame real (FPS real caia ~pela metade).
+			// O ritmo vem do proprio eglSwapBuffers (v-sync) do swap do frame gerado.
 
 			{
 				StateGuard guard;

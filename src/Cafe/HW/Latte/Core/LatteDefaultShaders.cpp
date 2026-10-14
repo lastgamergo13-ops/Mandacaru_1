@@ -3,13 +3,14 @@
 #include "Cafe/HW/Latte/Core/LatteShader.h"
 #include "Cafe/HW/Latte/Core/LatteDefaultShaders.h"
 #include "util/helpers/StringBuf.h"
+#include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h" // OpenGLRenderer::IsGLES()
 
 LatteDefaultShader_t* _copyShader_depthToColor;
 LatteDefaultShader_t* _copyShader_colorToDepth;
 
 void LatteDefaultShader_pixelCopyShader_generateVSBody(StringBuf* vs)
 {
-	vs->add("#version 420\r\n");
+	vs->add(OpenGLRenderer::IsGLES() ? "#version 320 es\r\nprecision highp float;\r\nprecision highp int;\r\n" : "#version 420\r\n");
 	vs->add("out vec2 passUV;\r\n");
 	vs->add("uniform vec4 uf_vertexOffsets[4];\r\n");
 	vs->add("\r\n");
@@ -17,6 +18,8 @@ void LatteDefaultShader_pixelCopyShader_generateVSBody(StringBuf* vs)
 	vs->add("int vID = gl_VertexID;\r\n");
 	vs->add("passUV = uf_vertexOffsets[vID].zw;\r\n");
 	vs->add("gl_Position = vec4(uf_vertexOffsets[vID].xy, 0.0, 1.0);\r\n");
+	if (OpenGLRenderer::IsClipControlEmulated())
+		vs->add("gl_Position.y = -gl_Position.y;\r\n"); // emula origem UPPER_LEFT
 	vs->add("}\r\n");
 }
 
@@ -35,7 +38,7 @@ LatteDefaultShader_t* LatteDefaultShader_getPixelCopyShader_depthToColor()
 	LatteDefaultShader_pixelCopyShader_generateVSBody(&fCStr_vertexShader);
 
 	StringBuf fCStr_defaultFragShader(1024 * 16);
-	fCStr_defaultFragShader.add("#version 420\r\n");
+	fCStr_defaultFragShader.add(OpenGLRenderer::IsGLES() ? "#version 320 es\r\nprecision highp float;\r\nprecision highp int;\r\nprecision highp sampler2D;\r\n" : "#version 420\r\n");
 	fCStr_defaultFragShader.add("in vec2 passUV;\r\n");
 	fCStr_defaultFragShader.add("uniform sampler2D textureSrc;\r\n");
 	fCStr_defaultFragShader.add("layout(location = 0) out vec4 colorOut0;\r\n");
@@ -67,7 +70,7 @@ LatteDefaultShader_t* LatteDefaultShader_getPixelCopyShader_colorToDepth()
 	LatteDefaultShader_pixelCopyShader_generateVSBody(&fCStr_vertexShader);
 
 	StringBuf fCStr_defaultFragShader(1024 * 16);
-	fCStr_defaultFragShader.add("#version 420\r\n");
+	fCStr_defaultFragShader.add(OpenGLRenderer::IsGLES() ? "#version 320 es\r\nprecision highp float;\r\nprecision highp int;\r\nprecision highp sampler2D;\r\n" : "#version 420\r\n");
 	fCStr_defaultFragShader.add("in vec2 passUV;\r\n");
 	fCStr_defaultFragShader.add("uniform sampler2D textureSrc;\r\n");
 	fCStr_defaultFragShader.add("layout(location = 0) out vec4 colorOut0;\r\n");

@@ -2321,7 +2321,11 @@ void VulkanRenderer::SubmitCommandBuffer(VkSemaphore signalSemaphore, VkSemaphor
 	submitInfo.pWaitSemaphores = waitSemArray;
 
 	CRUMB("VulkanRenderer: vkQueueSubmit (comandos do jogo)");
-	const VkResult result = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_cmdBufferFences[m_commandBufferIndex]);
+	VkResult result;
+	{
+		std::lock_guard<std::mutex> queueLock(FrameGenQueueMutex()); // a thread de apresentacao do frame gen usa a mesma fila
+		result = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_cmdBufferFences[m_commandBufferIndex]);
+	}
 	if (result != VK_SUCCESS)
 	{
 		const char* name = result == VK_ERROR_DEVICE_LOST ? "VK_ERROR_DEVICE_LOST (a GPU travou/reiniciou)" :
@@ -3613,7 +3617,11 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 	}
 
 	CRUMB("VulkanRenderer: vkQueuePresentKHR");
-	VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+	VkResult result;
+	{
+		std::lock_guard<std::mutex> queueLock(FrameGenQueueMutex());
+		result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+	}
 	if (result < 0 && result != VK_ERROR_OUT_OF_DATE_KHR)
 	{
 		cemuLog_log(LogType::Force, "[Diag] vkQueuePresentKHR falhou: {} ({})", (int)result, AndroidDiag::VkResultName((int)result));

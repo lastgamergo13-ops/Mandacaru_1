@@ -561,3 +561,12 @@ Para portar o frame gen ao GLES sem subgroup ops: usar a variante "sem wave" (FF
 
 --- V11.17 (GL ES, implementacao) ---
 Ao integrar num renderer GL existente: carregue os ponteiros GL proprios (dlsym libGLESv3) para nao depender dos headers do emulador; salve/restaure o estado GL (o emulador mantem cache de estado); capture com glCopyTexSubImage2D antes do eglSwapBuffers; reescreva o binding do UBO dos shaders para um indice alto; gere os frames extras logo apos o swap real.
+
+--- V11.18 (licao de pacing) ---
+NUNCA durma na thread de renderizacao para espacar o frame gerado: com periodo P = W + g + 0.5*P o FPS real vira metade e o ganho some. Submeta a GPU na hora e deixe uma thread propria esperar o horario e chamar vkQueuePresentKHR (com mutex na VkQueue e espera da fila antes do proximo present real / recriar swapchain).
+
+
+--- V11.20 (nota) ---
+Pacote cumulativo pacote-v11-20-completo-cumulativo.zip: backend OpenGL ES ganhou clip control
+(EXT ou emulado nos shaders), baseInstance emulado e shaders GLSL ES. Nenhuma mudanca no backend
+Vulkan; detalhes em porte-opengl-framegen-cemu-android.txt.

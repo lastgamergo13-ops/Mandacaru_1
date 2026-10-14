@@ -34,6 +34,19 @@
 #include <cstdint>
 #include <memory>
 #include <chrono>
+#include <mutex>
+
+// ---------------------------------------------------------------------------------------------
+// Fila de apresentacao dos frames GERADOS em thread propria + mutex da fila Vulkan.
+// Motivo: antes a thread do Latte dormia ~meio intervalo entre frames reais (sleep_until) para espacar o frame
+// gerado. Isso travava o proximo frame real e o FPS real caia pela metade (total ~ igual ao FPS sem frame gen).
+// Agora a thread do Latte so grava+submete o trabalho de GPU; quem espera o horario e chama vkQueuePresentKHR e
+// a thread "FrameGenPresent". Como duas threads passam a usar a mesma VkQueue, TODO vkQueueSubmit/vkQueuePresentKHR
+// deve segurar FrameGenQueueMutex() (VulkanRenderer.cpp e swapchain_vk.cpp).
+// ---------------------------------------------------------------------------------------------
+std::mutex& FrameGenQueueMutex();
+// espera todos os presents de frames gerados pendentes (chamar antes do present real, de destruir/recriar swapchain)
+void FrameGenPresenterWaitIdle();
 
 class VulkanRenderer;
 class VKRMemoryManager;
@@ -109,7 +122,7 @@ private:
 
 	// --- Multiplicador, pacing e limite de FPS base ---
 	// Apresenta UM frame gerado. runOpticalFlow so no primeiro de cada frame real.
-	bool PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset, bool runOpticalFlow, float progress);
+	bool PresentGeneratedFrame(SwapchainInfoVk& chainInfo, VkQueue presentQueue, bool reset, bool runOpticalFlow, float progress, std::chrono::steady_clock::time_point presentAt);
 	void ApplyBaseFpsLimit();
 	int m_multiplier = 2;
 	int m_baseFpsLimit = 0;

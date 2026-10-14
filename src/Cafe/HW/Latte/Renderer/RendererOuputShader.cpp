@@ -32,9 +32,9 @@ vec4 cubic(float x)
 	float x2 = x * x;
 	float x3 = x2 * x;
 	vec4 w;
-	w.x = -x3 + 3 * x2 - 3 * x + 1;
-	w.y = 3 * x3 - 6 * x2 + 4;
-	w.z = -3 * x3 + 3 * x2 + 3 * x + 1;
+	w.x = -x3 + 3.0 * x2 - 3.0 * x + 1.0;
+	w.y = 3.0 * x3 - 6.0 * x2 + 4.0;
+	w.z = -3.0 * x3 + 3.0 * x2 + 3.0 * x + 1.0;
 	w.w = x3;
 	return w / 6.0;
 }
@@ -79,9 +79,9 @@ float4 cubic(float x) {
 	float x2 = x * x;
 	float x3 = x2 * x;
 	float4 w;
-	w.x = -x3 + 3 * x2 - 3 * x + 1;
-	w.y = 3 * x3 - 6 * x2 + 4;
-	w.z = -3 * x3 + 3 * x2 + 3 * x + 1;
+	w.x = -x3 + 3.0 * x2 - 3.0 * x + 1.0;
+	w.y = 3.0 * x3 - 6.0 * x2 + 4.0;
+	w.z = -3.0 * x3 + 3.0 * x2 + 3.0 * x + 1.0;
 	w.w = x3;
 	return w / 6.0;
 }
@@ -565,9 +565,11 @@ void main(){
 
 		vertex_source <<
 			R"(	passUV = vUV;
-	gl_Position = vec4(vPos, 0.0, 1.0);
-}
 )";
+		if (OpenGLRenderer::IsClipControlEmulated())
+			vertex_source << "\tgl_Position = vec4(vPos.x, -vPos.y, 0.0, 1.0);\n}\n"; // emula origem UPPER_LEFT
+		else
+			vertex_source << "\tgl_Position = vec4(vPos, 0.0, 1.0);\n}\n";
 		return vertex_source.str();
 }
 

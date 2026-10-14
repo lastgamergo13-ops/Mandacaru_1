@@ -607,6 +607,10 @@ void OpenGLRenderer::buffer_bindUniformBuffer(LatteConst::ShaderType shaderType,
 
 void LatteDraw_resetAttributePointerCache();
 
+// baseInstance do draw atual (GLES nao tem glDrawElementsInstancedBaseVertexBaseInstance de forma confiavel:
+// emulado deslocando os ponteiros dos atributos por instancia em _setupVertexAttributes)
+static uint32 s_drawBaseInstance = 0;
+
 void _resetAttributes(LatteParsedFetchShaderBufferGroup_t* attribGroup, bool* attributeArrayUsed)
 {
 	for (sint32 i = 0; i < attribGroup->attribCount; i++)
@@ -680,6 +684,8 @@ void OpenGLRenderer::_setupVertexAttributes()
 
 			uint8* vboGLPtr;
 			vboGLPtr = (uint8*)(size_t)(vboDataOffset + attrib->offset);
+			if (OpenGLRenderer::IsGLES() && s_drawBaseInstance != 0 && bufferStride != 0 && attrib->aluDivisor > 0)
+				vboGLPtr += (size_t)(s_drawBaseInstance / (uint32)attrib->aluDivisor) * bufferStride; // emula baseInstance
 			_setAttributeBufferPointerRaw(attributeShaderLocation, NULL, 0, bufferStride, attrib, vboGLPtr, bufferStride);
 
 			attributeArrayUsed[attributeShaderLocation] = true;
@@ -700,25 +706,37 @@ RendererShaderGL* rectsEmulationGS_generateShaderGL(LatteDecompilerShader* verte
 {
 	LatteShaderPSInputTable* psInputTable = LatteSHRC_GetPSInputTable();
 
+	const bool isGLES = OpenGLRenderer::IsGLES();
 	std::string gsSrc;
-	gsSrc.append("#version 450\r\n");
+	if (isGLES)
+	{
+		// GLSL ES 3.2 has geometry shaders in core. No gl_PerVertex redeclaration is needed (the built-in blocks are used as they are)
+		gsSrc.append("#version 320 es\r\n");
+		gsSrc.append("precision highp float;\r\n");
+		gsSrc.append("precision highp int;\r\n");
+	}
+	else
+		gsSrc.append("#version 450\r\n");
 
 	// layout
 	gsSrc.append("layout(triangles) in;\r\n");
 	gsSrc.append("layout(triangle_strip) out;\r\n");
 	gsSrc.append("layout(max_vertices = 4) out;\r\n");
 
-	// gl_PerVertex input
+	if (!isGLES)
+	{
+		// gl_PerVertex input
 
-	gsSrc.append("in gl_PerVertex {\r\n");
-	gsSrc.append("vec4 gl_Position;\r\n");
-	gsSrc.append("} gl_in[];\r\n");
+		gsSrc.append("in gl_PerVertex {\r\n");
+		gsSrc.append("vec4 gl_Position;\r\n");
+		gsSrc.append("} gl_in[];\r\n");
 
-	// gl_PerVertex output
+		// gl_PerVertex output
 
-	gsSrc.append("out gl_PerVertex {\r\n");
-	gsSrc.append("vec4 gl_Position;\r\n");
-	gsSrc.append("};\r\n");
+		gsSrc.append("out gl_PerVertex {\r\n");
+		gsSrc.append("vec4 gl_Position;\r\n");
+		gsSrc.append("};\r\n");
+	}
 
 	// inputs & outputs
 	auto parameterMask = vertexShader->outputParameterMask;
@@ -738,7 +756,7 @@ RendererShaderGL* rectsEmulationGS_generateShaderGL(LatteDecompilerShader* verte
 			gsSrc.append(fmt::format("layout(location = {}) ", psInputTable->getPSImportLocationBySemanticId(vsSemanticId)));
 			if (psImport->isFlat)
 				gsSrc.append("flat ");
-			if (psImport->isNoPerspective)
+			if (psImport->isNoPerspective && !isGLES) // GLSL ES has no noperspective
 				gsSrc.append("noperspective ");
 
 			if (f == 0)
@@ -978,6 +996,7 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 	uint8 stageUniformModifiedMask = 0;
 	LatteBufferCache_Sync(indexState.maxIndex + baseVertex, baseInstance, instanceCount, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, stageUniformModifiedMask);
 
+	s_drawBaseInstance = baseInstance;
 	_setupVertexAttributes();
 
 	// update renderstate
@@ -1023,6 +1042,16 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 			t[1] = 2.0f / (float)viewportHeight;
 			glProgramUniform2fv(vertexShaderGL->GetProgram(), vertexShader->uniform.loc_windowSpaceToClipSpaceTransform, 1, t);
 		}
+		// GLES sem clip control: flip de Y (uf_clipFlipY)
+		if (vertexShader->uniform.loc_clipFlipY >= 0)
+		{
+			const float flipY = GetClipFlipY();
+			if (vertexShader->uniform.ufCurrentValueClipFlipY != flipY)
+			{
+				glProgramUniform1fv(vertexShaderGL->GetProgram(), vertexShader->uniform.loc_clipFlipY, 1, &flipY);
+				vertexShader->uniform.ufCurrentValueClipFlipY = flipY;
+			}
+		}
 		// update uf_texRescaleFactors
 		for (auto& entry : vertexShader->uniform.list_ufTexRescale)
 		{
@@ -1046,6 +1075,15 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 	if (geometryShader)
 	{
 		auto geometryShaderGL = (RendererShaderGL*)geometryShader->shader;
+		if (geometryShader->uniform.loc_clipFlipY >= 0)
+		{
+			const float flipY = GetClipFlipY();
+			if (geometryShader->uniform.ufCurrentValueClipFlipY != flipY)
+			{
+				glProgramUniform1fv(geometryShaderGL->GetProgram(), geometryShader->uniform.loc_clipFlipY, 1, &flipY);
+				geometryShader->uniform.ufCurrentValueClipFlipY = flipY;
+			}
+		}
 		// update uf_texRescaleFactors
 		for (auto& entry : geometryShader->uniform.list_ufTexRescale)
 		{

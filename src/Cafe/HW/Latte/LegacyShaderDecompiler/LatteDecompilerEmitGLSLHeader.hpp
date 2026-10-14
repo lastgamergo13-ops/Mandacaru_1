@@ -63,6 +63,15 @@ namespace LatteDecompiler
 			uniformOffsets.offset_windowSpaceToClipSpaceTransform = uniformCurrentOffset;
 			uniformCurrentOffset += 8;
 		}
+		// GLES sem clip control: ultimo estagio antes do rasterizador recebe o flip de Y (UPPER_LEFT)
+		if (rendererType == RendererAPI::OpenGL && OpenGLRenderer::IsClipControlEmulated() &&
+			((decompilerContext->shaderType == LatteConst::ShaderType::Vertex && !decompilerContext->options->usesGeometryShader) ||
+			decompilerContext->shaderType == LatteConst::ShaderType::Geometry))
+		{
+			uniformCurrentOffset = (uniformCurrentOffset + 3)&~3;
+			shaderSrc->add("uniform float uf_clipFlipY;" _CRLF);
+			uniformCurrentOffset += 4;
+		}
 		bool alphaTestEnable = decompilerContext->contextRegistersNew->SX_ALPHA_TEST_CONTROL.get_ALPHA_TEST_ENABLE();
 		if (decompilerContext->shaderType == LatteConst::ShaderType::Pixel && alphaTestEnable)
 		{
@@ -326,9 +335,26 @@ namespace LatteDecompiler
 			if (decompilerContext->analyzer.hasStreamoutWrite)
 				src->add("#define XFB_BLOCK_LAYOUT(__bufferIndex, __stride, __location) layout(xfb_buffer = __bufferIndex, xfb_stride = __stride)" _CRLF);
 
-			src->add("#define SET_POSITION(_v) gl_Position = _v\r\n");
+			if (OpenGLRenderer::IsClipControlEmulated())
+			{
+				// sem glClipControl: Y invertido (UPPER_LEFT) e Z 0..w -> -w..w feitos aqui
+				if (decompilerContext->shaderType == LatteConst::ShaderType::Vertex && decompilerContext->options->usesGeometryShader)
+					src->add("#define SET_POSITION(_v) gl_Position = _v" _CRLF); // o GS aplica
+				else if (decompilerContext->contextRegistersNew->PA_CL_CLIP_CNTL.get_DX_CLIP_SPACE_DEF())
+					src->add("#define SET_POSITION(_v) gl_Position = _v; gl_Position.y *= uf_clipFlipY; gl_Position.z = gl_Position.z * 2.0 - gl_Position.w" _CRLF);
+				else
+					src->add("#define SET_POSITION(_v) gl_Position = _v; gl_Position.y *= uf_clipFlipY" _CRLF);
+			}
+			else
+				src->add("#define SET_POSITION(_v) gl_Position = _v\r\n");
 			if (decompilerContext->options->usesGeometryShader)
-				src->add("#define V2G_LAYOUT" _CRLF);
+			{
+				// GLSL ES requires explicit locations on separable program interfaces
+				if (OpenGLRenderer::IsGLES())
+					src->add("#define V2G_LAYOUT layout(location = 0)" _CRLF);
+				else
+					src->add("#define V2G_LAYOUT" _CRLF);
+			}
 		}
 		else if (decompilerContext->shaderType == LatteConst::ShaderType::Pixel && decompilerContext->analyzer.hasFragCoordAccess)
 		{
@@ -406,7 +432,7 @@ namespace LatteDecompiler
 			src->addFmt("layout(location = {}) ", psInputIndex);
 			if (psInputTable->import[psInputIndex].isFlat)
 				src->add("flat ");
-			if (psInputTable->import[psInputIndex].isNoPerspective)
+			if (psInputTable->import[psInputIndex].isNoPerspective && !OpenGLRenderer::IsGLES()) // GLSL ES has no noperspective
 				src->add("noperspective ");
 			src->add("out");
 			src->addFmt(" vec4 passParameterSem{};" _CRLF, psInputTable->import[psInputIndex].semanticId);
@@ -424,7 +450,7 @@ namespace LatteDecompiler
 			src->addFmt("layout(location = {}) ", i);
 			if (psInputTable->import[i].isFlat)
 				src->add("flat ");
-			if (psInputTable->import[i].isNoPerspective)
+			if (psInputTable->import[i].isNoPerspective && !OpenGLRenderer::IsGLES()) // GLSL ES has no noperspective
 				src->add("noperspective ");
 			src->add("in");
 			src->addFmt(" vec4 passParameterSem{};" _CRLF, psInputTable->import[i].semanticId);
@@ -514,7 +540,7 @@ namespace LatteDecompiler
 					src->addFmt("layout(location = {}) ", location);
 					if (psInputTable->import[i].isFlat)
 						src->add("flat ");
-					if (psInputTable->import[i].isNoPerspective)
+					if (psInputTable->import[i].isNoPerspective && !OpenGLRenderer::IsGLES()) // GLSL ES has no noperspective
 						src->add("noperspective ");
 					if (decompilerContext->shaderType == LatteConst::ShaderType::Vertex)
 						src->add("out");
