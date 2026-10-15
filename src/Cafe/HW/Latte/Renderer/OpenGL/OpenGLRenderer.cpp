@@ -891,7 +891,7 @@ void OpenGLRenderer::Initialize()
 	{
 		if (IsGLExtensionSupported("GL_EXT_clip_control"))
 		{
-			void* fn = _GetOpenGLFunction(g_libGLESv3, "glClipControlEXT");
+			void* fn = (void*)_GetOpenGLFunction(g_libGLESv3, "glClipControlEXT");
 			if (fn)
 			{
 				glClipControl = (decltype(glClipControl))fn;
