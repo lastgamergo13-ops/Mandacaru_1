@@ -296,6 +296,10 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 #include <dlfcn.h>
 #include <mutex>
 #include <unordered_map>
+
+#if defined(__ANDROID__)
+static void _glDebugCallbackAndroid(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam);
+#endif
 #include <unordered_set>
 #include <cstring>
 #include <string>

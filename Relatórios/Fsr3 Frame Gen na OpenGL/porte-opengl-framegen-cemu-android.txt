@@ -366,3 +366,5 @@ V11.24 - Frame Gen no menu lateral, drivers Mali, texto invisivel
 - Menu esquerdo em jogo: item "FSR3 Frame Gen" (liga/desliga) SEMPRE visivel + "painel em jogo". Antes o item sumia ao desligar. O painel direito segue aberto ao desligar.
 - Drivers custom: instalacao nao e mais bloqueada por minApi (PanVK declara minApi 35). O hook da libadrenotools troca qualquer HAL "vulkan.*.so" (inclui vulkan.mali.so); o log agora lista /dev/mali0 e os HAL Vulkan do sistema. NAO testado em Mali.
 - Texto invisivel (Moto G54): tema do app seguia o modo CLARO do sistema, com fundos fixos escuros -> texto escuro sobre escuro. Agora o tema e sempre escuro (Theme.kt, themes.xml).
+
+V11.24b - Correcao de build: _glDebugCallbackAndroid usado em Initialize() antes de ser definido; adicionada declaracao antecipada em OpenGLRenderer.cpp.
