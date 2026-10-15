@@ -4,6 +4,7 @@
 // mostra quais shaders estavam nos ultimos submits - e, no modo de sincronizacao (arquivo
 // "vk_sync_debug" na pasta de dados do usuario), exatamente os do submit que travou.
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
+#include "Cafe/HW/Latte/LegacyShaderDecompiler/LatteDecompiler.h"
 #include "Cemu/Logging/CemuLogging.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceFlag.h"
 #include <fmt/format.h>
