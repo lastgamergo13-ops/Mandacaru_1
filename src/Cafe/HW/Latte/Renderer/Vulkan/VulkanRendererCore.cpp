@@ -1,5 +1,6 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/RendererShaderVk.h"
@@ -1464,6 +1465,7 @@ void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, 
 	{
 		CRUMB("Latte draw: vkCmdBindPipeline");
 		vkCmdBindPipeline(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->GetPipeline());
+		DrawTraceVk::Add((uint64_t)m_numSubmittedCmdBuffers, pipeline_info);
 		vkObjPipeline->flagForCurrentCommandBuffer();
 		m_state.currentPipeline = vkObjPipeline->GetPipeline();
 		// depth bias
@@ -1670,6 +1672,7 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 	{
 		CRUMB("Latte draw: vkCmdBindPipeline");
 		vkCmdBindPipeline(m_state.currentCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkObjPipeline->GetPipeline());
+		DrawTraceVk::Add((uint64_t)m_numSubmittedCmdBuffers, pipeline_info);
 		vkObjPipeline->flagForCurrentCommandBuffer();
 		m_state.currentPipeline = vkObjPipeline->GetPipeline();
 		// depth bias

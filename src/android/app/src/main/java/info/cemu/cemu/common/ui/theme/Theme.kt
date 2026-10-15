@@ -1,7 +1,6 @@
 package info.cemu.cemu.common.ui.theme
 
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -16,7 +15,9 @@ private val LightColorScheme = lightColorScheme()
 
 @Composable
 fun CemuTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    // O app inteiro usa o visual escuro (fundos fixos do SteamDeckColors). Seguir o modo claro do sistema
+    // deixava o texto escuro sobre fundo escuro (texto invisivel em celulares com tema claro).
+    darkTheme: Boolean = true,
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {

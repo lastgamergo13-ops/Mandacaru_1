@@ -44,6 +44,13 @@ object NativeSettings {
     @JvmStatic
     external fun setFsr3FrameGen(value: Boolean)
 
+    // Diagnostico Vulkan (sync por submit + rastreio de pipelines). Resultado em vk_trace.txt.
+    @JvmStatic
+    external fun getVkSyncDebug(): Boolean
+
+    @JvmStatic
+    external fun setVkSyncDebug(value: Boolean)
+
     // Opcoes do FSR3 Frame Gen / FSR Upscale (valem para todos os jogos, salvo perfil do jogo).
     // key: 0 frame gen (0/1) | 1 multiplicador (2..4) | 2 flow scale % (50/75/100)
     //      3 modo performance (0/1) | 4 limite de FPS base (0/30/40/60) | 5 FSR upscale (0/1)

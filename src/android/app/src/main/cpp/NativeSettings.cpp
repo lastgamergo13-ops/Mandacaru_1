@@ -3,6 +3,7 @@
 #include "AndroidMemoryManager.h"
 #include "audio/IAudioAPI.h"
 #include "config/CemuConfig.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceFlag.h"
 #include "config/NetworkSettings.h"
 
 extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
@@ -835,4 +836,17 @@ extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_saveSettings([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
 	GetConfigHandle().Save();
+}
+
+// Diagnostico Vulkan (sync por submit + rastreio de pipelines). Vale na hora; resultado em vk_trace.txt.
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getVkSyncDebug([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return DrawTraceVk::IsSyncEnabled();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setVkSyncDebug([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	DrawTraceVk::SetSyncEnabled(enabled);
 }

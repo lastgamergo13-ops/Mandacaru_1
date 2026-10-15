@@ -295,6 +295,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 #elif defined(__ANDROID__)
 #include <dlfcn.h>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <cstring>
 #include <string>
@@ -886,6 +887,14 @@ void OpenGLRenderer::Initialize()
 	QuerySupportedFormats();
 
 #if defined(__ANDROID__)
+	if (glDebugMessageCallback)
+	{
+		glEnable(GL_DEBUG_OUTPUT);
+		glDebugMessageCallback(_glDebugCallbackAndroid, NULL);
+		cemuLog_log(LogType::Force, "[GL] KHR_debug ativo (mensagens do driver em [GLDEBUG])");
+	}
+#endif
+#if defined(__ANDROID__)
 	// GLES: tenta GL_EXT_clip_control (mesma semantica do ARB); sem ela, emula no vertex shader
 	if (!glClipControl && IsGLES())
 	{
@@ -1158,6 +1167,24 @@ void _glDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GL
 
 	cemu_assert_debug(false);
 }
+
+#if defined(__ANDROID__)
+// GLES: registra mensagens do driver (KHR_debug, nucleo no ES 3.2) com limite e sem repeticao, para diagnosticar
+// o que o renderer faz de errado em cada jogo. So loga erros/comportamento indefinido/portabilidade/severidade alta.
+static void _glDebugCallbackAndroid(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam)
+{
+	if (severity == GL_DEBUG_SEVERITY_NOTIFICATION || severity == GL_DEBUG_SEVERITY_LOW)
+		return;
+	static std::mutex m;
+	static std::unordered_map<uint32, int> perId;
+	static int total = 0;
+	std::lock_guard<std::mutex> l(m);
+	if (++perId[id] > 2 || total >= 250)
+		return;
+	total++;
+	cemuLog_log(LogType::Force, "[GLDEBUG] tipo=0x{:x} sev=0x{:x} id={}: {}", (uint32)type, (uint32)severity, (uint32)id, message ? message : "");
+}
+#endif
 
 void OpenGLRenderer::EnableDebugMode()
 {

@@ -1,6 +1,7 @@
 #include "Cafe/HW/Latte/Core/FrameGenSettings.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
@@ -2333,7 +2334,23 @@ void VulkanRenderer::SubmitCommandBuffer(VkSemaphore signalSemaphore, VkSemaphor
 			result == VK_ERROR_OUT_OF_DEVICE_MEMORY ? "VK_ERROR_OUT_OF_DEVICE_MEMORY" : "outro";
 		cemuLog_log(LogType::Force, "[Diag] vkQueueSubmit falhou: {} ({}) cmdBufIndex={} totalSubmetidos={} aguardaSemaforoExterno={} waitSemaforos={}",
 			(int)result, name, (int)m_commandBufferIndex, (uint64)m_numSubmittedCmdBuffers, waitSemaphore != VK_NULL_HANDLE, (int)submitInfo.waitSemaphoreCount);
+		if (result == VK_ERROR_DEVICE_LOST)
+		{
+			const uint64 cur = (uint64)m_numSubmittedCmdBuffers;
+			DrawTraceVk::Dump(cur > 8 ? cur - 8 : 0, cur);
+		}
 		UnrecoverableError(fmt::format("failed to submit command buffer. Error {}", result).c_str());
+	}
+	// Modo de diagnostico (botao em Experimental/Hackers): espera cada submit terminar. Assim a GPU travada
+	// e detectada no submit EXATO (e os shaders dele aparecem em [VkTrace] / vk_trace.txt).
+	if (DrawTraceVk::IsSyncEnabled())
+	{
+		const VkResult waitRes = vkWaitForFences(m_logicalDevice, 1, &m_cmdBufferFences[m_commandBufferIndex], VK_TRUE, 5000000000ull);
+		if (waitRes == VK_ERROR_DEVICE_LOST || waitRes == VK_TIMEOUT)
+		{
+			DrawTraceVk::Log("[VkTrace] submit {} {} - pipelines desse submit:", (uint64)m_numSubmittedCmdBuffers, waitRes == VK_TIMEOUT ? "NAO terminou em 5s (GPU travada?)" : "causou VK_ERROR_DEVICE_LOST");
+			DrawTraceVk::Dump((uint64)m_numSubmittedCmdBuffers, (uint64)m_numSubmittedCmdBuffers);
+		}
 	}
 	m_numSubmittedCmdBuffers++;
 

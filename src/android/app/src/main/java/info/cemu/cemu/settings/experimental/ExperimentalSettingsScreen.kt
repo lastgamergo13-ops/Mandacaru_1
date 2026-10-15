@@ -7,6 +7,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+import info.cemu.cemu.common.cemufiles.tryShareVkTraceFile
+import info.cemu.cemu.common.cemufiles.vkTraceFileExists
 import info.cemu.cemu.common.ui.components.Button
 import info.cemu.cemu.common.ui.components.ScreenContent
 import info.cemu.cemu.common.ui.components.ScrollableDialog
@@ -54,6 +58,8 @@ private fun InfoDialogButton(title: String, explanation: String) {
  */
 @Composable
 fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettings: () -> Unit) {
+    val context = LocalContext.current
+    var vkSyncDebug by rememberSaveable { mutableStateOf(NativeSettings.getVkSyncDebug()) }
     var memoryBrakeEnabled by rememberSaveable { mutableStateOf(NativeSettings.isMemoryUsageBrakeEnabled()) }
     ScreenContent(
         appBarText = tr("Experimental/Hackers"),
@@ -67,6 +73,27 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
                         "here is opt-in and may be unstable. If something here misbehaves, it's always " +
                         "safe to switch it back off."
             ),
+        )
+        Toggle(
+            label = tr("Vulkan diagnostic log"),
+            description = tr(
+                "Liga o diagnostico do Vulkan: espera cada submit da GPU terminar (MAIS LENTO) e, se a GPU " +
+                        "travar (VK_ERROR_DEVICE_LOST), grava os shaders do submit que travou em vk_trace.txt. " +
+                        "Use so para gerar o log e depois desligue. Vale na hora."
+            ),
+            initialCheckedState = { vkSyncDebug },
+            onCheckedChanged = {
+                vkSyncDebug = it
+                NativeSettings.setVkSyncDebug(it)
+            },
+        )
+        Button(
+            label = tr("Share Vulkan diagnostic log"),
+            description = tr("Escolha onde salvar/enviar o vk_trace.txt (igual ao Share log file)."),
+            onClick = {
+                if (!vkTraceFileExists() || !tryShareVkTraceFile(context))
+                    Toast.makeText(context, tr("Nenhum log de diagnostico ainda. Ligue o diagnostico e reproduza o problema."), Toast.LENGTH_LONG).show()
+            },
         )
         InfoDialogButton(
             title = tr("Render API"),

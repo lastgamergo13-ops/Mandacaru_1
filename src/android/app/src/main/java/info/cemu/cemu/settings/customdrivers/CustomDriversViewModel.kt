@@ -4,7 +4,6 @@ package info.cemu.cemu.settings.customdrivers
 
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import info.cemu.cemu.common.customdrivers.DriverMetadata
@@ -89,10 +88,11 @@ class CustomDriversViewModel : ViewModel() {
                     unzip(it, tempDir)
                 }
 
+                // minApi nao bloqueia mais a instalacao (drivers Mali/PanVK declaram minApi alto, mas o
+                // usuario decide). Se o driver nao carregar, o app volta ao driver do sistema.
                 val metadata =
                     decodeJsonFromFile<DriverMetadata>(tempDir.resolve(META_FILE_NAME).toFile())
                 if (metadata == null
-                    || metadata.minApi > Build.VERSION.SDK_INT
                     || metadata.schemaVersion != SUPPORTED_SCHEMA_VERSION
                     || !tempDir.resolve(metadata.libraryName).exists()
                 ) {

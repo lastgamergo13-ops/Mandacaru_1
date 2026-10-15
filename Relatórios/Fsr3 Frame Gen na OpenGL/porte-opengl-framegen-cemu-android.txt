@@ -310,3 +310,59 @@ O QUE OLHAR NO PROXIMO LOG
    "[GL] usando GL_EXT_clip_control" OU "[GL] ... emulando clip control"
    imagem de cabeca para baixo / culling invertido / profundidade errada nos jogos
    "[GLSL] ... failed to compile" (agora com linhas do erro)
+
+
+=====================================================================
+V11.21 - LOGS DO APARELHO (Adreno 650, driver Qualcomm 502.11.5) E CORRECOES
+=====================================================================
+Fatos confirmados nos logs:
+ - O driver TEM GL_EXT_clip_control ("[GL] usando GL_EXT_clip_control"): a emulacao nos shaders
+   nao foi usada. Nenhum shader GLSL falhou ao compilar (0 erros "failed to compile" nos 6 logs GL).
+ - Frame gen GL gera frames: ~30 reais + ~30 gerados = ~60 FPS em Mario 3D World, Mario Kart e
+   Adventure Time (pacing OK).
+ - Vulkan com o driver de fabrica: VK_ERROR_DEVICE_LOST em vkQueueSubmit (GPU travou) no Mario
+   Kart (submit 148) e Mario 3D World (submit 1149), sem frame gen. E o driver 1.1.128 do
+   Qualcomm; nao e um erro do frame gen. Para Vulkan nesse aparelho use Turnip; no driver de
+   fabrica prefira OpenGL.
+Mudancas V11.21:
+ 1) FrameGenGL apresenta o frame gerado por glBlitFramebuffer (S.out -> backbuffer) em vez de
+    desenhar um triangulo lendo gl_FragCoord: a orientacao deixa de depender da origem do clip
+    (corrige Mario 3D World de cabeca para baixo com frame gen).
+ 2) StateGuard do FrameGenGL agora salva/restaura o UBO do binding 15 (o frame gen sobrescrevia
+    esse binding, que o Cemu tambem pode usar => cores lavadas/tela preta apos o frame gen).
+ 3) Diagnosticos novos: "[GLDEBUG]" (mensagens KHR_debug do driver, sem repeticao, max 250);
+    "[FrameGenGL] diag #N: captura/anterior/saida" (media de 3 pixels, -1 = FBO incompleto)
+    para saber se a tela preta vem da captura ou da geracao; erro GL pendente do renderer
+    (0x500) agora e identificado como NAO sendo do frame gen.
+ 4) baseInstance so desloca atributos do tipo INSTANCE_DATA.
+Pendente (precisa de dados): Mario Kart no GL sem frame gen mostra imagem quebrada/"fantasmas".
+Os logs nao trazem erro GL; o proximo log com [GLDEBUG] deve indicar a chamada responsavel.
+
+
+=====================================================================
+V11.22 - VULKAN NO DRIVER DE FABRICA (Adreno 650): RASTREIO DO TRAVAMENTO
+=====================================================================
+O driver Qualcomm de fabrica expoe so Vulkan 1.1.128 e nao tem VK_EXT_custom_border_color,
+depth_clip_enable, pipeline_robustness, attachment_feedback_loop_layout, LogicOp nem modo de
+apresentacao imediato. Nao existe como "aumentar as instrucoes" do driver; o que se faz e
+emular/contornar por software cada item que falta. O crash (VK_ERROR_DEVICE_LOST no submit 148 do
+Mario Kart e no 1149 do Mario 3D World) e um TRAVAMENTO DA GPU causado por algum shader/pipeline.
+Esta versao so adiciona rastreio para identificar qual:
+ - [VkTrace]: na DEVICE_LOST lista os pipelines (hashes VS/PS/GS, primitiva, rects) dos ultimos 8 submits.
+ - Modo sync: criar o arquivo vazio "vk_sync_debug" na pasta de dados do usuario (a mesma do
+   log.txt/shaderCache). Cada submit passa a ser aguardado; o log aponta o submit exato e os
+   shaders dele. Mais lento: usar so para diagnostico, e apagar o arquivo depois.
+Proximo passo: com os hashes do submit culpado, correlacionar entre jogos (Mario Kart e 3D World)
+o que eles tem em comum (GS, rects, primitiva) e criar o contorno especifico.
+
+V11.23 - Botao de diagnostico Vulkan + compartilhar log
+- Experimental/Hackers: switch "Vulkan diagnostic log" (liga/desliga na hora; substitui criar/apagar o arquivo vk_sync_debug a mao).
+- Ligado: espera cada submit terminar (mais lento) e, em DEVICE_LOST/timeout, grava os pipelines (VS/PS/GS) em vk_trace.txt (alem do log.txt).
+- Botao "Share Vulkan diagnostic log": abre o seletor de compartilhar do Android para vk_trace.txt (mesmo mecanismo do Share log file).
+- Estado persiste via arquivo-marcador vk_sync_debug (criado/removido pelo botao). Desligue apos gerar o log.
+Arquivos: DrawTraceFlag.h (novo), DrawTraceVk.h, VulkanRenderer.cpp, NativeSettings.cpp/.kt, ExperimentalSettingsScreen.kt, CemuFileActions.kt.
+
+V11.24 - Frame Gen no menu lateral, drivers Mali, texto invisivel
+- Menu esquerdo em jogo: item "FSR3 Frame Gen" (liga/desliga) SEMPRE visivel + "painel em jogo". Antes o item sumia ao desligar. O painel direito segue aberto ao desligar.
+- Drivers custom: instalacao nao e mais bloqueada por minApi (PanVK declara minApi 35). O hook da libadrenotools troca qualquer HAL "vulkan.*.so" (inclui vulkan.mali.so); o log agora lista /dev/mali0 e os HAL Vulkan do sistema. NAO testado em Mali.
+- Texto invisivel (Moto G54): tema do app seguia o modo CLARO do sistema, com fundos fixos escuros -> texto escuro sobre escuro. Agora o tema e sempre escuro (Theme.kt, themes.xml).

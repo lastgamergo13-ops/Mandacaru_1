@@ -29,12 +29,16 @@ import info.cemu.cemu.nativeinterface.NativeSettings
 
 /**
  * Painel do FSR3 Frame Gen na lateral DIREITA, em jogo. Todas as opcoes sao aplicadas na hora
- * (o swapchain relê as configuracoes a cada frame). Só aparece depois que o botao
- * "FSR3 Frame Gen em jogo" do menu da ESQUERDA for ligado.
+ * (o swapchain relê as configuracoes a cada frame). Abre pelo item "FSR3 Frame Gen (painel em jogo)"
+ * do menu da ESQUERDA; o liga/desliga do Frame Gen fica sempre no menu da esquerda.
  */
 @Composable
-fun FrameGenInGamePanel(modifier: Modifier = Modifier, onClose: () -> Unit) {
-    var frameGen by remember { mutableStateOf(NativeSettings.getFsr3FrameGen()) }
+fun FrameGenInGamePanel(
+    modifier: Modifier = Modifier,
+    frameGenEnabled: Boolean,
+    onFrameGenChange: (Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
     var multiplier by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER)) }
     var flowScale by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE)) }
     var pyramid by remember { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PYRAMID) != 0) }
@@ -64,10 +68,7 @@ fun FrameGenInGamePanel(modifier: Modifier = Modifier, onClose: () -> Unit) {
                 TextButton(onClick = onClose) { Text(tr("Close")) }
             }
 
-            SwitchRow(tr("Frame Gen"), frameGen) {
-                frameGen = it
-                NativeSettings.setFsr3FrameGen(it)
-            }
+            SwitchRow(tr("Frame Gen"), frameGenEnabled) { onFrameGenChange(it) }
 
             Text(tr("Frame multiplier"), fontSize = 14.sp)
             ChipRow(listOf(2, 3, 4), multiplier, { "${it}x" }) {

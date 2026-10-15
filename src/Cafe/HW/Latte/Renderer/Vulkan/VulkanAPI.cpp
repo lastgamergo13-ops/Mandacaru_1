@@ -278,6 +278,20 @@ namespace
 					std::error_code hookEc;
 					cemuLog_log(LogType::Force, "[Driver] {}: {}", hookLib, fs::exists(fs::path(hookDir) / hookLib, hookEc) ? "presente" : "AUSENTE (a libadrenotools nao foi empacotada com este lib)");
 				}
+				{
+					// diagnostico para GPUs Mali/Exynos: o hook da adrenotools troca QUALQUER "vulkan.*.so" do HAL
+					// pelo driver custom; aqui registramos o HAL do sistema e o acesso ao kernel driver da Mali.
+					std::error_code mEc;
+					for (const char* dev : { "/dev/mali0", "/dev/kgsl-3d0" })
+						cemuLog_log(LogType::Force, "[Driver] {}: {}", dev, fs::exists(dev, mEc) ? "existe" : "nao existe");
+					for (const char* hwDir : { "/vendor/lib64/hw", "/system/lib64/hw" })
+					{
+						std::error_code lEc;
+						for (const auto& e : fs::directory_iterator(hwDir, lEc))
+							if (e.path().filename().string().rfind("vulkan.", 0) == 0)
+								cemuLog_log(LogType::Force, "[Driver] HAL Vulkan do sistema: {}", e.path().string());
+					}
+				}
 				void* h = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, tmpDir.c_str(), hookDir.c_str(), customDir.c_str(), libName.c_str(), nullptr, nullptr);
 				if (h)
 				{

@@ -684,7 +684,7 @@ void OpenGLRenderer::_setupVertexAttributes()
 
 			uint8* vboGLPtr;
 			vboGLPtr = (uint8*)(size_t)(vboDataOffset + attrib->offset);
-			if (OpenGLRenderer::IsGLES() && s_drawBaseInstance != 0 && bufferStride != 0 && attrib->aluDivisor > 0)
+			if (OpenGLRenderer::IsGLES() && s_drawBaseInstance != 0 && bufferStride != 0 && attrib->fetchType == LatteConst::INSTANCE_DATA && attrib->aluDivisor > 0)
 				vboGLPtr += (size_t)(s_drawBaseInstance / (uint32)attrib->aluDivisor) * bufferStride; // emula baseInstance
 			_setAttributeBufferPointerRaw(attributeShaderLocation, NULL, 0, bufferStride, attrib, vboGLPtr, bufferStride);
 

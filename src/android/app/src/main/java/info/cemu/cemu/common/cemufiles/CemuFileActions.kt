@@ -10,16 +10,26 @@ import info.cemu.cemu.provider.DocumentsProvider
 import java.io.File
 
 private const val LOG_FILE_NAME = "log.txt"
+private const val VK_TRACE_FILE_NAME = "vk_trace.txt"
 
 fun logFileExists(): Boolean {
     return File(NativeActiveSettings.getUserDataPath()).resolve(LOG_FILE_NAME).isFile
 }
 
-fun tryShareLogFile(context: Context): Boolean {
+fun vkTraceFileExists(): Boolean {
+    return File(NativeActiveSettings.getUserDataPath()).resolve(VK_TRACE_FILE_NAME).isFile
+}
+
+fun tryShareLogFile(context: Context): Boolean = tryShareFile(context, LOG_FILE_NAME)
+
+/** Compartilha o log do diagnostico Vulkan (vk_trace.txt) pelo seletor do Android. */
+fun tryShareVkTraceFile(context: Context): Boolean = tryShareFile(context, VK_TRACE_FILE_NAME)
+
+private fun tryShareFile(context: Context, fileName: String): Boolean {
     try {
         val fileUri = DocumentsContract.buildDocumentUri(
             DocumentsProvider.AUTHORITY,
-            DocumentsProvider.ROOT_ID + "/$LOG_FILE_NAME"
+            DocumentsProvider.ROOT_ID + "/$fileName"
         )
 
         val documentFile = DocumentFile.fromSingleUri(context, fileUri)!!

@@ -50,6 +50,7 @@ namespace FrameGenGL
 		constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802, GL_TEXTURE_WRAP_T = 0x2803, GL_CLAMP_TO_EDGE = 0x812F;
 		constexpr GLenum GL_NEAREST = 0x2600, GL_LINEAR = 0x2601, GL_TEXTURE_MAX_LEVEL = 0x813D;
 		constexpr GLenum GL_RGBA8 = 0x8058, GL_RGBA16F = 0x881A, GL_R32UI = 0x8236, GL_R32I = 0x8235, GL_R32F = 0x822E;
+		constexpr GLenum GL_RGBA = 0x1908, GL_UNSIGNED_BYTE = 0x1401;
 		constexpr GLenum GL_RED = 0x1903, GL_RED_INTEGER = 0x8D94, GL_UNSIGNED_INT = 0x1405, GL_FLOAT = 0x1406;
 		constexpr GLenum GL_READ_WRITE = 0x88BA, GL_WRITE_ONLY = 0x88B9;
 		constexpr GLbitfield GL_ALL_BARRIER_BITS = 0xFFFFFFFFu;
@@ -135,6 +136,10 @@ namespace FrameGenGL
 			void (*glPixelStorei)(GLenum, GLint);
 			const uint8_t* (*glGetString)(GLenum);
 			GLenum (*glGetError)();
+			void (*glGetIntegeri_v)(GLenum, GLuint, GLint*);
+			void (*glGetInteger64i_v)(GLenum, GLuint, long long*);
+			void (*glBindBufferRange)(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr);
+			void (*glReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
 			// EGL
 			void* (*eglGetCurrentDisplay)();
 			void* (*eglGetCurrentSurface)(int);
@@ -185,6 +190,7 @@ namespace FrameGenGL
 			LOADFN(glDrawArrays); LOADFN(glViewport); LOADFN(glEnable); LOADFN(glDisable); LOADFN(glIsEnabled);
 			LOADFN(glColorMask); LOADFN(glGetIntegerv); LOADFN(glGetBooleanv); LOADFN(glBindSampler); LOADFN(glPixelStorei);
 			LOADFN(glGetString); LOADFN(glGetError);
+			LOADFN(glGetIntegeri_v); LOADFN(glGetInteger64i_v); LOADFN(glBindBufferRange); LOADFN(glReadPixels);
 			LOADFN(eglGetCurrentDisplay); LOADFN(eglGetCurrentSurface); LOADFN(eglQuerySurface);
 #undef LOADFN
 			if (!missing.empty())
@@ -208,6 +214,7 @@ namespace FrameGenGL
 			GLint samplerBind[kNumUnitsSaved] = {};
 			GLboolean caps[kNumCaps] = {};
 			GLint unpack[4] = {};
+			GLint uboBuf = 0; long long uboOffset = 0, uboSize = 0; // binding kUboBinding (o Cemu pode ter um UBO proprio la)
 
 			StateGuard()
 			{
@@ -234,6 +241,9 @@ namespace FrameGenGL
 				f.glGetIntegerv(GL_UNPACK_SKIP_ROWS, &unpack[1]);
 				f.glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &unpack[2]);
 				f.glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpack[3]);
+				f.glGetIntegeri_v(0x8A28 /*UNIFORM_BUFFER_BINDING*/, kUboBinding, &uboBuf);
+				f.glGetInteger64i_v(0x8A29 /*UNIFORM_BUFFER_START*/, kUboBinding, &uboOffset);
+				f.glGetInteger64i_v(0x8A2A /*UNIFORM_BUFFER_SIZE*/, kUboBinding, &uboSize);
 
 				// estado "neutro" para o nosso trabalho
 				f.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -273,6 +283,10 @@ namespace FrameGenGL
 				f.glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpack[2]);
 				f.glPixelStorei(GL_UNPACK_ALIGNMENT, unpack[3]);
 				f.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, (GLuint)unpackBuf);
+				if (uboBuf != 0)
+					f.glBindBufferRange(GL_UNIFORM_BUFFER, kUboBinding, (GLuint)uboBuf, (GLintptr)uboOffset, (GLsizeiptr)uboSize);
+				else
+					f.glBindBufferBase(GL_UNIFORM_BUFFER, kUboBinding, 0);
 			}
 		};
 
@@ -885,6 +899,20 @@ namespace FrameGenGL
 		void DrawOutputToBackbuffer()
 		{
 			auto& f = g_fn;
+			// Preferencia: blit direto S.out -> backbuffer. Copia linha a linha, sem depender da origem do clip
+			// (UPPER_LEFT/LOWER_LEFT) nem de gl_FragCoord, entao a orientacao fica igual a do frame real capturado.
+			f.glBindFramebuffer(GL_READ_FRAMEBUFFER, S.fboRead);
+			f.glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, S.out.id, 0);
+			f.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+			if (f.glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
+			{
+				f.glBlitFramebuffer(0, 0, (GLint)S.width, (GLint)S.height, 0, 0, (GLint)S.width, (GLint)S.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+				f.glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+				GlCheck("DrawOutputToBackbuffer(blit)");
+				return;
+			}
+			f.glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+			// fallback: triangulo de tela cheia
 			f.glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			f.glViewport(0, 0, (GLsizei)S.width, (GLsizei)S.height);
 			f.glUseProgram(S.displayProg);
@@ -892,6 +920,51 @@ namespace FrameGenGL
 			f.glBindVertexArray(S.vao);
 			f.glDrawArrays(GL_TRIANGLES, 0, 3);
 			GlCheck("DrawOutputToBackbuffer");
+		}
+
+		// Diagnostico: amostra 3 pixels da captura real e da saida gerada (detecta tela preta: captura ou geracao?)
+		void DiagSamples()
+		{
+			static int s_count = 0;
+			const int n = s_count++;
+			if (!(n < 4 || n % 600 == 0))
+				return;
+			auto& f = g_fn;
+			const uint32_t xs[3] = { S.width / 4, S.width / 2, (S.width * 3) / 4 };
+			const uint32_t ys[3] = { S.height / 4, S.height / 2, (S.height * 3) / 4 };
+			auto sampleTex = [&](GLuint tex, bool isFloat, float* outAvg)
+			{
+				outAvg[0] = outAvg[1] = outAvg[2] = -1.0f;
+				f.glBindFramebuffer(GL_READ_FRAMEBUFFER, S.fboRead);
+				f.glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+				if (f.glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
+				{
+					float acc[3] = {};
+					for (int i = 0; i < 3; i++)
+					{
+						if (isFloat)
+						{
+							float px[4] = {};
+							f.glReadPixels((GLint)xs[i], (GLint)ys[i], 1, 1, GL_RGBA, GL_FLOAT, px);
+							acc[0] += px[0]; acc[1] += px[1]; acc[2] += px[2];
+						}
+						else
+						{
+							uint8_t px[4] = {};
+							f.glReadPixels((GLint)xs[i], (GLint)ys[i], 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+							acc[0] += px[0] / 255.0f; acc[1] += px[1] / 255.0f; acc[2] += px[2] / 255.0f;
+						}
+					}
+					outAvg[0] = acc[0] / 3.0f; outAvg[1] = acc[1] / 3.0f; outAvg[2] = acc[2] / 3.0f;
+				}
+				f.glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+			};
+			float cur[3], prev[3], out[3];
+			sampleTex(S.color[S.curIdx].id, false, cur);
+			sampleTex(S.color[1 - S.curIdx].id, false, prev);
+			sampleTex(S.out.id, true, out);
+			cemuLog_log(LogType::Force, "[FrameGenGL] diag #{}: captura atual=({:.2f},{:.2f},{:.2f}) anterior=({:.2f},{:.2f},{:.2f}) saida=({:.2f},{:.2f},{:.2f}) (-1 = FBO incompleto)",
+				n, cur[0], cur[1], cur[2], prev[0], prev[1], prev[2], out[0], out[1], out[2]);
 		}
 
 		void ApplyBaseFpsLimit()
@@ -935,6 +1008,22 @@ namespace FrameGenGL
 
 		StateGuard guard;
 		auto& f = g_fn;
+		// erros pendentes vindos do renderer do Cemu (nao sao nossos): limpa e registra uma vez
+		{
+			int pending = 0;
+			GLenum first = 0, e;
+			while ((e = f.glGetError()) != 0 && pending < 16)
+			{
+				if (!first) first = e;
+				pending++;
+			}
+			static bool s_loggedPending = false;
+			if (pending && !s_loggedPending)
+			{
+				s_loggedPending = true;
+				cemuLog_log(LogType::Force, "[FrameGenGL] erro GL pendente do renderer ao capturar: 0x{:x} (x{}) - NAO e do frame gen (ver [GLDEBUG])", (uint32_t)first, pending);
+			}
+		}
 		S.curIdx = 1 - S.curIdx;
 		const Tex& dst = S.color[S.curIdx];
 
@@ -994,6 +1083,8 @@ namespace FrameGenGL
 				if (k == 1)
 					RunOpticalFlow(curIdx, prevIdx);
 				RunInterpolation(curIdx, prevIdx, progress);
+				if (k == 1)
+					DiagSamples();
 				DrawOutputToBackbuffer();
 			}
 			presentMain();
