@@ -43,6 +43,31 @@ object NativeFiles {
         this.contentResolver = contentResolver
     }
 
+    private val loggedAuthorities = HashSet<String>()
+
+    private fun logOpenFailure(uri: String, reason: String) {
+        val key = "fail:" + uri.take(60)
+        synchronized(loggedAuthorities) { if (!loggedAuthorities.add(key)) return }
+        NativeLogging.log("[Arquivo] nao consegui abrir $uri : $reason")
+    }
+
+    private fun logIfNotSeekable(uri: String, fd: Int) {
+        try {
+            val authority = uri.fromNativePath().authority ?: return
+            synchronized(loggedAuthorities) { if (!loggedAuthorities.add("seek:$authority")) return }
+            val pfd = android.os.ParcelFileDescriptor.fromFd(fd)
+            val seekable = try {
+                android.system.Os.lseek(pfd.fileDescriptor, 0, android.system.OsConstants.SEEK_CUR)
+                true
+            } catch (e: Exception) {
+                false
+            }
+            pfd.detachFd()
+            NativeLogging.log("[Arquivo] provedor '$authority': descritor ${if (seekable) "permite seek (ok)" else "NAO permite seek - o jogo nao abre por este app; adicione a pasta na biblioteca"}")
+        } catch (_: Exception) {
+        }
+    }
+
     @Keep
     @JvmStatic
     fun openContentUri(uri: String): Int {
@@ -54,10 +79,15 @@ object NativeFiles {
             if (parcelFileDescriptor != null) {
                 val fd = parcelFileDescriptor.detachFd()
                 parcelFileDescriptor.close()
+                // diagnostico: alguns provedores (apps de arquivos/arquivadores) devolvem um descritor sem seek
+                // (pipe), o que impede ler .wua/.wud. Registramos uma vez por autoridade.
+                logIfNotSeekable(uri, fd)
                 return fd
             }
+            logOpenFailure(uri, "openFileDescriptor devolveu null (provedor nao entrega arquivo)")
         } catch (e: Exception) {
             Log.d("NativeFiles", "Cannot open content uri, error: ${e.message}")
+            logOpenFailure(uri, "${e.javaClass.simpleName}: ${e.message}")
         }
         return -1
     }

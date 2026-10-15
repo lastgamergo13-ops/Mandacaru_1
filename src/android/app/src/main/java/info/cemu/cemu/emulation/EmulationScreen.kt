@@ -217,11 +217,6 @@ fun EmulationScreen(
                             showInGameCheats = true
                             closeDrawer()
                         },
-                        frameGenOn = frameGenOn,
-                        onFrameGenOnChange = {
-                            frameGenOn = it
-                            NativeSettings.setFsr3FrameGen(it)
-                        },
                         frameGenPanelUnlocked = frameGenPanelUnlocked,
                         onFrameGenPanelUnlockedChange = {
                             frameGenPanelUnlocked = it
@@ -367,8 +362,6 @@ private fun EmulationSideMenuContent(
     onShowEmulatedUSBDevices: () -> Unit,
     onShowQuickControllerProfileSwitcher: () -> Unit,
     onShowInGameCheats: () -> Unit,
-    frameGenOn: Boolean,
-    onFrameGenOnChange: (Boolean) -> Unit,
     frameGenPanelUnlocked: Boolean,
     onFrameGenPanelUnlockedChange: (Boolean) -> Unit,
     onEditInputOverlay: () -> Unit,
@@ -415,17 +408,21 @@ private fun EmulationSideMenuContent(
         )
     }
 
-    // Frame Gen em jogo: o liga/desliga fica SEMPRE visivel (nao some ao desligar) e o painel
-    // com as opcoes fica na lateral direita.
-    CheckboxItem(
-        label = tr("FSR3 Frame Gen"),
-        checked = frameGenOn,
-        onCheckedChange = onFrameGenOnChange,
-    )
+    // O liga/desliga do Frame Gen fica dentro do painel em jogo (nao precisa de item separado aqui).
     CheckboxItem(
         label = tr("FSR3 Frame Gen (painel em jogo)"),
         checked = frameGenPanelUnlocked,
         onCheckedChange = onFrameGenPanelUnlockedChange,
+    )
+
+    var showFps by remember { mutableStateOf(NativeSettings.isOverlayFPSEnabled()) }
+    CheckboxItem(
+        label = tr("Show FPS"),
+        checked = showFps,
+        onCheckedChange = {
+            showFps = it
+            NativeSettings.setOverlayFPSEnabled(it)
+        },
     )
 
     CheckboxItem(
@@ -654,7 +651,10 @@ private fun EmulationErrorDialog(error: NativeError, onQuit: () -> Unit) {
             NativeError.NoDiscKeysError -> tr("Could not decrypt title. Make sure that keys.txt contains the correct disc key for this title.")
             NativeError.NoTitleTikError -> tr("Could not decrypt title because title.tik is missing.")
             is NativeError.UnknownTilePrepareError ->
-                tr("Unable to launch game\nPath: {0}", error.launchPath)
+                tr("Unable to launch game\nPath: {0}", error.launchPath) +
+                    (if (error.launchPath.startsWith("content://") && !error.launchPath.contains("com.android.externalstorage"))
+                        "\n\n" + tr("Este jogo foi aberto por outro app (explorador/arquivador), que muitas vezes nao permite ler o arquivo direto. Feche e adicione a pasta dos jogos na biblioteca (tela inicial > Escolher pasta de jogos) e abra o jogo por la.")
+                    else "")
 
             NativeError.LaunchingTitleError -> tr("Failed to launch title")
         }

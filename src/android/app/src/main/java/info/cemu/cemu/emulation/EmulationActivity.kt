@@ -124,6 +124,26 @@ class EmulationActivity : AppCompatActivity() {
         setFullscreen()
 
         val gamePath = getGamePath()
+        run {
+            // diagnostico de abertura via "Abrir com" (explorador de arquivos): origem, flags e permissao de leitura
+            val d = intent.data
+            if (d != null) {
+                val perm = try {
+                    checkCallingOrSelfUriPermission(d, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (e: Exception) {
+                    -99
+                }
+                info.cemu.cemu.nativeinterface.NativeLogging.log(
+                    "[Launch] aberto por intent: uri=$d tipo=${intent.type} flags=0x${intent.flags.toString(16)} permissaoLeitura=${if (perm == android.content.pm.PackageManager.PERMISSION_GRANTED) "sim" else "NAO ($perm)"}"
+                )
+                if (intent.flags and android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0) {
+                    try {
+                        contentResolver.takePersistableUriPermission(d, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        }
 
         setContent {
             TranslatableContent {

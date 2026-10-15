@@ -102,6 +102,7 @@ fun GamesListScreen(
     var sidebarExpanded by rememberSaveable { mutableStateOf(false) }
 
     val state = rememberPullToRefreshState()
+    var forceFolderDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(lifecycleState) {
         if (lifecycleState == Lifecycle.State.RESUMED && gamesListViewModel.gamePathsHaveChanged())
@@ -113,6 +114,13 @@ fun GamesListScreen(
             gamesListViewModel.setFilterText("")
         }
     }
+
+    GamesFolderSetup(
+        gamesListViewModel = gamesListViewModel,
+        gamesCount = games.size,
+        forceShow = forceFolderDialog,
+        onForceShowConsumed = { forceFolderDialog = false },
+    )
 
     Scaffold(
         containerColor = SteamDeckColors.Background,
@@ -188,6 +196,32 @@ fun GamesListScreen(
                         }
                     },
                 )
+
+                if (games.isEmpty() && !refreshing) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            tr("Nenhum jogo na biblioteca"),
+                            color = SteamDeckColors.TextPrimary,
+                            fontSize = 20.sp,
+                        )
+                        Text(
+                            tr("Escolha a pasta onde ficam seus jogos de Wii U para o emulador varrer."),
+                            color = SteamDeckColors.TextSecondary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
+                        )
+                        androidx.compose.material3.Button(onClick = { forceFolderDialog = true }) {
+                            Text(tr("Escolher pasta de jogos"))
+                        }
+                        androidx.compose.material3.TextButton(onClick = { gamesListViewModel.refreshGames() }) {
+                            Text(tr("Varrer novamente"))
+                        }
+                    }
+                }
 
                 PullToRefreshDefaults.Indicator(
                     modifier = Modifier.align(Alignment.TopCenter),

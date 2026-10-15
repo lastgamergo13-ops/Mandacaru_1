@@ -75,6 +75,8 @@ class GamesListViewModel : ViewModel() {
         return false
     }
 
+    fun currentGamesCount(): Int = _games.value.size
+
     fun refreshGames() {
         _games.value = emptySet()
         NativeGameTitles.reloadGameTitles()

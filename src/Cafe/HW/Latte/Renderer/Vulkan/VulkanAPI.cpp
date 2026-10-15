@@ -155,6 +155,7 @@ bool InitializeDeviceVulkan(VkDevice device)
 #include "config/ActiveSettings.h"
 #include "Cafe/GameProfile/GameProfile.h"
 #include "Cemu/Logging/CemuLogging.h"
+#include "Cafe/HW/Latte/Core/RendererInfo.h"
 
 namespace
 {
@@ -296,6 +297,20 @@ namespace
 				if (h)
 				{
 					cemuLog_log(LogType::Force, "[Driver] driver customizado carregado com sucesso");
+					{
+						// nome amigavel do driver (meta.json "name") para o overlay de FPS
+						std::string nm = ReadDriverLibraryName(dir); // fallback
+						std::ifstream mf(fs::path(dir) / "meta.json");
+						std::stringstream mss; mss << mf.rdbuf();
+						const std::string mj = mss.str();
+						size_t k = mj.find("\"name\"");
+						if (k != std::string::npos && (k = mj.find(':', k)) != std::string::npos)
+						{
+							size_t q1 = mj.find('"', k), q2 = (q1 == std::string::npos) ? q1 : mj.find('"', q1 + 1);
+							if (q2 != std::string::npos) nm = mj.substr(q1 + 1, q2 - q1 - 1);
+						}
+						RendererInfo::SetCustomName(nm);
+					}
 					s_handle = h;
 					return s_handle;
 				}

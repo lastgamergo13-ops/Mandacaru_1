@@ -1,6 +1,7 @@
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "Cafe/HW/Latte/Core/LattePerformanceMonitor.h"
 #include "Cafe/HW/Latte/Core/FrameGenStats.h"
+#include "Cafe/HW/Latte/Core/RendererInfo.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/Account/Account.h"
 #include "config/CemuConfig.h"
@@ -130,6 +131,23 @@ void LatteOverlay_renderOverlay(ImVec2& position, ImVec2& pivot, sint32 directio
 			{
 				nextStatLine();
 				ImGui::Text("FPS: %.2lf", g_state.fps);
+			}
+
+			if (config.overlay.fps)
+			{
+				// API grafica e driver em uso (driver do sistema ou customizado)
+				std::string riApi, riDriver, riCustom;
+				RendererInfo::Get(riApi, riDriver, riCustom);
+				if (!riApi.empty())
+				{
+					nextStatLine();
+					ImGui::Text("API: %s", riApi.c_str());
+					nextStatLine();
+					if (!riCustom.empty())
+						ImGui::Text("Driver: %s (customizado)", riCustom.c_str());
+					else
+						ImGui::Text("Driver: %s (sistema)", riDriver.c_str());
+				}
 			}
 
 			if (config.overlay.fps && config.fsr3_ov_show.GetValue() && FrameGenStats::active.load(std::memory_order_relaxed))

@@ -2,6 +2,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
+#include "Cafe/HW/Latte/Core/RendererInfo.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
@@ -33,6 +34,8 @@
 #include "Cafe/HW/Latte/Core/LatteTiming.h" // vsync control
 
 #include <cstdint>
+#include <mutex>
+#include <unordered_map>
 #include <glslang/Public/ShaderLang.h>
 
 #ifndef VK_API_VERSION_MAJOR
@@ -93,6 +96,26 @@ VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(VkDebugUtilsMessageSeverityFla
 
 	cemuLog_log(LogType::Force, (char*)pCallbackData->pMessage);
 
+	return VK_FALSE;
+}
+
+// Callback leve usado no Android (sem camada de validacao): registra erros/avisos do proprio driver Vulkan,
+// sem repeticao (por id+texto) e com limite, para o log.txt mostrar o que o driver reclama antes de um DEVICE_LOST.
+static VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallbackDriver(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT types, const VkDebugUtilsMessengerCallbackDataEXT* data, void* user)
+{
+	static std::mutex s_mtx;
+	static std::unordered_map<size_t, uint32> s_seen;
+	static uint32 s_logged = 0;
+	if (!data || !data->pMessage)
+		return VK_FALSE;
+	const size_t key = std::hash<std::string>{}(std::string(data->pMessage)) ^ (size_t)data->messageIdNumber;
+	std::lock_guard<std::mutex> lk(s_mtx);
+	uint32& cnt = s_seen[key];
+	cnt++;
+	if (cnt > 1 || s_logged >= 300)
+		return VK_FALSE;
+	s_logged++;
+	cemuLog_log(LogType::Force, "[VKDEBUG] {} id={:#x} {}", (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) ? "ERRO" : "aviso", (uint32)data->messageIdNumber, data->pMessage);
 	return VK_FALSE;
 }
 
@@ -234,6 +257,7 @@ void VulkanRenderer::DetermineVendor()
 	if (m_featureControl.deviceExtensions.driver_properties)
 	{
 		cemuLog_log(LogType::Force, "Driver version: {}", driverProperties.driverInfo);
+		RendererInfo::Set("Vulkan", std::string(driverProperties.driverName) + " | " + properties.properties.deviceName);
 		// diagnostico: qual driver Vulkan esta REALMENTE em uso (Qualcomm original x Turnip/Mesa x outro)
 		cemuLog_log(LogType::Force, "[Diag] driverName='{}' driverID={} conformance={}.{}.{}.{} apiVersion={}.{}.{} driverVersion=0x{:08x}",
 			driverProperties.driverName, (int)driverProperties.driverID,
@@ -800,6 +824,25 @@ VulkanRenderer::VulkanRenderer() : Renderer(RendererAPI::Vulkan)
 
 		cemuLog_log(LogType::Force, "Debug: Vulkan validation layer enabled, vkCreateDebugUtilsMessengerEXT will be used to log validation errors");
 	}
+
+#if defined(__ANDROID__)
+	if (!useValidationLayer && m_featureControl.instanceExtensions.debug_utils)
+	{
+		auto fnCreate = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(m_instance, "vkCreateDebugUtilsMessengerEXT"));
+		if (fnCreate)
+		{
+			VkDebugUtilsMessengerCreateInfoEXT dci{};
+			dci.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+			dci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT;
+			dci.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+			dci.pfnUserCallback = &DebugUtilsCallbackDriver;
+			if (fnCreate(m_instance, &dci, nullptr, &m_debugCallback) == VK_SUCCESS)
+				cemuLog_log(LogType::Force, "[VKDEBUG] mensagens de erro/aviso do driver Vulkan ativas");
+		}
+	}
+	else if (!useValidationLayer)
+		cemuLog_log(LogType::Force, "[VKDEBUG] VK_EXT_debug_utils indisponivel neste driver: sem mensagens do driver no log");
+#endif
 
 	if (this->IsTracingToolEnabled())
 		cemuLog_log(LogType::Force, "Debug: Tracing tool detected, will recompile all shaders with debug info enabled. This disables the SPIR-V cache.");

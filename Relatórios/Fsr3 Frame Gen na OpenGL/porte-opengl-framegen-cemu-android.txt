@@ -370,3 +370,24 @@ V11.24 - Frame Gen no menu lateral, drivers Mali, texto invisivel
 V11.24b - Correcao de build: _glDebugCallbackAndroid usado em Initialize() antes de ser definido; adicionada declaracao antecipada em OpenGLRenderer.cpp.
 
 V11.24c - Correcao de build: DrawTraceVk.h usava LatteDecompilerShader (tipo incompleto em VulkanRendererCore.cpp); incluido LatteDecompiler.h.
+
+V11.25
+- Menu lateral em jogo: removido o item "FSR3 Frame Gen" (o liga/desliga esta no painel em jogo); adicionado "Show FPS" (liga o overlay de FPS sem ir as configuracoes).
+- Overlay de FPS agora mostra "API: Vulkan | OpenGL ES" e "Driver: <nome> (sistema)" ou "(customizado)" (nome do meta.json do driver). Novo RendererInfo.h.
+- OpenGL ES: FSR Upscale saia de cabeca para baixo. O passe EASU grava a textura intermediaria espelhada (clip control UPPER_LEFT); o RCAS agora usa a variante oposta (_ud) no GLES.
+- Analise dos logs Vulkan com driver do sistema (Adreno 650, Qualcomm 502.11.5, Vulkan 1.1.128): vkQueueSubmit devolve DEVICE_LOST no submit 1031 (3D World) e 96 (Mario Kart). Em ambos o submit que falha NAO tem nenhum draw de jogo rastreado e espera o semaforo do swapchain: e o submit de apresentacao (output/ImGui). Os submits anteriores (com sync ligado) terminam normalmente. Causa ainda nao provada.
+- Pendente/nao confirmado: imagem "fantasma" espelhada do Frame Gen no GL; menus do jogo sumindo com FSR; lentidao no GL.
+
+V11.26 (pacote unico; inclui tudo da V11.25)
+LOGS
+- [Perf] a cada ~5 s: fps, draws/frame, velocidade emulada (MHz PPC e % do Espresso 1243 MHz: <100% = jogo em camera lenta mesmo com FPS estavel), saidas do recompilador/s, tempos da thread de GPU (total/ocioso/fence/asyncWait), limit30fps, velocidade%, vsync, API e driver. Segunda linha: CPU por thread (>=5%) para ver qual thread esta saturada (Latte/GPU x nucleos PPC).
+- [VKDEBUG] (Android): mensagens de erro/aviso do proprio driver Vulkan via VK_EXT_debug_utils, sem repeticao e max 300. Se o driver nao tiver a extensao, o log avisa.
+- GL: [GLDEBUG] ja existia (V11.20); a linha [Perf] mostra a API.
+- Arquivos/launch: [Pasta], [Arquivo], [Launch] (permissao de pasta, descritor sem seek, intent do "Abrir com").
+BIBLIOTECA / PRIMEIRA EXECUCAO
+- Primeira execucao sem pasta: dialogo "Pasta de jogos" com Escolher pasta / Pular, depois varredura com progresso e resultado (N jogos ou "nenhum encontrado").
+- Tela vazia da biblioteca: botoes "Escolher pasta de jogos" e "Varrer novamente".
+- Causa provavel da biblioteca vazia em outros celulares: takePersistableUriPermission(LEITURA+ESCRITA) lancava excecao em pastas/aparelhos que negam escrita (ex.: raiz de Download, SD) e a pasta nao era adicionada; e pastas guardadas perdem a permissao apos reinstalar/atualizar o APK. Agora: tenta leitura+escrita, cai para leitura, e na abertura detecta pastas sem permissao e pede para escolher de novo.
+- Abrir jogo pelo explorador/arquivador ("Unable to launch game" com content://ru.zdevs.zarchiver...): provedores de terceiros costumam entregar descritor sem seek ou sem permissao. Agora o log registra o motivo e o erro orienta a usar a biblioteca. Nao ha como forcar leitura por esse provedor.
+PENDENTE
+- SM3DW na 2a execucao sem texturas (so audio): precisa do log.txt dessa 2a execucao. Teste rapido: no menu do jogo, "Remove shader caches" e abrir de novo.

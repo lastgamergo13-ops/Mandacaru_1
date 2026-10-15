@@ -1,6 +1,10 @@
 #include "Cafe/HW/Latte/Core/LattePerformanceMonitor.h"
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "WindowSystem.h"
+#include "Cafe/HW/Latte/Core/PerfLog.h"
+#include "config/CemuConfig.h"
+#include "Cemu/Logging/CemuLogging.h"
+#include "Cafe/HW/Latte/Core/RendererInfo.h"
 
 performanceMonitor_t performanceMonitor{};
 
@@ -102,6 +106,33 @@ void LattePerformanceMonitor_frameEnd()
 
 		// next update in 1 second
 		performanceMonitor.cycle[performanceMonitor.cycleIndex].lastUpdate = GetTickCount();
+
+		// ---- [Perf] a cada ~5 s (ver PerfLog.h) ----
+		{
+			static uint32 s_perfTick = 0;
+			static uint32 s_perfLastMs = 0;
+			if (!isFirstUpdate && (++s_perfTick % 5) == 0)
+			{
+				const uint32 nowMs = GetTickCount();
+				const double wall = s_perfLastMs ? (nowMs - s_perfLastMs) / 1000.0 : 0.0;
+				s_perfLastMs = nowMs;
+				const double emuMHz = (double)passedCycles / 1.0e6;
+				auto& cfg = GetConfig();
+				std::string api, drv, cust;
+				RendererInfo::Get(api, drv, cust);
+				cemuLog_log(LogType::Force, "[Perf] fps={:.1f} draws/frame={} shaderBinds/frame={} | velocidade emulada: {:.0f} MHz PPC = {:.0f}% do Espresso (1243 MHz; <100% = jogo em camera lenta) | saidas do recompilador/s={} trocas de thread/s={} | GPU(thread Latte) ultimo frame: total={}us ocioso(esperando CPU)={}us fence={}us asyncWait={}us | limit30fps={} velocidade%={} vsync={} api={} driver={}{}",
+					fps, drawCallCounter / elapsedFrames, shaderBindsPerFrame, emuMHz, emuMHz * 100.0 / 1243.125, rlps, tlps,
+					(uint64)PPCTimer_tscToMicroseconds(performanceMonitor.gpuTime_frameTime.getPreviousFrameValue()),
+					(uint64)PPCTimer_tscToMicroseconds(performanceMonitor.gpuTime_idleTime.getPreviousFrameValue()),
+					(uint64)PPCTimer_tscToMicroseconds(performanceMonitor.gpuTime_fenceTime.getPreviousFrameValue()),
+					(uint64)PPCTimer_tscToMicroseconds(performanceMonitor.gpuTime_waitForAsync.getPreviousFrameValue()),
+					(bool)cfg.limit_to_half_fps.GetValue(), (uint32)cfg.emulation_speed_percent.GetValue(), (int)cfg.vsync.GetValue(),
+					api, drv, cust.empty() ? "" : (" (custom: " + cust + ")"));
+				const std::string top = PerfLog::ThreadTop(wall);
+				if (!top.empty())
+					cemuLog_log(LogType::Force, "[Perf] CPU por thread (>=5%): {}", top);
+			}
+		}
 
 		if (isFirstUpdate)
 		{

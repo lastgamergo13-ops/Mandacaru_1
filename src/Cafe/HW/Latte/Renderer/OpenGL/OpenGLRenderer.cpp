@@ -296,6 +296,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 #include <dlfcn.h>
 #include <mutex>
 #include <unordered_map>
+#include "Cafe/HW/Latte/Core/RendererInfo.h"
 
 #if defined(__ANDROID__)
 static void _glDebugCallbackAndroid(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam);
@@ -1055,6 +1056,7 @@ void OpenGLRenderer::GetVendorInformation()
 	cemuLog_log(LogType::Force, "GL_VENDOR: {}", glVendorString ? glVendorString : "unknown");
 	cemuLog_log(LogType::Force, "GL_RENDERER: {}", glRendererString ? glRendererString : "unknown");
 	cemuLog_log(LogType::Force, "GL_VERSION: {}", glVersionString ? glVersionString : "unknown");
+	RendererInfo::Set(IsGLES() ? "OpenGL ES" : "OpenGL", std::string(glRendererString ? glRendererString : "desconhecido"));
 
 	if(glVersionString && boost::icontains(glVersionString, "Mesa"))
 	{
@@ -1473,7 +1475,10 @@ void OpenGLRenderer::DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 ima
 		g_renderer->ClearColorbuffer(padView);
 	}
 	glViewportIndexedf(0, imageX, imageY, imageWidth, imageHeight);
-	RendererOutputShader* rcasShader = renderUpsideDown ? RendererOutputShader::s_fsr_rcas_shader_ud : RendererOutputShader::s_fsr_rcas_shader;
+	// O passe EASU grava a imagem espelhada na textura intermediaria (mesma origem do clip control); o RCAS
+	// precisa da variante OPOSTA para voltar a orientacao (sem isso o FSR Upscale saia de cabeca para baixo).
+	const bool rcasUpsideDown = IsGLES() ? !renderUpsideDown : renderUpsideDown;
+	RendererOutputShader* rcasShader = rcasUpsideDown ? RendererOutputShader::s_fsr_rcas_shader_ud : RendererOutputShader::s_fsr_rcas_shader;
 	shader_bind(rcasShader->GetVertexShader());
 	shader_bind(rcasShader->GetFragmentShader());
 	glNamedBufferSubData(m_backbufferBlit_uniformBuffer, 0, sizeof(uniformBuffer), &uniformBuffer);

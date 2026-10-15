@@ -1,6 +1,5 @@
 package info.cemu.cemu.settings.gamespath
 
-import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.basicMarquee
@@ -30,6 +29,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.viewmodel.compose.viewModel
 import info.cemu.cemu.R
 import info.cemu.cemu.common.ui.components.ScreenContentLazy
+import info.cemu.cemu.games.list.takeTreePermission
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.common.ui.theme.SteamDeckColors
 import kotlinx.coroutines.launch
@@ -46,10 +46,7 @@ fun GamePathsScreen(
     val launcher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri == null) return@rememberLauncherForActivityResult
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+            takeTreePermission(context, uri)
             val documentFile =
                 DocumentFile.fromTreeUri(context, uri) ?: return@rememberLauncherForActivityResult
             val gamesPath = documentFile.uri.toString()

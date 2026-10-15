@@ -206,6 +206,8 @@ class EmulationViewModel(
         attemptWithContext(Dispatchers.IO) { NativeEmulation.prepareTitle(launchPath) }
             .fold(
                 onSuccess = { result ->
+                    if (result != PrepareTitleResult.SUCCESSFUL)
+                        info.cemu.cemu.nativeinterface.NativeLogging.log("[Launch] prepareTitle falhou: codigo=$result caminho=$launchPath")
                     when (result) {
                         PrepareTitleResult.SUCCESSFUL -> Success(Unit)
                         PrepareTitleResult.ERROR_GAME_BASE_FILES_NOT_FOUND -> Error(NativeError.GameFilesNotFoundError)
