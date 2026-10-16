@@ -18,6 +18,11 @@
 
 #ifdef __ANDROID__
 #include <sys/mman.h>
+#include <fcntl.h>
+#include <linux/falloc.h>
+#include <map>
+#include <vector>
+#include <algorithm>
 #include <unistd.h>
 #include <mutex>
 #include <unordered_map>
@@ -87,65 +92,139 @@ static const util::Cpu s_cpu;
 // pra rodar o código). Como os dois mapeamentos espelham os mesmos offsets da mesma memória
 // física, os saltos relativos calculados durante a geração do código continuam válidos na
 // hora de executar através do outro endereço.
+// V11.28 - Alocador JIT em "slabs".
+// Antes: cada funcao recompilada fazia memfd_create + 2x mmap (RW e RX) proprios. Com milhares de funcoes isso
+// gerava dezenas de milhares de VMAs (o Android limita ~65530 por processo -> mmap falha -> crash em sessoes longas),
+// um fd por alocacao e uma busca LINEAR em TranslateToExecAddress a cada traducao (cada vez mais lenta).
+// Agora: poucos slabs grandes (memfd esparso, mapeado UMA vez como RW e UMA vez como RX); as alocacoes sao
+// sub-faixas alinhadas a pagina dentro do slab, com lista de faixas livres (com fusao) e liberacao real da memoria
+// fisica via fallocate(PUNCH_HOLE). A regra W^X continua igual: nenhuma pagina e RW e RX ao mesmo tempo no mesmo
+// endereco; o mapeamento RW so escreve e o RX so executa, espelhando os mesmos offsets da mesma memoria.
 class DualMapAllocator : public Allocator
 {
-	struct Mapping
+	struct Slab
 	{
-		void* execAddr;
+		uint8* writeBase;
+		uint8* execBase;
 		size_t size;
 		int fd;
+		std::map<size_t, size_t> freeRanges; // offset -> tamanho
 	};
 
 	inline static std::mutex s_mutex;
-	inline static std::unordered_map<void*, Mapping> s_mappings;
+	inline static std::vector<Slab*> s_slabs;
+	inline static std::map<uintptr_t, Slab*> s_slabByWrite; // chave: writeBase
+	inline static std::map<uintptr_t, Slab*> s_slabByExec;	// chave: execBase
+	inline static std::unordered_map<void*, size_t> s_blockSize; // write addr -> tamanho
+	inline static size_t s_totalLiveBytes = 0;
+	static constexpr size_t SLAB_SIZE = 16u * 1024u * 1024u;
+
+	static Slab* CreateSlab(size_t size)
+	{
+		int fd = memfd_create("cemu_jit_code", 0);
+		if (fd < 0)
+		{
+			cemuLog_log(LogType::Force, "[JIT] memfd_create falhou, errno={}", errno);
+			return nullptr;
+		}
+		if (ftruncate(fd, size) != 0)
+		{
+			cemuLog_log(LogType::Force, "[JIT] ftruncate falhou, errno={}", errno);
+			close(fd);
+			return nullptr;
+		}
+		void* w = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (w == MAP_FAILED)
+		{
+			cemuLog_log(LogType::Force, "[JIT] mmap RW falhou, errno={}", errno);
+			close(fd);
+			return nullptr;
+		}
+		void* x = mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
+		if (x == MAP_FAILED)
+		{
+			cemuLog_log(LogType::Force, "[JIT] mmap RX falhou, errno={}", errno);
+			munmap(w, size);
+			close(fd);
+			return nullptr;
+		}
+		Slab* slab = new Slab{(uint8*)w, (uint8*)x, size, fd, {}};
+		slab->freeRanges[0] = size;
+		s_slabs.push_back(slab);
+		s_slabByWrite[(uintptr_t)w] = slab;
+		s_slabByExec[(uintptr_t)x] = slab;
+		cemuLog_log(LogType::Force, "[JIT] novo slab de codigo: {} KB write={:x} exec={:x} (slabs={})", size / 1024, (uintptr_t)w, (uintptr_t)x, s_slabs.size());
+		return slab;
+	}
+
+	static bool TakeFromSlab(Slab* slab, size_t size, size_t& offsetOut)
+	{
+		for (auto it = slab->freeRanges.begin(); it != slab->freeRanges.end(); ++it)
+		{
+			if (it->second >= size)
+			{
+				offsetOut = it->first;
+				size_t remaining = it->second - size;
+				size_t newOffset = it->first + size;
+				slab->freeRanges.erase(it);
+				if (remaining > 0)
+					slab->freeRanges[newOffset] = remaining;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static Slab* FindSlabForWrite(uintptr_t addr)
+	{
+		auto it = s_slabByWrite.upper_bound(addr);
+		if (it == s_slabByWrite.begin())
+			return nullptr;
+		--it;
+		return (addr < it->first + it->second->size) ? it->second : nullptr;
+	}
+
+	static Slab* FindSlabForExec(uintptr_t addr)
+	{
+		auto it = s_slabByExec.upper_bound(addr);
+		if (it == s_slabByExec.begin())
+			return nullptr;
+		--it;
+		return (addr < it->first + it->second->size) ? it->second : nullptr;
+	}
 
   public:
 	uint32* alloc(size_t size) override
 	{
 		size_t pageSize = (size_t)sysconf(_SC_PAGESIZE);
 		size = (size + pageSize - 1) & ~(pageSize - 1);
+		if (size == 0)
+			size = pageSize;
 
-		int fd = memfd_create("cemu_jit_code", 0);
-		if (fd < 0)
+		std::lock_guard<std::mutex> lock(s_mutex);
+		Slab* slab = nullptr;
+		size_t offset = 0;
+		for (Slab* s : s_slabs)
 		{
-			cemuLog_log(LogType::Force, "[JIT] memfd_create falhou, errno={}", errno);
-			cemuLog_waitForFlush();
-			return nullptr;
+			if (TakeFromSlab(s, size, offset))
+			{
+				slab = s;
+				break;
+			}
 		}
-		if (ftruncate(fd, size) != 0)
+		if (!slab)
 		{
-			cemuLog_log(LogType::Force, "[JIT] ftruncate falhou, errno={}", errno);
-			cemuLog_waitForFlush();
-			close(fd);
-			return nullptr;
+			slab = CreateSlab(std::max(size, SLAB_SIZE));
+			if (!slab || !TakeFromSlab(slab, size, offset))
+			{
+				cemuLog_log(LogType::Force, "[JIT] sem memoria para codigo recompilado (pedido {} KB, em uso {} KB)", size / 1024, s_totalLiveBytes / 1024);
+				cemuLog_waitForFlush();
+				return nullptr;
+			}
 		}
-		void* writeAddr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-		if (writeAddr == MAP_FAILED)
-		{
-			cemuLog_log(LogType::Force, "[JIT] mmap RW falhou, errno={}", errno);
-			cemuLog_waitForFlush();
-			close(fd);
-			return nullptr;
-		}
-		void* execAddr = mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
-		if (execAddr == MAP_FAILED)
-		{
-			cemuLog_log(LogType::Force, "[JIT] mmap RX falhou, errno={}", errno);
-			cemuLog_waitForFlush();
-			munmap(writeAddr, size);
-			close(fd);
-			return nullptr;
-		}
-		// já podemos fechar o fd - as duas mmap regions continuam válidas até serem
-		// desmapeadas, mesmo sem o fd aberto
-		close(fd);
-		{
-			std::lock_guard<std::mutex> lock(s_mutex);
-			s_mappings[writeAddr] = { execAddr, size, -1 };
-			static std::atomic<int> s_logCount{0};
-			if (s_logCount.fetch_add(1) < 500)
-				cemuLog_log(LogType::Force, "[JIT] alloc OK size={:x} write={:x} exec={:x} total_mappings={}", size, (uintptr_t)writeAddr, (uintptr_t)execAddr, s_mappings.size());
-		}
+		uint8* writeAddr = slab->writeBase + offset;
+		s_blockSize[writeAddr] = size;
+		s_totalLiveBytes += size;
 		return reinterpret_cast<uint32*>(writeAddr);
 	}
 
@@ -154,59 +233,75 @@ class DualMapAllocator : public Allocator
 		if (!p)
 			return;
 		std::lock_guard<std::mutex> lock(s_mutex);
-		auto it = s_mappings.find(p);
-		if (it == s_mappings.end())
+		Slab* slab = FindSlabForWrite((uintptr_t)p);
+		uint8* writeAddr = (uint8*)p;
+		if (!slab)
 		{
-			cemuLog_log(LogType::Force, "[JIT] free: ponteiro write={:x} nao encontrado em s_mappings", (uintptr_t)p);
-			cemuLog_waitForFlush();
+			// o recompilador guarda o endereco EXECUTAVEL em x86Code; aceita os dois
+			slab = FindSlabForExec((uintptr_t)p);
+			if (slab)
+				writeAddr = slab->writeBase + ((uint8*)p - slab->execBase);
+		}
+		if (!slab)
+		{
+			cemuLog_log(LogType::Force, "[JIT] free: ponteiro {:x} nao pertence a nenhum slab", (uintptr_t)p);
 			return;
 		}
-		munmap(it->second.execAddr, it->second.size);
-		munmap(p, it->second.size);
-		s_mappings.erase(it);
+		auto bit = s_blockSize.find(writeAddr);
+		if (bit == s_blockSize.end())
+		{
+			cemuLog_log(LogType::Force, "[JIT] free: bloco {:x} desconhecido (duplo free?)", (uintptr_t)writeAddr);
+			return;
+		}
+		size_t size = bit->second;
+		s_blockSize.erase(bit);
+		s_totalLiveBytes -= size;
+		size_t offset = (size_t)(writeAddr - slab->writeBase);
+		// devolve a memoria fisica ao sistema (a faixa continua mapeada, so fica zerada)
+		// (so para blocos grandes: os pequenos, liberados durante o crescimento do buffer, sao reaproveitados logo)
+		if (size >= 32768)
+			fallocate(slab->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, (off_t)offset, (off_t)size);
+		// insere a faixa livre e funde com vizinhas
+		auto it = slab->freeRanges.emplace(offset, size).first;
+		auto next = std::next(it);
+		if (next != slab->freeRanges.end() && it->first + it->second == next->first)
+		{
+			it->second += next->second;
+			slab->freeRanges.erase(next);
+		}
+		if (it != slab->freeRanges.begin())
+		{
+			auto prev = std::prev(it);
+			if (prev->first + prev->second == it->first)
+			{
+				prev->second += it->second;
+				slab->freeRanges.erase(it);
+			}
+		}
 	}
 
 	[[nodiscard]] bool useProtect() const override
 	{
-		// os dois mapeamentos já nascem com a permissão certa (RW e RX) e nunca mudam -
+		// os dois mapeamentos ja nascem com a permissao certa (RW e RX) e nunca mudam -
 		// nunca devemos chamar mprotect() nelas
 		return false;
 	}
 
-	// traduz um ponteiro do mapeamento gravável (top_ / getCode() do CodeArray) para o
-	// endereço executável correspondente - é esse endereço que deve de fato ser chamado
+	// traduz um ponteiro do mapeamento gravavel (top_ / getCode() do CodeArray) para o
+	// endereco executavel correspondente - e esse endereco que deve de fato ser chamado
 	static void* TranslateToExecAddress(void* writeAddr)
 	{
-		void* execPtr = nullptr;
-		bool found = false;
 		{
 			std::lock_guard<std::mutex> lock(s_mutex);
-			for (auto& [base, mapping] : s_mappings)
-			{
-				if (writeAddr >= base && writeAddr < (uint8*)base + mapping.size)
-				{
-					execPtr = (uint8*)mapping.execAddr + ((uint8*)writeAddr - (uint8*)base);
-					static std::atomic<int> s_logCount{0};
-					if (s_logCount.fetch_add(1) < 500)
-						cemuLog_log(LogType::Force, "[JIT] translate write={:x} -> exec={:x} (base={:x} size={:x})", (uintptr_t)writeAddr, (uintptr_t)execPtr, (uintptr_t)base, mapping.size);
-					found = true;
-					break;
-				}
-			}
-			if (!found)
-				cemuLog_log(LogType::Force, "[JIT] translate FALHOU: write={:x} nao pertence a nenhuma alocacao (total_mappings={})", (uintptr_t)writeAddr, s_mappings.size());
+			Slab* slab = FindSlabForWrite((uintptr_t)writeAddr);
+			if (slab)
+				return slab->execBase + ((uint8*)writeAddr - slab->writeBase);
+			cemuLog_log(LogType::Force, "[JIT] translate FALHOU: write={:x} nao pertence a nenhum slab (slabs={})", (uintptr_t)writeAddr, s_slabs.size());
 		}
-		if (!found)
-		{
-			// esse é o log mais crítico de todos: se aparecer, achamos a causa exata do
-			// crash (um código pulando pro endereço GRAVÁVEL, não executável, de um bloco
-			// JIT que não existe/já foi liberado). Esse caminho só deveria disparar se algo
-			// já estiver errado, então o custo do flush aqui é aceitável.
-			cemuLog_waitForFlush();
-			cemu_assert_suspicious(); // não deveria acontecer: ponteiro não pertence a nenhuma alocação do DualMapAllocator
-			return writeAddr;
-		}
-		return execPtr;
+		// se aparecer, um codigo pularia para o endereco GRAVAVEL (nao executavel) de um bloco inexistente
+		cemuLog_waitForFlush();
+		cemu_assert_suspicious();
+		return writeAddr;
 	}
 };
 #endif

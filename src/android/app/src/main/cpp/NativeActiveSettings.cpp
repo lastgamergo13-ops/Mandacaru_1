@@ -1,5 +1,6 @@
 #include "JNIUtils.h"
 #include "config/ActiveSettings.h"
+#include "Cemu/Logging/CemuLogging.h"
 
 extern "C" [[maybe_unused]] JNIEXPORT jstring JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeActiveSettings_getMLCPath(JNIEnv* env, [[maybe_unused]] jclass clazz)
@@ -25,6 +26,10 @@ Java_info_cemu_cemu_nativeinterface_NativeActiveSettings_initializeActiveSetting
 		JNIUtils::FromJString(env, cachePath),
 		JNIUtils::FromJString(env, dataPath),
 		failedWriteAccess);
+	// V11.28: cria o log.txt ja na abertura do app (antes so existia depois de iniciar um jogo), para
+	// podermos diagnosticar biblioteca vazia / permissoes de pasta sem precisar rodar um jogo.
+	cemuLog_createLogFile(false);
+	cemuLog_log(LogType::Force, "[App] log iniciado na abertura do app");
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL

@@ -413,6 +413,9 @@ private:
 		VkDescriptorSetInfo* activeGeometryDS{ nullptr };
 		bool descriptorSetsChanged{ false };
 		VkImageAspectFlags feedbackLoopImageAspect{0xFFFFFFFF};
+		// ultimo resultado de CheckForSelfDependency (persistente entre draws; Mandacaru V11.28)
+		VkImageAspectFlags selfDepAspect{0};
+		bool selfDepNonPixel{false};
 		// viewport and scissor box
 		VkViewport currentViewport{};
 		VkRect2D currentScissorRect{};
@@ -447,6 +450,8 @@ private:
 			activeIndexBufferIndex = std::numeric_limits<uint32>::max();
 			activeIndexBufferOffset = std::numeric_limits<uint32>::max();
 			feedbackLoopImageAspect = 0xFFFFFFFF;
+			selfDepAspect = 0;
+			selfDepNonPixel = false;
 		}
 
 		// invalidation / flushing

@@ -1192,11 +1192,18 @@ void VulkanRenderer::draw_setRenderPass()
 	// note - pixel self dependency can be handled via feedback_loop extension
 	// vertex/geometry self dependency needs renderpass split
 	CachedFBOVk::RendertargetSelfDependencyMask renderSelfDependencyInfo{};
+	// V11.28: o estado de self-dependency precisa persistir entre draws. Antes era recalculado so quando os descriptors
+	// mudavam, entao ao reutilizar o renderpass ele virava "sem dependencia" e a barreira/divisao de pass se perdia
+	// (drivers sem VK_EXT_attachment_feedback_loop_layout, como o Adreno stock -> DEVICE_LOST no MK8/SM3DW).
+	renderSelfDependencyInfo.aspectMaskFlags = m_state.selfDepAspect;
+	renderSelfDependencyInfo.hasNonPixelSelfDependency = m_state.selfDepNonPixel;
 
 	// update self-dependency state
 	if (m_state.descriptorSetsChanged || m_state.activeRenderpassFBO != fboVk)
 	{
 		renderSelfDependencyInfo = fboVk->CheckForSelfDependency(m_state.activeVertexDS, m_state.activeGeometryDS, m_state.activePixelDS);
+		m_state.selfDepAspect = renderSelfDependencyInfo.aspectMaskFlags;
+		m_state.selfDepNonPixel = renderSelfDependencyInfo.hasNonPixelSelfDependency;
 	}
 
 	auto vkObjRenderPass = fboVk->GetRenderPassObj();
@@ -1223,6 +1230,8 @@ void VulkanRenderer::draw_setRenderPass()
 
 	// assume that FBO changed, update self-dependency state
 	renderSelfDependencyInfo = fboVk->CheckForSelfDependency(m_state.activeVertexDS, m_state.activeGeometryDS, m_state.activePixelDS);
+	m_state.selfDepAspect = renderSelfDependencyInfo.aspectMaskFlags;
+	m_state.selfDepNonPixel = renderSelfDependencyInfo.hasNonPixelSelfDependency;
 
 	sync_RenderPassLoadTextures(fboVk);
 

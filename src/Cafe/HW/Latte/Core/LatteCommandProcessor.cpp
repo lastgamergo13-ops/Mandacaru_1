@@ -21,6 +21,9 @@
 #endif
 
 #include <boost/container/small_vector.hpp>
+#include <thread>
+#include <chrono>
+#include <algorithm>
 
 void LatteCP_DebugPrintCmdBuffer(uint32be* bufferPtr, uint32 size);
 
@@ -172,6 +175,7 @@ void LatteCP_signalEnterWait()
 uint32 LatteCP_readU32Deprc()
 {
 	// no display list active
+	uint32 idleLoops = 0; // V11.28: conta voltas seguidas sem dados, para dormir um pouco em vez de queimar 100% de um nucleo
 	while (true)
 	{
 		uint32 cmdWord;
@@ -195,7 +199,20 @@ uint32 LatteCP_readU32Deprc()
 		// still no command data available, do some other tasks
 		LatteTiming_HandleTimedVsync();
 		LatteAsyncCommands_checkAndExecute();
+#if defined(__ANDROID__)
+		// V11.28: a thread da GPU ficava em loop apertado (pause+yield) ate chegar o proximo comando, mantendo ~100% de um
+		// nucleo mesmo ociosa. No celular isso vira calor, throttling e perda de desempenho em sessoes longas.
+		// Depois de ~1 ms sem dados passa a dormir 50-250 us entre checagens; qualquer dado novo zera o contador.
+		if (++idleLoops > 64)
+		{
+			uint32 step = std::min<uint32>((idleLoops - 64) / 16 + 1, 5);
+			std::this_thread::sleep_for(std::chrono::microseconds(50 * step));
+		}
+		else
+			std::this_thread::yield();
+#else
 		std::this_thread::yield();
+#endif
 		performanceMonitor.gpuTime_idleTime.endMeasuring();
 	}
 	UNREACHABLE;
@@ -636,8 +653,15 @@ LatteCMDPtr LatteCP_itMemSemaphore(LatteCMDPtr cmd, uint32 nWords)
 			if (oldVal == 0)
 			{
 				loopCount++;
+#if defined(__ANDROID__)
+				if (loopCount > 20000)
+					std::this_thread::sleep_for(std::chrono::microseconds(100)); // V11.28
+				else if (loopCount > 2000)
+					std::this_thread::yield();
+#else
 				if (loopCount > 2000)
 					std::this_thread::yield();
+#endif
 				continue;
 			}
 			if (semaphoreData->compare_exchange_strong(oldVal, oldVal - 1))
@@ -975,7 +999,11 @@ LatteCMDPtr LatteCP_itHLEWaitForFlip(LatteCMDPtr cmd, uint32 nWords)
 		}
 		// check if any GPU events happened
 		LatteTiming_HandleTimedVsync();
+#if defined(__ANDROID__)
+		std::this_thread::sleep_for(std::chrono::microseconds(100)); // V11.28: sem espera ativa enquanto aguarda o flip
+#else
 		std::this_thread::yield();
+#endif
 	}
 	return cmd;
 }

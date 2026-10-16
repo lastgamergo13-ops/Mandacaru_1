@@ -418,3 +418,31 @@ Checklist:
  [ ] Show FPS mostra o texto no topo-centro
  [ ] Log do outro celular com [Pasta]/[SAF scan]/[Arquivo] se a biblioteca continuar vazia
  [ ] Procurar "vkEndCommandBuffer falhou" no proximo crash Vulkan
+
+=== V11.28 (2026-10-16) ===
+1) Vulkan DEVICE_LOST em vkQueueSubmit (MK8/SM3DW, Adreno stock sem VK_EXT_attachment_feedback_loop_layout):
+   o estado de self-dependency (textura amostrada e escrita no mesmo FBO) era recalculado so quando os descriptors
+   mudavam; ao reutilizar o renderpass ele virava "sem dependencia" e a barreira/divisao de pass se perdia.
+   Agora persiste em m_state (selfDepAspect/selfDepNonPixel) - VulkanRenderer.h + VulkanRendererCore.cpp.
+   (O SSimco usa codigo mais antigo que guardava esse estado; o fork usa o mais novo do Cemu, que so e seguro com feedback loop.)
+2) OpenGL (Adreno 650 sem S3TC/RGTC): BC1-BC5 agora decodificam em software para 8 bits (RGBA8/SRGB8_ALPHA8, R8, RG8, com
+   SNORM real). Corrige: BC5 lia 16 B/texel de buffer de 8 B (lixo/imagem repetida), sRGB sem conversao ("todo"),
+   BC2 sem caminho nativo, e reduz RAM/VRAM (antes float32: 16 B/texel). Deteccao tambem pela lista GL_COMPRESSED_TEXTURE_FORMATS.
+   Log novo: "[GL] BC1 -> ... | BC2 -> ..." mostra o caminho de cada formato. A linha "BC1/S3TC=false" so indica falta de suporte
+   nativo do driver; a opcao experimental ETC2 e independente.
+3) GL: modos de clamp MIRROR_CLAMP (so desktop) mapeados para equivalentes validos no GLES.
+4) log.txt criado ja na abertura do app, com aparelho/Android/permissoes de pasta persistidas (para diagnosticar biblioteca vazia).
+Nao compilado/testado no aparelho. SSimco e so Vulkan: os problemas de GL vem do porte do Mandacaru.
+
+=== V11.29 (2026-10-16) ===
+1) CPU/GPU ociosos: a thread Latte (~90-100% CPU nos [Perf]) e o nucleo principal do PPC (OSSched[core=1] ~50%) ficavam em loop
+   apertado esperando trabalho -> calor, throttling e queda de desempenho em sessoes longas. Android agora dorme 50-250 us
+   depois de ~1 ms sem dados (LatteCommandProcessor.cpp: readU32, WaitForFlip, semaforo; coreinit_Thread.cpp: __OSThreadCoreIdle).
+2) RAM: AndroidMemoryManager passa a liberar texturas nao usadas automaticamente quando a RAM livre do sistema cai (limiares
+   proporcionais a RAM total: 14% = baixo, 7% = critico; antes 512/256 MB fixos e so reagia ao "teto" manual).
+3) Recompilador (AArch64/Android): alocador JIT em slabs. Antes: memfd+2 mmap por funcao (dezenas de milhares de VMAs ->
+   limite ~65530 do Android -> crash em sessao longa) e busca linear a cada traducao. Agora: slabs de 16 MB mapeados uma vez
+   (RW + RX), faixas livres com fusao, PUNCH_HOLE para blocos grandes, busca O(log n); free aceita endereco RW ou RX
+   (antes o cleanup passava o endereco RX e vazava). Mantem W^X.
+Nao compilado/testado no aparelho (alocador testado isolado em Linux). Teste: sessao longa em MK8/SM3DW, ver [Perf] CPU por thread
+e a linha "[JIT] novo slab de codigo".

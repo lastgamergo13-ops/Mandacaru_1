@@ -13,6 +13,7 @@ import info.cemu.cemu.nativeinterface.NativeEmulation.setDPI
 import info.cemu.cemu.nativeinterface.NativeFiles
 import info.cemu.cemu.nativeinterface.NativeGraphicPacks.refreshGraphicPacks
 import info.cemu.cemu.nativeinterface.NativeLogging.crashLog
+import info.cemu.cemu.nativeinterface.NativeLogging
 import info.cemu.cemu.nativeinterface.NativeRenderer
 import info.cemu.cemu.nativeinterface.NativeSwkbd.initializeSwkbd
 import kotlinx.coroutines.flow.first
@@ -209,6 +210,21 @@ class CemuApplication : Application() {
         initializeEmulation()
         initializeSwkbd()
         refreshGraphicPacks()
+        logAppEnvironment()
+    }
+
+    // V11.28: informacoes do aparelho/permissoes no log desde a abertura do app
+    private fun logAppEnvironment() {
+        try {
+            NativeLogging.log("[App] aparelho=${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} android=${android.os.Build.VERSION.RELEASE} sdk=${android.os.Build.VERSION.SDK_INT} abi=${android.os.Build.SUPPORTED_ABIS.joinToString()}")
+            val persisted = contentResolver.persistedUriPermissions
+            NativeLogging.log("[App] permissoes de pasta persistidas: ${persisted.size}")
+            for (p in persisted) {
+                NativeLogging.log("[App]   ${p.uri} leitura=${p.isReadPermission} escrita=${p.isWritePermission}")
+            }
+        } catch (e: Throwable) {
+            NativeLogging.log("[App] falha ao registrar ambiente: ${e}")
+        }
     }
 
     private val internalCemuDataFolder: String

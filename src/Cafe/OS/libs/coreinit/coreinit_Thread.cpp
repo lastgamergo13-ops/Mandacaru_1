@@ -1,3 +1,5 @@
+#include <thread>
+#include <chrono>
 #include "Cafe/OS/common/OSCommon.h"
 #include "Cafe/HW/Espresso/PPCCallback.h"
 #include "Cafe/OS/RPL/rpl.h"
@@ -1332,8 +1334,18 @@ namespace coreinit
 		bool isMainCore = g_isMulticoreMode == false || t_assignedCoreIndex == 1;
 		sint32 coreIndex = t_assignedCoreIndex;
 		__OSUnlockScheduler();
+		uint32 idleSpinCount = 0; // V11.28 (Android): evita queimar um nucleo inteiro quando nao ha thread PPC para rodar
 		while (true)
 		{
+#if defined(__ANDROID__)
+			if (isMainCore && g_coreRunQueueThreadCount[coreIndex].isZero())
+			{
+				if (++idleSpinCount > 200)
+					std::this_thread::sleep_for(std::chrono::microseconds(60));
+			}
+			else
+				idleSpinCount = 0;
+#endif
 			if (!g_coreRunQueueThreadCount[coreIndex].isZero()) // avoid hammering the lock on the main core if there is no runable thread
 			{
 				__OSLockScheduler();

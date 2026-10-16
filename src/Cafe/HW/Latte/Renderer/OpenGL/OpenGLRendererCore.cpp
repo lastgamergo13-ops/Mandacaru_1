@@ -1275,6 +1275,19 @@ GLint glClampTable[] =
 	GL_MIRROR_CLAMP_TO_BORDER_EXT
 };
 
+// V11.28: GLES nao tem GL_MIRROR_CLAMP_TO_EDGE nem GL_MIRROR_CLAMP_TO_BORDER_EXT (so desktop). Enviar esses enums gera
+// GL_INVALID_ENUM e o driver mantem o modo antigo (REPEAT), o que estraga efeitos de blur/borda do jogo.
+static GLint _glClampForHost(uint32 idx)
+{
+	GLint v = glClampTable[idx & 7];
+	if (OpenGLRenderer::IsGLES())
+	{
+		if (v == GL_MIRROR_CLAMP_TO_EDGE) return GL_MIRRORED_REPEAT;
+		if (v == GL_MIRROR_CLAMP_TO_BORDER_EXT) return GL_CLAMP_TO_BORDER;
+	}
+	return v;
+}
+
 GLint glCompSelTable[8] =
 {
 	GL_RED,
@@ -1440,19 +1453,19 @@ void OpenGLRenderer::renderstate_updateTextureSettingsGL(LatteDecompilerShader* 
 		if (samplerState->clampS != clampX)
 		{
 			quickBindTexture();
-			glTexParameteri(hostTextureView->glTexTarget, GL_TEXTURE_WRAP_S, glClampTable[clampX]);
+			glTexParameteri(hostTextureView->glTexTarget, GL_TEXTURE_WRAP_S, _glClampForHost(clampX));
 			samplerState->clampS = clampX;
 		}
 		if (samplerState->clampT != clampY)
 		{
 			quickBindTexture();
-			glTexParameteri(hostTextureView->glTexTarget, GL_TEXTURE_WRAP_T, glClampTable[clampY]);
+			glTexParameteri(hostTextureView->glTexTarget, GL_TEXTURE_WRAP_T, _glClampForHost(clampY));
 			samplerState->clampT = clampY;
 		}
 		if (samplerState->clampR != clampZ)
 		{
 			quickBindTexture();
-			glTexParameteri(hostTextureView->glTexTarget, GL_TEXTURE_WRAP_R, glClampTable[clampZ]);
+			glTexParameteri(hostTextureView->glTexTarget, GL_TEXTURE_WRAP_R, _glClampForHost(clampZ));
 			samplerState->clampR = clampZ;
 		}
 		catchOpenGLError();

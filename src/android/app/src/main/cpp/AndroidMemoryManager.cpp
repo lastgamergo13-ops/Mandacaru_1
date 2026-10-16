@@ -15,6 +15,7 @@
 #include <fstream>
 #include <sstream>
 #include <atomic>
+#include <algorithm>
 #include <thread>
 #include <chrono>
 #include "Cemu/Logging/CemuLogging.h"
@@ -117,12 +118,16 @@ static void MonitorThread() {
             s_availableRamMB = availMB;
             s_totalRamMB = totalMB;
 
+            // V11.28: limiares proporcionais a RAM total (celulares de 4-8 GB com GPU Mali sao mortos pelo
+            // Android bem antes de sobrar so 512 MB). Minimo continua sendo os valores fixos antigos.
+            const uint64_t lowLimitMB  = std::max<uint64_t>(LOW_MEMORY_THRESHOLD_MB, totalMB * 14 / 100);
+            const uint64_t critLimitMB = std::max<uint64_t>(CRITICAL_MEMORY_THRESHOLD_MB, totalMB * 7 / 100);
             MemoryPressureLevel level;
-            if (availMB < CRITICAL_MEMORY_THRESHOLD_MB) {
+            if (availMB < critLimitMB) {
                 level = MemoryPressureLevel::Critical;
                 s_lowMemory = true;
                 s_criticalMemory = true;
-            } else if (availMB < LOW_MEMORY_THRESHOLD_MB) {
+            } else if (availMB < lowLimitMB) {
                 level = MemoryPressureLevel::Low;
                 s_lowMemory = true;
                 s_criticalMemory = false;
@@ -130,6 +135,19 @@ static void MonitorThread() {
                 level = MemoryPressureLevel::Normal;
                 s_lowMemory = false;
                 s_criticalMemory = false;
+            }
+
+            // V11.28: sob pressao de RAM do sistema, descarta texturas nao usadas automaticamente (antes so
+            // acontecia com o "teto de memoria" manual ligado). Repete enquanto a pressao continuar, com intervalo.
+            if (level != MemoryPressureLevel::Normal) {
+                static auto lastAutoCleanup = std::chrono::steady_clock::now() - std::chrono::seconds(60);
+                auto nowTp = std::chrono::steady_clock::now();
+                auto minGap = std::chrono::seconds(level == MemoryPressureLevel::Critical ? 2 : 6);
+                if (nowTp - lastAutoCleanup >= minGap) {
+                    lastAutoCleanup = nowTp;
+                    cemuLog_log(LogType::Force, "AndroidMemoryManager: pouca RAM livre ({} MB de {} MB), liberando texturas nao usadas", availMB, totalMB);
+                    LatteTC_RequestAggressiveCleanup();
+                }
             }
 
             // Notifica callback apenas quando o nível muda

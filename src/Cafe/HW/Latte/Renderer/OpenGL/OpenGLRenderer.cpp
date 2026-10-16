@@ -19,6 +19,7 @@
 
 #include "Cafe/HW/Latte/ISA/RegDefines.h"
 #include "Cafe/OS/libs/gx2/GX2.h"
+#include "Cafe/HW/Latte/Core/LatteTextureLoaderRGBA8.h"
 
 class DefaultOpenGLCanvasCallbacks : public OpenGLCanvasCallbacks
 {
@@ -1146,11 +1147,39 @@ void OpenGLRenderer::QuerySupportedFormats()
 		IsGLExtensionSupported("GL_ARB_texture_compression_rgtc");
 	m_supportedFormatInfo.fmt_bc5 = m_supportedFormatInfo.fmt_bc4;
 
+	// V11.28: alem das extensoes, consulta a lista real de formatos comprimidos que o driver aceita
+	{
+		GLint numFmts = 0;
+		glGetIntegerv(0x86A2 /*GL_NUM_COMPRESSED_TEXTURE_FORMATS*/, &numFmts);
+		if (numFmts > 0 && numFmts < 512)
+		{
+			std::vector<GLint> fmts(numFmts);
+			glGetIntegerv(0x86A3 /*GL_COMPRESSED_TEXTURE_FORMATS*/, fmts.data());
+			bool hasDxt1 = false, hasDxt3 = false, hasDxt5 = false, hasRgtc = false;
+			for (GLint f : fmts)
+			{
+				if (f == 0x83F0 || f == 0x83F1) hasDxt1 = true;
+				if (f == 0x83F2) hasDxt3 = true;
+				if (f == 0x83F3) hasDxt5 = true;
+				if (f == 0x8DBB || f == 0x8DBD) hasRgtc = true;
+			}
+			cemuLog_log(LogType::Force, "[GL] formatos comprimidos anunciados pelo driver: {} (DXT1={} DXT3={} DXT5={} RGTC={})", numFmts, hasDxt1, hasDxt3, hasDxt5, hasRgtc);
+			if (hasDxt1) m_supportedFormatInfo.fmt_bc1 = true;
+			if (hasDxt3) m_supportedFormatInfo.fmt_bc2 = true;
+			if (hasDxt5) m_supportedFormatInfo.fmt_bc3 = true;
+			if (hasRgtc) { m_supportedFormatInfo.fmt_bc4 = true; m_supportedFormatInfo.fmt_bc5 = true; }
+		}
+	}
+
 	// ETC2 is mandatory-core in GLES 3.0+ (any conformant Android GPU) and in desktop
 	// OpenGL 4.3+; also available on older desktop GL via GL_ARB_ES3_compatibility.
 	bool etc2CoreVersion = isGLES ? (versionMajor >= 3) : (versionMajor > 4 || (versionMajor == 4 && versionMinor >= 3));
 	m_supportedFormatInfo.fmt_etc2 = etc2CoreVersion || IsGLExtensionSupported("GL_ARB_ES3_compatibility");
 
+	{
+		auto pick = [&](bool native, bool optEtc2) -> const char* { return native ? "nativo" : ((optEtc2 && m_supportedFormatInfo.fmt_etc2) ? "transcodificado para ETC2 (opcao experimental ligada)" : "decodificado em software para 8 bits (RGBA8/R8/RG8)"); };
+		cemuLog_log(LogType::Force, "[GL] BC1 -> {} | BC2 -> {} | BC3 -> {} | BC4 -> {} | BC5 -> {}", pick(m_supportedFormatInfo.fmt_bc1, GetConfig().texture_compression_bc1), pick(m_supportedFormatInfo.fmt_bc2, GetConfig().texture_compression_bc2), pick(m_supportedFormatInfo.fmt_bc3, GetConfig().texture_compression_bc3), pick(m_supportedFormatInfo.fmt_bc4, GetConfig().texture_compression_bc4), pick(m_supportedFormatInfo.fmt_bc5, GetConfig().texture_compression_bc5));
+	}
 	cemuLog_log(LogType::Force, "OpenGL texture compression support: BC1/S3TC={} BC2/DXT3={} BC3/DXT5={} BC4-5/RGTC={} ETC2={}", m_supportedFormatInfo.fmt_bc1, m_supportedFormatInfo.fmt_bc2, m_supportedFormatInfo.fmt_bc3, m_supportedFormatInfo.fmt_bc4, m_supportedFormatInfo.fmt_etc2);
 }
 
@@ -1773,7 +1802,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc1 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
 		else
-			texDecoder = TextureDecoder_BC1_UNORM_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC1_RGBA8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC1_SRGB)
 	{
@@ -1782,7 +1811,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc1 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
 		else
-			texDecoder = TextureDecoder_BC1_SRGB_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC1_RGBA8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC2_UNORM)
 	{
@@ -1791,7 +1820,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc2 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
 		else
-			texDecoder = TextureDecoder_BC2_UNORM_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC2_RGBA8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC2_SRGB)
 	{
@@ -1800,7 +1829,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc2 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
 		else
-			texDecoder = TextureDecoder_BC2_SRGB_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC2_RGBA8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC3_UNORM)
 	{
@@ -1809,7 +1838,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc3 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
 		else
-			texDecoder = TextureDecoder_BC3_UNORM_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC3_RGBA8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC3_SRGB)
 	{
@@ -1818,7 +1847,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc3 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
 		else
-			texDecoder = TextureDecoder_BC3_SRGB_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC3_RGBA8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC4_UNORM)
 	{
@@ -1833,7 +1862,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc4 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC::getInstance();
 		else
-			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC4_R8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC4_SNORM)
 	{
@@ -1851,7 +1880,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc4 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC_SNORM::getInstance();
 		else
-			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC4_R8_SNORM::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC5_UNORM)
 	{
@@ -1860,7 +1889,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc5 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC::getInstance();
 		else
-			texDecoder = TextureDecoder_BC5_UNORM_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC5_RG8::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::BC5_SNORM)
 	{
@@ -1869,7 +1898,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 		else if (GetConfig().texture_compression_bc5 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC_SNORM::getInstance();
 		else
-			texDecoder = TextureDecoder_BC5_SNORM_uncompress::getInstance();
+			texDecoder = TextureDecoder_BC5_RG8_SNORM::getInstance();
 	}
 	else if (format == Latte::E_GX2SURFFMT::R8_G8_B8_A8_UNORM)
 		texDecoder = TextureDecoder_R8_G8_B8_A8::getInstance();
