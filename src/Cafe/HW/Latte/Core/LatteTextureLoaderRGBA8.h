@@ -14,11 +14,11 @@ namespace LatteTexRGBA8
 		if (v >= 1.0f) return 255;
 		return (uint8)(v * 255.0f + 0.5f);
 	}
-	inline int8 toS8(float v)
+	inline sint8 toS8(float v)
 	{
 		if (v <= -1.0f) return -127;
 		if (v >= 1.0f) return 127;
-		return (int8)(v >= 0.0f ? (v * 127.0f + 0.5f) : (v * 127.0f - 0.5f));
+		return (sint8)(v >= 0.0f ? (v * 127.0f + 0.5f) : (v * 127.0f - 0.5f));
 	}
 
 	template<int NCOMP, int BLOCKBYTES, bool SNORM, typename TDecodeFn>
