@@ -1,5 +1,7 @@
 #include "TitleList.h"
 #include "Common/FileStream.h"
+#include <chrono>
+#include <atomic>
 
 #include "util/helpers/helpers.h"
 
@@ -283,6 +285,11 @@ void CafeTitleList::AddTitleFromPath(fs::path path)
 		delete titleInfo;
 }
 
+#ifdef __ANDROID__
+// quantas entradas (arquivos/pastas) a varredura SAF ja leu - serve para diferenciar "pasta sem acesso" de "pasta sem jogos"
+static std::atomic<uint64> s_safEntriesSeen{ 0 };
+#endif
+
 bool CafeTitleList::RefreshWorkerThread()
 {
 	SetThreadName("TitleListWorker");
@@ -300,11 +307,26 @@ bool CafeTitleList::RefreshWorkerThread()
 		sTLMutex.unlock();
 		// scan game paths
 		cemuLog_log(LogType::Force, "[SAF scan] Starting refresh, {} configured game path(s)", gamePaths.size());
+		const auto scanStartTime = std::chrono::steady_clock::now();
 		for (auto& it : gamePaths)
 		{
 			cemuLog_log(LogType::Force, "[SAF scan] Configured game path: {}", _pathToUtf8(it));
+#ifdef __ANDROID__
+			const uint64 entriesBefore = s_safEntriesSeen.load();
+			const size_t titlesBefore = sTLList.size();
+#endif
 			ScanGamePath(it);
+#ifdef __ANDROID__
+			if (FilesystemAndroid::IsContentUri(it))
+			{
+				if (s_safEntriesSeen.load() == entriesBefore)
+					cemuLog_log(LogType::Force, "[Pasta] ATENCAO: a pasta de jogos nao devolveu nenhum arquivo/subpasta: {} - causa provavel: permissao perdida (reinstalou/atualizou o app?), pasta vazia ou app de arquivos sem suporte. Escolha a pasta de novo.", _pathToUtf8(it));
+				else if (sTLList.size() == titlesBefore)
+					cemuLog_log(LogType::Force, "[Pasta] a pasta {} foi lida mas nenhum jogo foi reconhecido (procuro .wua/.wud/.wux/.wuhb/.iso ou pastas code+content+meta)", _pathToUtf8(it));
+			}
+#endif
 		}
+		cemuLog_log(LogType::Force, "[SAF scan] varredura das pastas terminou em {} ms ({} titulo(s) conhecido(s))", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - scanStartTime).count(), sTLList.size());
 		// scan MLC
 		if (!mlcPath.empty())
 		{
@@ -391,6 +413,15 @@ void CafeTitleList::ScanGamePath(const fs::path& path)
 		bool hasContentFolder = false, hasCodeFolder = false, hasMetaFolder = false;
 		auto children = FilesystemAndroid::ListFiles(path);
 		cemuLog_log(LogType::Force, "[SAF scan] ListFiles returned {} entries for {}", children.size(), _pathToUtf8(path));
+		s_safEntriesSeen += children.size();
+		if (children.empty() && path.has_extension() && _IsKnownFileNameOrExtension(path) && !FilesystemAndroid::IsDirectory(path))
+		{
+			// o caminho configurado e um ARQUIVO de jogo escolhido diretamente (botao "Adicionar arquivo de jogo")
+			cemuLog_log(LogType::Force, "[SAF scan] caminho e um arquivo de jogo: {}", _pathToUtf8(path));
+			s_safEntriesSeen += 1;
+			AddTitleFromPath(path);
+			return;
+		}
 		for (auto& child : children)
 		{
 			if (FilesystemAndroid::IsDirectory(child))

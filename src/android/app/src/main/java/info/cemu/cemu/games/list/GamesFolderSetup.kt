@@ -26,8 +26,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import info.cemu.cemu.common.ui.localization.tr
+import info.cemu.cemu.nativeinterface.NativeGameTitles
 import info.cemu.cemu.nativeinterface.NativeLogging
 import info.cemu.cemu.nativeinterface.NativeSettings
+import info.cemu.cemu.nativeinterface.toNativePath
 import kotlinx.coroutines.delay
 
 private const val PREFS = "cemu_first_run"
@@ -71,8 +73,41 @@ fun gamePathsWithoutPermission(context: Context): List<String> {
     } catch (e: Exception) {
         return emptyList()
     }
+    // o caminho guardado no config usa a forma "nativa" (barras decodificadas depois do ultimo %3A); a permissao
+    // persistida vem na forma original do Android. Compara as duas formas para nao dar falso "permissao perdida".
+    val grantedForms = granted.flatMap { g ->
+        listOf(g, try { Uri.parse(g).toNativePath() } catch (e: Exception) { g })
+    }
     return NativeSettings.getGamesPaths().filter { path ->
-        path.startsWith("content://") && granted.none { g -> path == g || path.startsWith(g) }
+        path.startsWith("content://") && grantedForms.none { g -> path == g || path.startsWith(g) }
+    }
+}
+
+/**
+ * Adiciona arquivos de jogo escolhidos diretamente (.wua/.wud/.wux/.wuhb) - alternativa quando a varredura de
+ * pasta nao funciona no aparelho. Guarda a permissao de leitura e manda o emulador reler a biblioteca.
+ */
+fun addGameFiles(context: Context, uris: List<Uri>, gamesListViewModel: GamesListViewModel) {
+    var added = 0
+    for (uri in uris) {
+        val granted = try {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            true
+        } catch (e: Exception) {
+            NativeLogging.log("[Pasta] permissao persistente do arquivo $uri falhou: ${e.message}")
+            false
+        }
+        val path = uri.toNativePath()
+        NativeLogging.log("[Pasta] arquivo de jogo escolhido: $path (permissao persistente: $granted)")
+        if (!NativeSettings.getGamesPaths().contains(path)) {
+            NativeSettings.addGamesPath(path)
+            added++
+        }
+    }
+    if (added > 0) {
+        NativeSettings.saveSettings()
+        gamesListViewModel.gamePathsHaveChanged()
+        gamesListViewModel.refreshGames()
     }
 }
 
@@ -134,21 +169,25 @@ fun GamesFolderSetup(
         step = 2
     }
 
-    // varredura: termina quando nenhum jogo novo aparece por 4 s (ou depois de 40 s)
+    // varredura: termina quando o emulador avisa que acabou de varrer (isScanningTitles) e a lista parou de crescer.
+    // Antes terminava apos 4 s sem jogo novo, o que dava "nenhum jogo" em pastas grandes/lentas mesmo com a varredura ainda rodando.
     LaunchedEffect(step) {
         if (step != 2) return@LaunchedEffect
         var last = -1
-        var idle = 0
+        var stable = 0
         var elapsed = 0
-        while (elapsed < 40_000 && idle < 4_000) {
+        while (elapsed < 300_000) {
             delay(500)
             elapsed += 500
             val now = gamesListViewModel.currentGamesCount()
             if (now != last) {
                 last = now
-                idle = 0
-            } else idle += 500
+                stable = 0
+            } else stable += 500
+            val scanning = try { NativeGameTitles.isScanningTitles() } catch (e: Throwable) { false }
+            if (elapsed >= 1_000 && !scanning && stable >= 1_500) break
         }
+        NativeLogging.log("[Pasta] varredura concluida na interface: ${gamesListViewModel.currentGamesCount()} jogo(s) em ${elapsed} ms")
         step = 3
     }
 

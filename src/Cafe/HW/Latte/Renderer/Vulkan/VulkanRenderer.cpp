@@ -2330,7 +2330,13 @@ void VulkanRenderer::SubmitCommandBuffer(VkSemaphore signalSemaphore, VkSemaphor
 
 	occlusionQuery_notifyEndCommandBuffer();
 
-	vkEndCommandBuffer(m_state.currentCommandBuffer);
+	{
+		// O resultado nao era verificado. Um cmd buffer que falhou ao gravar (memoria do host esgotada, estado invalido)
+		// e depois enviado faz o driver travar/derrubar no vkQueueSubmit (Turnip: SIGSEGV; Qualcomm: DEVICE_LOST).
+		const VkResult endResult = vkEndCommandBuffer(m_state.currentCommandBuffer);
+		if (endResult != VK_SUCCESS)
+			cemuLog_log(LogType::Force, "[Diag] vkEndCommandBuffer falhou: {} cmdBufIndex={} totalSubmetidos={} (o submit seguinte provavelmente vai falhar)", (int)endResult, (int)m_commandBufferIndex, (uint64)m_numSubmittedCmdBuffers);
+	}
 
 	VkSubmitInfo submitInfo = {};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

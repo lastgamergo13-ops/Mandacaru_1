@@ -91,6 +91,10 @@ object NativeGameTitles {
     @JvmStatic
     external fun reloadGameTitles()
 
+    /** true enquanto a varredura das pastas de jogos ainda esta rodando. */
+    @JvmStatic
+    external fun isScanningTitles(): Boolean
+
     @JvmStatic
     external fun getInstalledGamesTitleIds(): LongArray
 

@@ -391,3 +391,30 @@ BIBLIOTECA / PRIMEIRA EXECUCAO
 - Abrir jogo pelo explorador/arquivador ("Unable to launch game" com content://ru.zdevs.zarchiver...): provedores de terceiros costumam entregar descritor sem seek ou sem permissao. Agora o log registra o motivo e o erro orienta a usar a biblioteca. Nao ha como forcar leitura por esse provedor.
 PENDENTE
 - SM3DW na 2a execucao sem texturas (so audio): precisa do log.txt dessa 2a execucao. Teste rapido: no menu do jogo, "Remove shader caches" e abrir de novo.
+
+V11.27
+ANALISE DOS LOGS (Vulkan sistema, Turnip, OpenGL) - Adreno 650, SM3DW e Mario Kart 8
+- Vulkan driver do sistema (3D World submit 1028, MK8 submit 93): vkQueueSubmit devolve DEVICE_LOST. Antes do submit que falha, todos os fences (modo sync ligado) terminaram bem. O submit que falha so espera o semaforo do cmd buffer anterior (waitSemaforos=1, sem semaforo externo) => NAO e o submit de apresentacao, ao contrario do que a V11.25 supunha.
+- Vulkan Turnip (MK8): SIGSEGV na LatteThread dentro de libvulkan_freedreno.so (+0x9ec874), fault 0x1b0, "ultima operacao" = vkQueueSubmit. Mesmo ponto e mesmo fault address (0x1b0) do Turnip R5 e (0x1a0) do PurpleVK: tres drivers diferentes falham DENTRO do vkQueueSubmit.
+- Hipotese de trabalho: o cmd buffer enviado referencia um objeto ja destruido/liberado (ou ficou invalido) e o driver nao aguenta (null deref no Turnip, DEVICE_LOST no Qualcomm). Nao provado. Descartado: pressao de memoria/limpeza de texturas (nenhum evento nos logs), frame gen (desligado nesses testes), semaforo do swapchain.
+- Driver do sistema: apiVersion 1.1.128, SEM VK_EXT_debug_utils (por isso [VKDEBUG] nao mostra nada), sem custom_border_color/depth_clip_enable/pipeline_robustness/present_wait, LogicOp nao suportado, "Can't find immediate present mode".
+- Mudanca: VulkanRenderer.cpp agora verifica o resultado de vkEndCommandBuffer (antes ignorado) e registra "[Diag] vkEndCommandBuffer falhou". Se essa linha aparecer antes do crash, achamos a causa.
+- OpenGL: SM3DW e MK8 rodam ~55-60 FPS e a velocidade emulada fica em 100%; as travadas sao quadros de GPU de 0,8 s a 4 s na thread do Latte (total=839907us, 1086419us, 3982818us com ocioso~0) = o driver GL compilando/linkando shaders (shaderBinds/frame=0). No MK8 o RSS pulou +511 MB em 3 s (2,2 GB) e o jogo parou em GX2DrawDone. "Texturas quebradas" no MK8 GL continua sem causa conhecida; os unicos [GLDEBUG] sao 2 avisos inofensivos (pname 10242/10243).
+- Nao e problema de versao do Android nem de permissao de armazenamento: o app usa so SAF (sem permissao de armazenamento), minSdk 30, targetSdk 35. O que importa e a permissao persistente da pasta escolhida.
+OVERLAY DE FPS (3)
+- Causa: overlay.position vem kDisabled por padrao; o item "Show FPS" ligava overlay.fps mas nada era desenhado. Agora setOverlayFPSEnabled(true) define a posicao como topo-centro quando estiver desativada, e isOverlayFPSEnabled() so devolve true se a posicao estiver ativa.
+BIBLIOTECA / JOGOS NAO APARECEM
+- Varredura: o dialogo de primeira execucao encerrava apos 4 s sem jogo novo e dizia "Nenhum jogo encontrado" mesmo com a varredura ainda rodando (pastas grandes/celulares lentos). Agora usa NativeGameTitles.isScanningTitles() (CafeTitleList::IsScanning) e so conclui quando a varredura termina e a lista estabiliza (limite 5 min). A tela vazia mostra "Varrendo..." enquanto roda.
+- Falso "permissao perdida": o caminho salvo (barras decodificadas) nao batia com a permissao persistida (forma original). Agora compara as duas formas.
+- listFiles engolia erros (ex.: SecurityException) e ate podia derrubar o app com URI que nao e de arvore; agora tudo dentro de try/catch e o erro vai para o log ([Arquivo] nao consegui abrir listFiles:...).
+- isDirectory usava so getType(); alguns provedores devolvem null e as subpastas nao eram varridas. Agora cai para a coluna MIME do documento.
+- Aviso [Pasta] quando o provedor usa IDs opacos (sem nome do arquivo): jogos .wua nao seriam reconhecidos por extensao.
+- TitleList.cpp: log "[Pasta] ATENCAO: a pasta nao devolveu nenhum arquivo" (sem acesso) x "foi lida mas nenhum jogo foi reconhecido", e resumo "[SAF scan] varredura das pastas terminou em N ms (M titulos)".
+- Novo: botao "Adicionar arquivo de jogo" na biblioteca vazia (escolhe .wua/.wud/.wux direto, com permissao persistente); a varredura aceita caminho de arquivo.
+GITHUB ACTIONS
+- Aviso Node 20: trocar actions/checkout@v3 -> @v5 e softprops/action-gh-release@v2 -> @v3 no mandacaru_wiiu.yml (arquivo nao esta no pacote; ver instrucoes na resposta).
+Checklist:
+ [ ] Compila no CI (nada compilado)
+ [ ] Show FPS mostra o texto no topo-centro
+ [ ] Log do outro celular com [Pasta]/[SAF scan]/[Arquivo] se a biblioteca continuar vazia
+ [ ] Procurar "vkEndCommandBuffer falhou" no proximo crash Vulkan

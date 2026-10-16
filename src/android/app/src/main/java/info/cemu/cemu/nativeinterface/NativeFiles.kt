@@ -96,41 +96,79 @@ object NativeFiles {
     @JvmStatic
     fun listFiles(uri: String): Array<String?> {
         val files = ArrayList<String>()
-        val directoryUri = uri.fromNativePath()
-        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
-            directoryUri,
-            DocumentsContract.getDocumentId(directoryUri)
-        )
         try {
+            val directoryUri = uri.fromNativePath()
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                directoryUri,
+                DocumentsContract.getDocumentId(directoryUri)
+            )
             contentResolver.query(
                 childrenUri,
-                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                ),
                 null,
                 null,
                 null
             ).use { cursor ->
                 while (cursor != null && cursor.moveToNext()) {
                     val documentId = cursor.getString(0)
+                    val displayName = if (cursor.columnCount > 1) cursor.getString(1) else null
                     val documentUri =
                         DocumentsContract.buildDocumentUriUsingTree(directoryUri, documentId)
-                    files.add(documentUri.toNativePath())
+                    val nativePath = documentUri.toNativePath()
+                    warnOpaqueIds(directoryUri, documentId, displayName)
+                    files.add(nativePath)
                 }
             }
         } catch (e: Exception) {
+            // antes este erro (ex.: SecurityException por permissao perdida) era engolido e a biblioteca ficava vazia sem pista
             Log.d("NativeFiles", "Cannot list files: ${e.message}")
+            logOpenFailure("listFiles:" + uri, "${e.javaClass.simpleName}: ${e.message}")
         }
         var filesArray = arrayOfNulls<String>(files.size)
         filesArray = files.toArray(filesArray)
         return filesArray
     }
 
+    // Alguns provedores de arquivos usam IDs opacos (ex.: "msf:1234") que nao contem o nome do arquivo. O emulador
+    // reconhece jogos pela extensao do caminho, entao nesses provedores arquivos .wua nao seriam reconhecidos. Avisa no log.
+    private fun warnOpaqueIds(directoryUri: Uri, documentId: String?, displayName: String?) {
+        if (documentId == null || displayName == null) return
+        val ext = displayName.substringAfterLast('.', "").lowercase()
+        if (ext !in setOf("wua", "wud", "wux", "wuhb", "iso")) return
+        if (documentId.lowercase().endsWith(".$ext")) return
+        val authority = directoryUri.authority ?: return
+        synchronized(loggedAuthorities) { if (!loggedAuthorities.add("opaque:$authority")) return }
+        NativeLogging.log("[Pasta] AVISO: o provedor '$authority' usa IDs sem o nome do arquivo (ex.: '$documentId' para '$displayName'); jogos .$ext podem nao ser reconhecidos nesta pasta. Escolha a pasta pelo armazenamento interno (Downloads/Documentos) ou use 'Adicionar arquivo de jogo'.")
+    }
+
     @Keep
     @JvmStatic
     fun isDirectory(uri: String): Boolean {
-        val mimeType = contentResolver.getType(
-            uri.fromNativePath()
-        )
-        return DocumentsContract.Document.MIME_TYPE_DIR == mimeType
+        val parsed = uri.fromNativePath()
+        try {
+            val mimeType = contentResolver.getType(parsed)
+            if (mimeType != null)
+                return DocumentsContract.Document.MIME_TYPE_DIR == mimeType
+        } catch (_: Exception) {
+        }
+        // alguns provedores nao respondem getType() para documentos; o MIME oficial vem da coluna do documento
+        try {
+            contentResolver.query(
+                parsed,
+                arrayOf(DocumentsContract.Document.COLUMN_MIME_TYPE),
+                null,
+                null,
+                null
+            ).use { cursor ->
+                if (cursor != null && cursor.moveToFirst())
+                    return DocumentsContract.Document.MIME_TYPE_DIR == cursor.getString(0)
+            }
+        } catch (_: Exception) {
+        }
+        return false
     }
 
     @Keep

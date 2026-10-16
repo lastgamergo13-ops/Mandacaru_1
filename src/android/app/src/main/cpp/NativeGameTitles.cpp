@@ -182,6 +182,12 @@ Java_info_cemu_cemu_nativeinterface_NativeGameTitles_setGameTitleLoadedCallback(
 	NativeGameTitles::s_gameTitleLoader.SetOnTitleLoaded(std::make_shared<AndroidGameTitleLoadedCallback>(onGameTitleLoadedMID, game_title_loaded_callback));
 }
 
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeGameTitles_isScanningTitles([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return CafeTitleList::IsScanning();
+}
+
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeGameTitles_reloadGameTitles([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {

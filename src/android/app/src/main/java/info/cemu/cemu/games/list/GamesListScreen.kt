@@ -5,6 +5,8 @@
 package info.cemu.cemu.games.list
 
 import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,6 +26,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -103,6 +106,20 @@ fun GamesListScreen(
 
     val state = rememberPullToRefreshState()
     var forceFolderDialog by remember { mutableStateOf(false) }
+    var scanning by remember { mutableStateOf(false) }
+
+    // mostra "varrendo..." enquanto o emulador ainda le a pasta (evita parecer que a biblioteca esta vazia/travada)
+    LaunchedEffect(Unit) {
+        while (true) {
+            scanning = try { NativeGameTitles.isScanningTitles() } catch (e: Throwable) { false }
+            delay(700)
+        }
+    }
+
+    // alternativa a varredura de pasta: escolher o(s) arquivo(s) do jogo diretamente
+    val gameFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) addGameFiles(context, uris, gamesListViewModel)
+    }
 
     LaunchedEffect(lifecycleState) {
         if (lifecycleState == Lifecycle.State.RESUMED && gamesListViewModel.gamePathsHaveChanged())
@@ -214,8 +231,19 @@ fun GamesListScreen(
                             color = SteamDeckColors.TextSecondary,
                             modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
                         )
+                        if (scanning) {
+                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                            Text(
+                                tr("Varrendo a pasta de jogos... isso pode demorar em pastas grandes."),
+                                color = SteamDeckColors.TextSecondary,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
                         androidx.compose.material3.Button(onClick = { forceFolderDialog = true }) {
                             Text(tr("Escolher pasta de jogos"))
+                        }
+                        androidx.compose.material3.TextButton(onClick = { gameFilesLauncher.launch(arrayOf("*/*")) }) {
+                            Text(tr("Adicionar arquivo de jogo"))
                         }
                         androidx.compose.material3.TextButton(onClick = { gamesListViewModel.refreshGames() }) {
                             Text(tr("Varrer novamente"))

@@ -33,13 +33,17 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setOverlayTextScalePercentage
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_isOverlayFPSEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {
-	return GetConfig().overlay.fps;
+	// O overlay so e desenhado quando a posicao nao e kDisabled (padrao do config). Sem isso o
+	// item "Show FPS" aparecia marcado mas nada aparecia na tela.
+	return GetConfig().overlay.fps && GetConfig().overlay.position != ScreenPosition::kDisabled;
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_setOverlayFPSEnabled([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
 {
 	GetConfig().overlay.fps = enabled;
+	if (enabled && GetConfig().overlay.position == ScreenPosition::kDisabled)
+		GetConfig().overlay.position = ScreenPosition::kTopCenter; // centro (topo) da tela
 }
 
 extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
