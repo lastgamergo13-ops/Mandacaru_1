@@ -10,7 +10,7 @@
 #include <filesystem>
 #include <istream>
 
-#include "zarchivecommon.h"
+#include <zarchive/zarchivecommon.h>
 
 using ZArchiveNodeHandle = uint32_t;
 

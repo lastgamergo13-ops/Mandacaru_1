@@ -504,3 +504,6 @@ V11.37 - Log de criacao de pipeline (Vulkan) + achados do logcat
 Logcat (SM3DW Vulkan, Adreno 650 stock): AdrenoVK "Shader compilation failed for shaderType: 0" as 14:25:25, e 5 s depois IOCTL_KGSL_GPU_COMMAND errno 35 (deadlock = GPU travou) -> DEVICE_LOST. MK8 Vulkan: so os erros KGSL (errno 71/35) repetidos ~1 s antes da morte, sem aviso de compilacao. O resto dos E/ (Gralloc "format 56" 4x4, libpenguin.so, destroySurfaces, fs-verity) e ruido sem relacao.
 - VulkanPipelineCompiler.cpp: cada vkCreateGraphicsPipelines do jogo loga "[Pipeline] criado VS= PS= GS= resultado= tempo= thread=". A API nao informa falha de compilacao do shader (o driver so avisa no logcat), entao a ligacao e feita pela HORA: a linha [Pipeline] cuja hora bate com o "Shader compilation failed" do logcat e o shader culpado; depois e so por o hash no vk_quarantine.txt.
 - Nao compilado/testado.
+
+V11.37b - Erro de build
+- src/zarchive/zarchivereader.h (vendorizado na V11.36) incluia "zarchivecommon.h" entre aspas (relativo a pasta); la so existe zarchivereader.h. Trocado por <zarchive/zarchivecommon.h>, que vem de dependencies/ZArchive/include (o projeto usa o ZArchive como dependencia propria, nao o do vcpkg - o header vendorizado continua na frente no include path).
