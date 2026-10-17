@@ -12,6 +12,18 @@
 #include "util/helpers/Serializer.h"
 #include "Cafe/HW/Latte/Common/RegisterSerializer.h"
 #include "HW/Latte/Renderer/RendererCore.h"
+#include <chrono>
+#include <mutex>
+#include <array>
+#include <unordered_map>
+
+// V11.37: guarda os hashes (VS/PS/GS) de cada PipelineCompiler para logar a criacao do pipeline.
+// Serve para cruzar a hora desta linha com "Shader compilation failed" do logcat (AdrenoVK).
+namespace
+{
+	std::mutex g_pcHashMutex;
+	std::unordered_map<const void*, std::array<uint64, 3>> g_pcHashes;
+}
 
 RendererShaderVk* rectsEmulationGS_generate(LatteDecompilerShader* vertexShader, const LatteContextRegister& latteRegister)
 {
@@ -122,6 +134,10 @@ extern std::atomic_uint64_t g_compiling_pipelines_syncTimeSum;
 PipelineCompiler::PipelineCompiler() {};
 PipelineCompiler::~PipelineCompiler()
 {
+	{
+		std::lock_guard<std::mutex> hl(g_pcHashMutex);
+		g_pcHashes.erase(this);
+	}
 	if (m_vkrObjPipeline)
 		m_vkrObjPipeline->decRef();
 	if (m_renderPassObj)
@@ -843,6 +859,12 @@ bool PipelineCompiler::InitFromCurrentGPUState(PipelineInfo* pipelineInfo, const
 	m_vkrObjPipeline = pipelineInfo->m_vkrObjPipeline;
 	m_renderPassObj = renderPassObj;
 	m_requestRobustBufferAccess = requireRobustBufferAccess;
+	{
+		std::lock_guard<std::mutex> hl(g_pcHashMutex);
+		g_pcHashes[this] = {pipelineInfo->vertexShader ? (uint64)pipelineInfo->vertexShader->baseHash : 0ull,
+							pipelineInfo->pixelShader ? (uint64)pipelineInfo->pixelShader->baseHash : 0ull,
+							pipelineInfo->geometryShader ? (uint64)pipelineInfo->geometryShader->baseHash : 0ull};
+	}
 
 	// if required generate RECT emulation geometry shader
 	if (!vkRenderer->m_featureControl.deviceExtensions.nv_fill_rectangle && isPrimitiveRect)
@@ -996,7 +1018,18 @@ bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool show
 	{
 		std::shared_lock lock(vkRenderer->m_pipeline_cache_save_mutex);
 		CRUMB("PipelineCompiler: vkCreateGraphicsPipelines (shader do jogo)");
+		std::array<uint64, 3> pcHashes{};
+		{
+			std::lock_guard<std::mutex> hl(g_pcHashMutex);
+			auto hit = g_pcHashes.find(this);
+			if (hit != g_pcHashes.end())
+				pcHashes = hit->second;
+		}
+		const auto pcT0 = std::chrono::steady_clock::now();
 		result = vkCreateGraphicsPipelines(vkRenderer->m_logicalDevice, vkRenderer->m_pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
+		const auto pcMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - pcT0).count();
+		// V11.37: a hora desta linha (fim da criacao) deve bater com "AdrenoVK ... Shader compilation failed" no logcat
+		cemuLog_log(LogType::Force, "[Pipeline] criado VS={:016x} PS={:016x} GS={:016x} resultado={} tempo={}ms thread={}", pcHashes[0], pcHashes[1], pcHashes[2], (sint32)result, (long long)pcMs, isRenderThread ? "render" : "async");
 		lock.unlock();
 		if (result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
 			break;

@@ -5,6 +5,7 @@
 #include "pugixml.hpp"
 #include "Common/FileStream.h"
 #include <zarchive/zarchivereader.h>
+#include "Cafe/TitleList/ZArchiveFdStream.h"
 #include "util/IniParser/IniParser.h"
 #include "util/crypto/crc32.h"
 #include "config/ActiveSettings.h"
@@ -26,12 +27,11 @@ static ZArchiveReader* OpenZArchiveReaderCompat(const fs::path& path)
 #ifdef __ANDROID__
 	if (FilesystemAndroid::IsContentUri(path))
 	{
+		// V11.36: le direto pelo fd (pread). Reabrir por /proc/self/fd/N da EACCES no Android 11.
 		int fd = FilesystemAndroid::OpenContentUri(path);
 		if (fd < 0)
 			return nullptr;
-		ZArchiveReader* zar = ZArchiveReader::OpenFromFile(fmt::format("/proc/self/fd/{}", fd));
-		close(fd);
-		return zar;
+		return ZArchiveReader::OpenFromStream(MakeZArchiveFdIStream(fd)); // o stream assume o fd
 	}
 #endif
 	return ZArchiveReader::OpenFromFile(path);
@@ -347,7 +347,7 @@ bool TitleInfo::DetectFormat(const fs::path& path, fs::path& pathOut, TitleDataF
 			pathOut = path;
 			// a Wii U archive file can contain multiple titles but TitleInfo only maps to one
 			// we use the first base title that we find. This is the most intuitive behavior when someone launches "game.wua"
-			ZArchiveReader* zar = ZArchiveReader::OpenFromFile(path);
+			ZArchiveReader* zar = OpenZArchiveReaderCompat(path);
 			if (!zar)
 				return false;
 			ZArchiveNodeHandle rootDir = zar->LookUp("", false, true);

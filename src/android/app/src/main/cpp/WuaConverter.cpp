@@ -1,6 +1,7 @@
 #include <unistd.h>
 
 #include "WuaConverter.h"
+#include "Cafe/TitleList/ZArchiveFdStream.h"
 
 WuaConverter::WuaConverter(const TitleInfo& titleInfo_base, const TitleInfo& titleInfo_update, const TitleInfo& titleInfo_aoc)
 	: m_titleInfo_base{titleInfo_base},
@@ -273,7 +274,8 @@ void WuaConverter::StartConversion(int fd, std::unique_ptr<CompressTitleCallback
 		// ZArchiveReader only supports opening a real filesystem path (no OpenFromStream API),
 		// so we reopen the same fd through /proc/self/fd, which Linux/Android expose as a
 		// real path pointing back to the already-open file descriptor.
-		ZArchiveReader* zreader = ZArchiveReader::OpenFromFile(fmt::format("/proc/self/fd/{}", fd));
+		const int verifyFd = dup(fd); // V11.36: le pelo fd (pread), sem reabrir por /proc (EACCES no Android 11)
+		ZArchiveReader* zreader = verifyFd >= 0 ? ZArchiveReader::OpenFromStream(MakeZArchiveFdIStream(verifyFd)) : nullptr;
 		if (!zreader)
 		{
 			callbacks->OnError();

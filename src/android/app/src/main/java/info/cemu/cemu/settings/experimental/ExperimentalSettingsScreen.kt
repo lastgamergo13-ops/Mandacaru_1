@@ -242,102 +242,36 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             onClick = goToQualityOfLifeSettings,
         )
         InfoDialogButton(
-            title = tr("Texture compression (BC1-BC5 -> ETC2/EAC)"),
+            title = tr("Texture compression (BC1-BC5)"),
             explanation = tr(
-                "What this actually does, honestly: Wii U games store many textures in compressed " +
-                        "formats called BC1 through BC5 (diffuse/color in BC1, textures needing " +
-                        "transparency in BC2/BC3, single/dual-channel data including normal maps in " +
-                        "BC4/BC5). Most Android GPUs can't read any of these directly - they support a " +
-                        "different compressed format, ETC2/EAC, instead - so today Mandacaru decodes them " +
-                        "back into fully uncompressed pixels before handing them to the GPU. Each toggle " +
-                        "below re-compresses that one format into real ETC2/EAC data instead, but only on " +
-                        "a GPU that actually supports ETC2/EAC and does NOT support that BC format " +
-                        "natively - checked for real on your device, both on Vulkan and OpenGL " +
-                        "independently, so results can differ slightly between the two render APIs.\n\n" +
-                        "Honest limitations: the ETC2/EAC encoders were written from the official Khronos " +
-                        "specification and cross-checked against independent reference implementations, " +
-                        "but have not been verified against a real ETC2 GPU decoder or run on real " +
-                        "hardware. They also use fast, average-value-per-block strategies, so quality is " +
-                        "a little below the original BC compression even when everything works exactly as " +
-                        "intended. All five are off by default for this reason - if textures look blocky, " +
-                        "noisy, or wrong after turning one on, turn it back off; that's this option, not " +
-                        "your game."
-            ),
-        )
-        InfoDialogButton(
-            title = tr("BC1 texture compression"),
-            explanation = tr(
-                "BC1 is the most common Wii U texture format: opaque or 1-bit-alpha diffuse/color " +
-                        "textures. Re-compressing to ETC2 RGB8 keeps roughly the same VRAM savings as " +
-                        "native BC1 would (about 4x smaller than uncompressed) instead of falling back to " +
-                        "full-size RGBA."
+                "Wii U games guardam muitas texturas nos formatos comprimidos BC1 a BC5 (cor, " +
+                        "transparencia, mascaras e mapas de normal). A maioria das GPUs de celular nao " +
+                        "le esses formatos direto. Este botao liga ou desliga os cinco de uma vez " +
+                        "(BC1, BC2, BC3, BC4 e BC5).\n\n" +
+                        "Ligado: o emulador converte as texturas BC para o formato que a sua GPU aceita, " +
+                        "quando ela aceita. Desligado: as texturas BC sao decodificadas para pixels " +
+                        "normais, que e o comportamento padrao e o mais seguro.\n\n" +
+                        "Aviso: e experimental. Em OpenGL ES a conversao fica sempre desativada, porque " +
+                        "ficou mais lenta e com pior qualidade nos testes; la o botao nao muda nada. " +
+                        "Se as texturas ficarem borradas, quadriculadas ou erradas depois de ligar, " +
+                        "desligue de novo: o problema e esta opcao, nao o jogo."
             ),
         )
         Toggle(
-            label = tr("BC1 texture compression"),
-            description = tr("Diffuse/color textures. See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::getTextureCompressionBC1,
-            onCheckedChanged = NativeSettings::setTextureCompressionBC1,
-        )
-        InfoDialogButton(
-            title = tr("BC2 texture compression"),
-            explanation = tr(
-                "BC2 adds an explicit 4-bit alpha channel to BC1-style color data (common in older " +
-                        "titles' transparency effects). The ETC2 target for this one (RGBA8_ETC2_EAC) " +
-                        "uses the same amount of memory as BC2 itself, so this option's real benefit is " +
-                        "avoiding today's always-uncompressed fallback for this format, not shrinking it " +
-                        "further."
-            ),
-        )
-        Toggle(
-            label = tr("BC2 texture compression"),
-            description = tr("Color + explicit alpha textures. See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::getTextureCompressionBC2,
-            onCheckedChanged = NativeSettings::setTextureCompressionBC2,
-        )
-        InfoDialogButton(
-            title = tr("BC3 texture compression"),
-            explanation = tr(
-                "BC3 is like BC2 but with smoother, interpolated 8-bit alpha (foliage, particle " +
-                        "effects, UI elements) - it's the more common of the two in practice. Same ETC2 " +
-                        "target and same tradeoffs as BC2 above."
-            ),
-        )
-        Toggle(
-            label = tr("BC3 texture compression"),
-            description = tr("Color + interpolated alpha textures. See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::getTextureCompressionBC3,
-            onCheckedChanged = NativeSettings::setTextureCompressionBC3,
-        )
-        InfoDialogButton(
-            title = tr("BC4 texture compression"),
-            explanation = tr(
-                "BC4 stores a single data channel per pixel - height maps, masks, or one channel of " +
-                        "a normal map. Re-compresses to R11_EAC, keeping the same roughly 2x VRAM saving " +
-                        "over uncompressed that native BC4 would have given. Covers both the UNORM and " +
-                        "SNORM (signed - the common case for actual normal map data) variants."
-            ),
-        )
-        Toggle(
-            label = tr("BC4 texture compression"),
-            description = tr("Single-channel textures (masks, one normal map channel). See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::getTextureCompressionBC4,
-            onCheckedChanged = NativeSettings::setTextureCompressionBC4,
-        )
-        InfoDialogButton(
-            title = tr("BC5 texture compression"),
-            explanation = tr(
-                "BC5 stores two data channels - almost always a full normal map's X/Y pair. " +
-                        "Re-compresses to RG11_EAC, keeping the same VRAM saving native BC5 would have " +
-                        "given. Covers both UNORM and SNORM (signed - the normal case for real normal " +
-                        "maps) variants."
-            ),
-        )
-        Toggle(
-            label = tr("BC5 texture compression"),
-            description = tr("Two-channel textures (normal maps). See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::getTextureCompressionBC5,
-            onCheckedChanged = NativeSettings::setTextureCompressionBC5,
+            label = tr("Texture compression (BC1-BC5)"),
+            description = tr("Liga/desliga BC1, BC2, BC3, BC4 e BC5 juntos. Veja a nota acima."),
+            initialCheckedState = {
+                NativeSettings.getTextureCompressionBC1() || NativeSettings.getTextureCompressionBC2() ||
+                    NativeSettings.getTextureCompressionBC3() || NativeSettings.getTextureCompressionBC4() ||
+                    NativeSettings.getTextureCompressionBC5()
+            },
+            onCheckedChanged = {
+                NativeSettings.setTextureCompressionBC1(it)
+                NativeSettings.setTextureCompressionBC2(it)
+                NativeSettings.setTextureCompressionBC3(it)
+                NativeSettings.setTextureCompressionBC4(it)
+                NativeSettings.setTextureCompressionBC5(it)
+            },
         )
         InfoDialogButton(
             title = tr("Recompiler AOT cache"),

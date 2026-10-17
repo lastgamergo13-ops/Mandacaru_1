@@ -490,3 +490,17 @@ V11.35 - Limpeza de texturas de profundidade no GLES
 
 V11.35b - Erro de build
 - glGetBooleanv e glStencilMask nao estao carregadas no loader GL do projeto. Troquei por glGetIntegerv e removi a limpeza de stencil (so profundidade e limpa).
+
+V11.36 - Moto G8 (.wua pelo fd) + BC1-BC5 em um unico botao
+Analise dos logs de 17/10 (tarde):
+- Moto G8 (Android 11): o diagnostico da V11.33 confirmou. Os dois .wua sao validos (zstd no inicio, footer zarchive 61bf3a01 169f52d6 no fim, 1,48 GB e 976 MB) e o fd le normal, mas reabrir por /proc/self/fd/N da errno=13 (EACCES). O Android 11 bloqueia a reabertura por caminho.
+- Correcao: ZArchiveReader do vcpkg (0.1.2) so abre por caminho. Foi trazido o reader da versao atual do ZArchive (tem OpenFromStream) em src/zarchive/ (header que sombreia <zarchive/zarchivereader.h>, .cpp compilado dentro do CemuAndroid, nao do CemuCafe, para o linker nunca puxar o antigo de libzarchive.a). Novo ZArchiveFdStream.h: std::istream que le o fd com pread() (testado em Linux com ASAN/UBSAN contra std::ifstream: 20000 leituras aleatorias, 0 divergencias).
+- TitleList.cpp, TitleInfo.cpp (inclui o ponto de deteccao do .wua que usava OpenFromFile direto) e WuaConverter.cpp (verificacao do .wua criado) passam a usar o fd. Caminhos normais continuam com OpenFromFile.
+- Interface: BC1..BC5 agora sao um unico botao "Texture compression (BC1-BC5)" e uma unica nota (liga/desliga as cinco opcoes de uma vez; a config continua com 5 chaves). Em OpenGL ES a conversao continua desativada (V11.32).
+- Calor (SM3DW GL, Adreno 650, com a resolucao dinamica da V11.34): cenas leves 55-60 fps; gameplay ~25-30 fps com 240-550 draws; GPU(Latte) 25-40 ms por frame e CPU ~45%+~45% (Latte + dispatch). O aparelho fica no maximo da GPU o tempo todo. Com o frame gen no GL o FPS real cai para ~15 (+15 gerados = 30), ou seja, mais carga para o mesmo 30. O driver nao reportou erro de GL na tela cinza ([GLDEBUG] so tem 2 avisos de texture state). Nao foi feita mudanca de render para calor: sem profiler de GPU nao ha causa confirmada.
+- Nao compilado no aparelho; so o ZArchiveFdStream.h foi testado em Linux.
+
+V11.37 - Log de criacao de pipeline (Vulkan) + achados do logcat
+Logcat (SM3DW Vulkan, Adreno 650 stock): AdrenoVK "Shader compilation failed for shaderType: 0" as 14:25:25, e 5 s depois IOCTL_KGSL_GPU_COMMAND errno 35 (deadlock = GPU travou) -> DEVICE_LOST. MK8 Vulkan: so os erros KGSL (errno 71/35) repetidos ~1 s antes da morte, sem aviso de compilacao. O resto dos E/ (Gralloc "format 56" 4x4, libpenguin.so, destroySurfaces, fs-verity) e ruido sem relacao.
+- VulkanPipelineCompiler.cpp: cada vkCreateGraphicsPipelines do jogo loga "[Pipeline] criado VS= PS= GS= resultado= tempo= thread=". A API nao informa falha de compilacao do shader (o driver so avisa no logcat), entao a ligacao e feita pela HORA: a linha [Pipeline] cuja hora bate com o "Shader compilation failed" do logcat e o shader culpado; depois e so por o hash no vk_quarantine.txt.
+- Nao compilado/testado.

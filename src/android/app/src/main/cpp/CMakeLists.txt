@@ -1,5 +1,8 @@
 add_library(CemuAndroid SHARED
         ${CMAKE_SOURCE_DIR}/src/CemuCommonInit.cpp
+        # V11.36: ZArchiveReader com OpenFromStream (a versao do vcpkg nao tem). Fica aqui, e nao no CemuCafe (lib estatica),
+        # para o linker usar sempre esta versao e nunca puxar a antiga de libzarchive.a.
+        ${CMAKE_SOURCE_DIR}/src/zarchive/zarchivereader.cpp
         AndroidFilesystemCallbacks.cpp
         AndroidInputHelpers.cpp
         AndroidMemoryManager.cpp
