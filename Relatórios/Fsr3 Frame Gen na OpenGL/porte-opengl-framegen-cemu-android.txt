@@ -446,3 +446,22 @@ Nao compilado/testado no aparelho. SSimco e so Vulkan: os problemas de GL vem do
    (antes o cleanup passava o endereco RX e vazava). Mantem W^X.
 Nao compilado/testado no aparelho (alocador testado isolado em Linux). Teste: sessao longa em MK8/SM3DW, ver [Perf] CPU por thread
 e a linha "[JIT] novo slab de codigo".
+
+V11.29b: build falhou por 'int8' inexistente em LatteTextureLoaderRGBA8.h (Cemu usa sint8) - corrigido.
+
+V11.30 - Diagnostico de WUA invalido (Moto G8)
+- TitleList.cpp: quando um .wua e rejeitado, o log agora registra tamanho do arquivo, se foi possivel abrir e os ultimos 16 bytes (footer do zarchive). Tamanho menor que o original = copia incompleta.
+- Vulkan DEVICE_LOST e GL (MK8 borrado/congelamento) continuam sem correcao confirmada; vkAllocateDescriptorSets ja e checado, nao e a causa.
+
+V11.31 - Log de capacidades Vulkan e OpenGL (true/false)
+- Novo VulkanCapsReport.h, chamado em VulkanRenderer.cpp logo apos criar o device: todas as features, limites, suporte por formato (BC1-5, ETC2, D24S8, etc.), todas as extensoes do driver marcando [ON]/[off] as ativadas pelo emulador, avisos de extensao pedida e ausente, e as decisoes internas (async compile, feedback loop, robustness...) em true/false. Prefixo [VkCaps].
+- OpenGLRenderer.cpp: relatorio [GLCaps] com versao/GLSL, limites, extensoes uteis TRUE/FALSE, lista completa e decisoes de formatos.
+- Nao foi feito rastreio de TODAS as chamadas Vulkan (muito pesado e mudaria o timing); o ultimo trace de draws ja sai no DEVICE_LOST.
+
+V11.32 - Quarentena de pipelines (Vulkan) + GLES sem transcodificacao ETC2 (inclui V11.30 e V11.31)
+Analise dos logs de 17/10 (SM3DW Vulkan e OpenGL com BC1-BC5 ligados):
+- Vulkan stock Adreno 650: BC1-BC5 NAO existem no driver (VK_FORMAT_BC* not supported); o emulador decodifica no CPU. O crash DEVICE_LOST segue deterministico: em todas as execucoes (1025/1028/1052/1081 submits) o pipeline VS=5ae6d5fe34beb432 PS=7fc38db3951826bc (prim=4) aparece 2 submits antes da falha; no MK8 sao pipelines novos (prim=6). Conclusao: shader/pipeline especifico trava a GPU do driver de fabrica.
+- DrawTraceVk.h: RecordSuspects() grava no DEVICE_LOST (e no timeout do modo sync) os pipelines vistos pela 1a vez nos ultimos 3 submits em vk_quarantine.txt; LoadQuarantine()/ShouldSkip() pulam esses draws na proxima abertura (log [Quarentena]). Apagar o arquivo desfaz. VulkanRendererCore.cpp: ShouldSkip em draw_execute_first/continued. Consequencia: o jogo pode perder um efeito, mas nao deve travar; a cada crash novos suspeitos sao adicionados.
+- OpenGL: com as opcoes BC->ETC2 ligadas o log mostrou FPS medio 25.7 (31.6 com decodificacao 8 bits), frame maximo 7.8 s (1.8 s) e RSS 1.1 GB: o transcode ETC2 e mais lento e com perda. Agora no GLES as opcoes ETC2 sao ignoradas e BC1-5 usam o decoder 8 bits (V11.28). Em desktop GL nada muda.
+- Frame gen no GL custa GPU (31 -> 24 fps medio no Adreno 650); glGetError 0x500 em CreateResources vem do renderer, nao do frame gen.
+- Inclui: V11.30 (TitleList.cpp diagnostico WUA) e V11.31 (VulkanCapsReport.h, relatorio [GLCaps]).

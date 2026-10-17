@@ -1177,10 +1177,54 @@ void OpenGLRenderer::QuerySupportedFormats()
 	m_supportedFormatInfo.fmt_etc2 = etc2CoreVersion || IsGLExtensionSupported("GL_ARB_ES3_compatibility");
 
 	{
-		auto pick = [&](bool native, bool optEtc2) -> const char* { return native ? "nativo" : ((optEtc2 && m_supportedFormatInfo.fmt_etc2) ? "transcodificado para ETC2 (opcao experimental ligada)" : "decodificado em software para 8 bits (RGBA8/R8/RG8)"); };
+		auto pick = [&](bool native, bool optEtc2) -> const char* { return native ? "nativo" : ((optEtc2 && !isGLES && m_supportedFormatInfo.fmt_etc2) ? "transcodificado para ETC2 (opcao experimental ligada)" : "decodificado em software para 8 bits (RGBA8/R8/RG8)"); };
 		cemuLog_log(LogType::Force, "[GL] BC1 -> {} | BC2 -> {} | BC3 -> {} | BC4 -> {} | BC5 -> {}", pick(m_supportedFormatInfo.fmt_bc1, GetConfig().texture_compression_bc1), pick(m_supportedFormatInfo.fmt_bc2, GetConfig().texture_compression_bc2), pick(m_supportedFormatInfo.fmt_bc3, GetConfig().texture_compression_bc3), pick(m_supportedFormatInfo.fmt_bc4, GetConfig().texture_compression_bc4), pick(m_supportedFormatInfo.fmt_bc5, GetConfig().texture_compression_bc5));
 	}
 	cemuLog_log(LogType::Force, "OpenGL texture compression support: BC1/S3TC={} BC2/DXT3={} BC3/DXT5={} BC4-5/RGTC={} ETC2={}", m_supportedFormatInfo.fmt_bc1, m_supportedFormatInfo.fmt_bc2, m_supportedFormatInfo.fmt_bc3, m_supportedFormatInfo.fmt_bc4, m_supportedFormatInfo.fmt_etc2);
+	// V11.30: relatorio completo de capacidades GL (true/false) para diagnostico
+	{
+		auto B = [](bool v) { return v ? "true" : "false"; };
+		GLint iv[3] = {};
+		auto gi = [&](GLenum e) { GLint v = -1; glGetIntegerv(e, &v); while (glGetError() != GL_NO_ERROR) {} return v; };
+		cemuLog_log(LogType::Force, "[GLCaps] ===== relatorio OpenGL =====");
+		cemuLog_log(LogType::Force, "[GLCaps] versao={} GLES={} major={} minor={} GLSL={}", glVersionString ? glVersionString : "?", B(isGLES), versionMajor, versionMinor, (const char*)glGetString(0x8B8C /*GL_SHADING_LANGUAGE_VERSION*/) ? (const char*)glGetString(0x8B8C) : "?");
+		cemuLog_log(LogType::Force, "[GLCaps] limites: MAX_TEXTURE_SIZE={} MAX_3D_TEXTURE_SIZE={} MAX_ARRAY_TEXTURE_LAYERS={} MAX_TEXTURE_IMAGE_UNITS={} MAX_COMBINED_TEXTURE_IMAGE_UNITS={} MAX_VERTEX_ATTRIBS={} MAX_DRAW_BUFFERS={} MAX_COLOR_ATTACHMENTS={} MAX_UNIFORM_BLOCK_SIZE={} MAX_UNIFORM_BUFFER_BINDINGS={} UNIFORM_BUFFER_OFFSET_ALIGNMENT={} MAX_SAMPLES={}",
+			gi(GL_MAX_TEXTURE_SIZE), gi(0x8073), gi(0x88FF), gi(GL_MAX_TEXTURE_IMAGE_UNITS), gi(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS), gi(GL_MAX_VERTEX_ATTRIBS), gi(GL_MAX_DRAW_BUFFERS), gi(0x8CDF), gi(0x8A30), gi(0x8A2F), gi(0x8A34), gi(0x8D57));
+		cemuLog_log(LogType::Force, "[GLCaps] limites: MAX_SHADER_STORAGE_BLOCK_SIZE={} MAX_SHADER_STORAGE_BUFFER_BINDINGS={} MAX_VERTEX_UNIFORM_COMPONENTS={} MAX_FRAGMENT_UNIFORM_COMPONENTS={} MAX_VARYING_COMPONENTS={}",
+			gi(0x90DE), gi(0x90DD), gi(0x8B4A), gi(0x8B49), gi(0x8B4B));
+		(void)iv;
+		// extensoes que o emulador pode usar: true = driver tem
+		static const char* wanted[] = {
+			"GL_ARB_buffer_storage","GL_EXT_buffer_storage","GL_ARB_texture_view","GL_EXT_texture_view","GL_OES_texture_view","GL_ARB_copy_image","GL_EXT_copy_image","GL_OES_copy_image",
+			"GL_ARB_texture_storage","GL_ARB_direct_state_access","GL_ARB_shader_image_load_store","GL_ARB_compute_shader","GL_ARB_shader_storage_buffer_object","GL_ARB_clip_control","GL_EXT_clip_control",
+			"GL_ARB_get_program_binary","GL_OES_get_program_binary","GL_ARB_gpu_shader5","GL_EXT_gpu_shader5","GL_ARB_sample_shading","GL_OES_sample_shading",
+			"GL_EXT_texture_filter_anisotropic","GL_EXT_texture_compression_s3tc","GL_EXT_texture_compression_rgtc","GL_EXT_texture_compression_bptc","GL_KHR_texture_compression_astc_ldr",
+			"GL_EXT_texture_border_clamp","GL_OES_texture_border_clamp","GL_EXT_texture_mirror_clamp_to_edge","GL_ARB_texture_mirror_clamp_to_edge","GL_EXT_texture_sRGB_decode",
+			"GL_EXT_color_buffer_float","GL_EXT_color_buffer_half_float","GL_EXT_float_blend","GL_EXT_depth_clamp","GL_ARB_depth_clamp","GL_EXT_polygon_offset_clamp",
+			"GL_EXT_blend_func_extended","GL_ARB_blend_func_extended","GL_EXT_draw_buffers_indexed","GL_OES_draw_buffers_indexed","GL_ARB_draw_buffers_blend","GL_EXT_draw_elements_base_vertex","GL_OES_draw_elements_base_vertex",
+			"GL_ARB_base_instance","GL_EXT_base_instance","GL_ARB_multi_bind","GL_ARB_vertex_attrib_binding","GL_ARB_polygon_offset_clamp","GL_KHR_debug","GL_EXT_geometry_shader","GL_OES_geometry_shader",
+			"GL_EXT_shader_framebuffer_fetch","GL_ARB_texture_barrier","GL_NV_texture_barrier","GL_EXT_disjoint_timer_query","GL_ARB_timer_query","GL_ARB_sync","GL_EXT_shader_io_blocks",
+			"GL_EXT_primitive_bounding_box","GL_EXT_tessellation_shader","GL_OES_shader_multisample_interpolation","GL_QCOM_texture_foveated","GL_QCOM_tiled_rendering","GL_EXT_robustness","GL_KHR_robustness","GL_EXT_memory_object","GL_EXT_EGL_image_storage"};
+		std::string yes, no;
+		for (const char* w : wanted)
+		{
+			if (IsGLExtensionSupported(w)) yes += std::string(w) + " ";
+			else no += std::string(w) + " ";
+		}
+		cemuLog_log(LogType::Force, "[GLCaps] extensoes uteis = TRUE: {}", yes);
+		cemuLog_log(LogType::Force, "[GLCaps] extensoes uteis = FALSE: {}", no);
+		GLint ne = 0;
+		glGetIntegerv(GL_NUM_EXTENSIONS, &ne);
+		std::string all;
+		for (GLint k = 0; k < ne; k++)
+		{
+			const char* e = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)k);
+			if (e) { all += e; all += ' '; }
+		}
+		cemuLog_log(LogType::Force, "[GLCaps] todas as {} extensoes do driver: {}", ne, all);
+		cemuLog_log(LogType::Force, "[GLCaps] decisoes: bc1={} bc2={} bc3={} bc4={} bc5={} etc2={}", B(m_supportedFormatInfo.fmt_bc1), B(m_supportedFormatInfo.fmt_bc2), B(m_supportedFormatInfo.fmt_bc3), B(m_supportedFormatInfo.fmt_bc4), B(m_supportedFormatInfo.fmt_bc5), B(m_supportedFormatInfo.fmt_etc2));
+		cemuLog_log(LogType::Force, "[GLCaps] ===== fim do relatorio =====");
+	}
 }
 
 void _glDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam)
@@ -1799,7 +1843,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc1)
 			texDecoder = TextureDecoder_BC1::getInstance();
-		else if (GetConfig().texture_compression_bc1 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc1 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
 		else
 			texDecoder = TextureDecoder_BC1_RGBA8::getInstance();
@@ -1808,7 +1852,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc1)
 			texDecoder = TextureDecoder_BC1::getInstance();
-		else if (GetConfig().texture_compression_bc1 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc1 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
 		else
 			texDecoder = TextureDecoder_BC1_RGBA8::getInstance();
@@ -1817,7 +1861,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc2)
 			texDecoder = TextureDecoder_BC2::getInstance();
-		else if (GetConfig().texture_compression_bc2 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc2 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC2_RGBA8::getInstance();
@@ -1826,7 +1870,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc2)
 			texDecoder = TextureDecoder_BC2::getInstance();
-		else if (GetConfig().texture_compression_bc2 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc2 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC2_RGBA8::getInstance();
@@ -1835,7 +1879,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc3)
 			texDecoder = TextureDecoder_BC3::getInstance();
-		else if (GetConfig().texture_compression_bc3 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc3 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC3_RGBA8::getInstance();
@@ -1844,7 +1888,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc3)
 			texDecoder = TextureDecoder_BC3::getInstance();
-		else if (GetConfig().texture_compression_bc3 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc3 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC3_RGBA8::getInstance();
@@ -1859,7 +1903,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
 		else if (GetInstance()->m_supportedFormatInfo.fmt_bc4)
 			texDecoder = TextureDecoder_BC4::getInstance();
-		else if (GetConfig().texture_compression_bc4 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc4 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC4_R8::getInstance();
@@ -1877,7 +1921,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
 		else if (GetInstance()->m_supportedFormatInfo.fmt_bc4)
 			texDecoder = TextureDecoder_BC4::getInstance();
-		else if (GetConfig().texture_compression_bc4 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc4 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC_SNORM::getInstance();
 		else
 			texDecoder = TextureDecoder_BC4_R8_SNORM::getInstance();
@@ -1886,7 +1930,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc5)
 			texDecoder = TextureDecoder_BC5::getInstance();
-		else if (GetConfig().texture_compression_bc5 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc5 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC5_RG8::getInstance();
@@ -1895,7 +1939,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc5)
 			texDecoder = TextureDecoder_BC5::getInstance();
-		else if (GetConfig().texture_compression_bc5 && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc5 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC_SNORM::getInstance();
 		else
 			texDecoder = TextureDecoder_BC5_RG8_SNORM::getInstance();

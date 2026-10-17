@@ -2,6 +2,8 @@
 #include "Common/FileStream.h"
 #include <chrono>
 #include <atomic>
+#include <fstream>
+#include <vector>
 
 #include "util/helpers/helpers.h"
 
@@ -249,6 +251,26 @@ void CafeTitleList::AddTitleFromPath(fs::path path)
 		if (!zar)
 		{
 			cemuLog_log(LogType::Force, "Found {} but it is not a valid Wii U archive file", _pathToUtf8(path));
+			{
+				// diagnostico: tamanho e cabecalho/rodape do arquivo (zarchive termina com footer e magic)
+				std::error_code ec;
+				auto fsz = fs::file_size(path, ec);
+				cemuLog_log(LogType::Force, "[WUA] tamanho={} bytes ({})", ec ? 0 : (uint64)fsz, ec ? ec.message() : std::string("ok"));
+				std::ifstream f(path, std::ios::binary);
+				if (!f.good())
+					cemuLog_log(LogType::Force, "[WUA] nao foi possivel abrir o arquivo para ler (permissao/URI?)");
+				else if (!ec && fsz >= 144)
+				{
+					char tail[16] = {};
+					f.seekg((std::streamoff)fsz - 16);
+					f.read(tail, 16);
+					std::string hx; for (int i = 0; i < 16; i++) hx += fmt::format("{:02x} ", (uint8)tail[i]);
+					cemuLog_log(LogType::Force, "[WUA] ultimos 16 bytes: {}", hx);
+					cemuLog_log(LogType::Force, "[WUA] se o tamanho for menor que o original, o download/copia ficou incompleto; reenvie o arquivo");
+				}
+				else if (!ec)
+					cemuLog_log(LogType::Force, "[WUA] arquivo pequeno demais para ser um WUA valido");
+			}
 			return;
 		}
 		// enumerate all contained titles

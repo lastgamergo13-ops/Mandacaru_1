@@ -9,7 +9,11 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceFlag.h"
 #include <fmt/format.h>
 #include <cstdint>
+#include <cstdio>
 #include <unordered_map>
+#include <unordered_set>
+#include <sstream>
+#include <atomic>
 #include <vector>
 
 namespace DrawTraceVk
@@ -79,5 +83,91 @@ namespace DrawTraceVk
 		int lines = 0;
 		for (size_t k = 0; k < keys.size() && lines < 120; k++, lines++)
 			Log("[VkTrace] submit={} VS={:016x} PS={:016x} GS={:016x} prim={} rects={} x{}", keys[k].s, keys[k].vs, keys[k].ps, keys[k].gs, keys[k].prim, (int)keys[k].rect, counts[k]);
+	}
+
+	// ---- Quarentena automatica (V11.32) ----
+	// Quando a GPU trava (DEVICE_LOST), os pipelines que apareceram pela PRIMEIRA vez nos ultimos submits sao os
+	// suspeitos. Eles sao gravados em "vk_quarantine.txt" (pasta de dados do usuario). Na proxima abertura os draws
+	// desses pipelines sao PULADOS (o jogo pode perder um efeito, mas nao trava). Apague o arquivo para desfazer.
+	inline std::unordered_set<uint64_t> g_quarantine;
+	inline std::atomic<bool> g_quarantineActive{false};
+	inline bool g_quarantineLoaded = false;
+
+	inline uint64_t PipelineKey(uint64_t vs, uint64_t ps, uint64_t gs)
+	{
+		uint64_t h = vs * 0x9E3779B97F4A7C15ull;
+		h ^= (ps + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2));
+		h ^= (gs + 0x7F4A7C159E3779B9ull + (h << 6) + (h >> 2));
+		return h;
+	}
+
+	inline void LoadQuarantine()
+	{
+		if (g_quarantineLoaded)
+			return;
+		g_quarantineLoaded = true;
+		std::error_code ec;
+		std::ifstream f(ActiveSettings::GetUserDataPath("vk_quarantine.txt"));
+		if (!f)
+			return;
+		std::string line;
+		while (std::getline(f, line))
+		{
+			unsigned long long vs = 0, ps = 0, gs = 0;
+			if (sscanf(line.c_str(), "%llx %llx %llx", &vs, &ps, &gs) == 3)
+				g_quarantine.insert(PipelineKey(vs, ps, gs));
+		}
+		g_quarantineActive = !g_quarantine.empty();
+		if (g_quarantineActive)
+			cemuLog_log(LogType::Force, "[Quarentena] {} pipeline(s) suspeito(s) de travar a GPU serao PULADOS (vk_quarantine.txt). Apague o arquivo para desativar.", (uint32_t)g_quarantine.size());
+	}
+
+	inline bool ShouldSkip(const PipelineInfo* p)
+	{
+		if (!g_quarantineActive.load(std::memory_order_relaxed) || !p)
+			return false;
+		const uint64_t vs = p->vertexShader ? p->vertexShader->baseHash : 0;
+		const uint64_t ps = p->pixelShader ? p->pixelShader->baseHash : 0;
+		const uint64_t gs = p->geometryShader ? p->geometryShader->baseHash : 0;
+		return g_quarantine.count(PipelineKey(vs, ps, gs)) != 0;
+	}
+
+	// chamado no DEVICE_LOST: grava como suspeitos os pipelines vistos pela 1a vez nos ultimos 3 submits
+	inline void RecordSuspects(uint64_t cur)
+	{
+		const uint64_t from = cur > 3 ? cur - 3 : 0;
+		const uint32_t total = g_pos < kRing ? g_pos : kRing;
+		std::unordered_set<uint64_t> old, suspects;
+		std::vector<Rec> sus;
+		for (uint32_t i = 0; i < total; i++)
+		{
+			const Rec& r = g_ring[(g_pos - total + i) % kRing];
+			const uint64_t k = PipelineKey(r.vs, r.ps, r.gs);
+			if (r.submit < from)
+				old.insert(k);
+		}
+		for (uint32_t i = 0; i < total; i++)
+		{
+			const Rec& r = g_ring[(g_pos - total + i) % kRing];
+			if (r.submit < from || r.submit > cur)
+				continue;
+			const uint64_t k = PipelineKey(r.vs, r.ps, r.gs);
+			if (old.count(k) || suspects.count(k))
+				continue;
+			suspects.insert(k);
+			sus.push_back(r);
+		}
+		if (sus.empty())
+		{
+			cemuLog_log(LogType::Force, "[Quarentena] nenhum pipeline novo nos ultimos submits; nada gravado");
+			return;
+		}
+		std::lock_guard<std::mutex> lk(g_fileMutex);
+		std::ofstream f(ActiveSettings::GetUserDataPath("vk_quarantine.txt"), std::ios::app);
+		for (const Rec& r : sus)
+		{
+			f << fmt::format("{:016x} {:016x} {:016x}\n", r.vs, r.ps, r.gs);
+			cemuLog_log(LogType::Force, "[Quarentena] suspeito gravado: VS={:016x} PS={:016x} GS={:016x} prim={} (sera pulado na proxima abertura)", r.vs, r.ps, r.gs, r.prim);
+		}
 	}
 }

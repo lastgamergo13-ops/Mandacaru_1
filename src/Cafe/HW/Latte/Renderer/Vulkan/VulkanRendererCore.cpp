@@ -1453,6 +1453,12 @@ void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, 
 	PipelineInfo* pipeline_info = draw_getOrCreateGraphicsPipeline(count);
 	m_state.activePipelineInfo = pipeline_info;
 
+	DrawTraceVk::LoadQuarantine();
+	if (DrawTraceVk::ShouldSkip(pipeline_info))
+	{
+		m_state.activeVertexDS = nullptr;
+		return;
+	}
 	auto vkObjPipeline = pipeline_info->m_vkrObjPipeline;
 	if (vkObjPipeline->GetPipeline() == VK_NULL_HANDLE)
 	{
@@ -1655,6 +1661,8 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 #endif
 	}
 
+	if (DrawTraceVk::ShouldSkip(pipeline_info))
+		return;
 	auto vkObjPipeline = pipeline_info->m_vkrObjPipeline;
 	if (vkObjPipeline->GetPipeline() == VK_NULL_HANDLE)
 	{

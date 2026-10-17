@@ -4,6 +4,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
 #include "Cafe/HW/Latte/Core/RendererInfo.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/VulkanCapsReport.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/RendererShaderVk.h"
@@ -802,6 +803,20 @@ VulkanRenderer::VulkanRenderer() : Renderer(RendererAPI::Vulkan)
 	}
 
 	InitializeDeviceVulkan(m_logicalDevice);
+	{
+		const auto& de = m_featureControl.deviceExtensions;
+		std::vector<std::pair<std::string, bool>> flags = {
+			{"tooling_info", de.tooling_info}, {"depth_range_unrestricted", de.depth_range_unrestricted}, {"pipeline_feedback", de.pipeline_feedback},
+			{"pipeline_creation_cache_control(async compile)", de.pipeline_creation_cache_control}, {"custom_border_color", de.custom_border_color},
+			{"custom_border_color_without_format", de.custom_border_color_without_format}, {"cubic_filter", de.cubic_filter}, {"driver_properties", de.driver_properties},
+			{"external_memory_host", de.external_memory_host}, {"synchronization2", de.synchronization2}, {"dynamic_rendering", de.dynamic_rendering},
+			{"shader_float_controls", de.shader_float_controls}, {"shaderRoundingModeRTEFloat32", m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat32},
+			{"present_wait", de.present_wait}, {"depth_clip_enable", de.depth_clip_enable}, {"pipeline_robustness", de.pipeline_robustness},
+			{"attachment_feedback_loop_layout", de.attachment_feedback_loop_layout}, {"attachment_feedback_loop_dynamic_state", de.attachment_feedback_loop_dynamic_state},
+			{"debug_utils(instance)", m_featureControl.instanceExtensions.debug_utils}, {"usingDebugMarkerTool", m_featureControl.usingDebugMarkerTool},
+			{"usingTracingTool", m_featureControl.usingTracingTool}, {"disableMultithreadedCompilation", m_featureControl.disableMultithreadedCompilation}};
+		VkCapsReport::Log(m_physicalDevice, used_extensions, flags);
+	}
 
 	vkGetDeviceQueue(m_logicalDevice, m_indices.graphicsFamily, 0, &m_graphicsQueue);
 	vkGetDeviceQueue(m_logicalDevice, m_indices.graphicsFamily, 0, &m_presentQueue);
@@ -2387,6 +2402,7 @@ void VulkanRenderer::SubmitCommandBuffer(VkSemaphore signalSemaphore, VkSemaphor
 		{
 			const uint64 cur = (uint64)m_numSubmittedCmdBuffers;
 			DrawTraceVk::Dump(cur > 8 ? cur - 8 : 0, cur);
+			DrawTraceVk::RecordSuspects(cur);
 		}
 		UnrecoverableError(fmt::format("failed to submit command buffer. Error {}", result).c_str());
 	}
@@ -2399,6 +2415,7 @@ void VulkanRenderer::SubmitCommandBuffer(VkSemaphore signalSemaphore, VkSemaphor
 		{
 			DrawTraceVk::Log("[VkTrace] submit {} {} - pipelines desse submit:", (uint64)m_numSubmittedCmdBuffers, waitRes == VK_TIMEOUT ? "NAO terminou em 5s (GPU travada?)" : "causou VK_ERROR_DEVICE_LOST");
 			DrawTraceVk::Dump((uint64)m_numSubmittedCmdBuffers, (uint64)m_numSubmittedCmdBuffers);
+			DrawTraceVk::RecordSuspects((uint64)m_numSubmittedCmdBuffers);
 		}
 	}
 	m_numSubmittedCmdBuffers++;
