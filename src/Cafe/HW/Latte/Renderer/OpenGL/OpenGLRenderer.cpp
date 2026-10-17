@@ -2171,25 +2171,17 @@ void OpenGLRenderer::texture_clearSlice(LatteTexture* hostTextureGeneric, sint32
 				glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, attachment, GL_TEXTURE_2D, hostTexture->glId_texture, mipIndex);
 			else
 				glFramebufferTextureLayer(GL_FRAMEBUFFER, attachment, hostTexture->glId_texture, mipIndex, sliceIndex);
-			GLboolean prevDepthMask = GL_TRUE;
-			glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+			GLint prevDepthMaskI = 1;
+			glGetIntegerv(GL_DEPTH_WRITEMASK, &prevDepthMaskI);
 			const GLboolean scissorWasOn = glIsEnabled(GL_SCISSOR_TEST);
 			glDepthMask(GL_TRUE);
-			if (hasStencil)
-				glStencilMask(0xFF);
 			if (scissorWasOn)
 				glDisable(GL_SCISSOR_TEST);
 			glClearDepth(0.0);
-			if (hasStencil)
-			{
-				glClearStencil(0);
-				glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-			}
-			else
-				glClear(GL_DEPTH_BUFFER_BIT);
+			glClear(GL_DEPTH_BUFFER_BIT); // so profundidade (glStencilMask/glClearStencil nao estao carregadas neste loader)
 			if (scissorWasOn)
 				glEnable(GL_SCISSOR_TEST);
-			glDepthMask(prevDepthMask);
+			glDepthMask(prevDepthMaskI ? GL_TRUE : GL_FALSE);
 			glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, attachment, GL_TEXTURE_2D, 0, 0);
 			glBindFramebuffer(GL_FRAMEBUFFER_EXT, prevBoundFBO);
 			return;

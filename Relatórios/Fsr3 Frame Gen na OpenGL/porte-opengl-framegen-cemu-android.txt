@@ -487,3 +487,6 @@ V11.35 - Limpeza de texturas de profundidade no GLES
 - ARB_clear_texture nao existe no GLES; o fallback por FBO (OpenGLRenderer::texture_clearSlice) retornava SEM limpar para texturas de profundidade/stencil ("Unsupported clear for depth texture"), deixando profundidade antiga (candidato a sombras/z-fighting errados). Agora limpa via FBO (DEPTH ou DEPTH_STENCIL, desliga scissor e liga depth mask durante o clear, restaura depois). Compressed continua sem clear.
 - NV_depth_buffer_float (glDepthRangedNV) e extensao so da NVIDIA; DirectSound/XAudio sao so de Windows (Android usa Cubeb). Nada a implementar.
 - Nao testado em aparelho.
+
+V11.35b - Erro de build
+- glGetBooleanv e glStencilMask nao estao carregadas no loader GL do projeto. Troquei por glGetIntegerv e removi a limpeza de stencil (so profundidade e limpa).
