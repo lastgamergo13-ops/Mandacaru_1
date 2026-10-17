@@ -468,3 +468,22 @@ Analise dos logs de 17/10 (SM3DW Vulkan e OpenGL com BC1-BC5 ligados):
 
 V11.32b - Erro de build
 - VulkanCapsReport.h usava vkGetPhysicalDeviceFeatures, que o Cemu nao carrega (so vkGetPhysicalDeviceFeatures2). Trocado por Features2. Unico erro do log do GitHub.
+
+V11.33 - Diagnostico real do .wua (Moto G8) + analise dos logs de 17/10 (tarde)
+Achados:
+- Moto G8 (Android 11): o diagnostico da V11.30 mostrou "tamanho=0 No such file" porque tentava abrir a URI content:// como caminho normal (inutil). Os dois .wua falham SEMPRE no mesmo ponto (ZArchiveReader::OpenFromFile("/proc/self/fd/N")); o descritor abre e permite seek. Hipotese principal: Android 11 (FUSE/scoped storage) nega reabrir o arquivo via /proc/self/fd (EACCES), enquanto Android 13/14 permite. Nao confirmado.
+- TitleList.cpp (OpenZArchiveReaderCompat): quando a abertura falha agora loga fstat/tamanho pelo proprio fd, primeiros 8 e ultimos 16 bytes via pread, e o errno de open(/proc/self/fd/N) com a CAUSA (permissao x arquivo incompleto).
+- Vulkan Adreno 650 (driver 0x801f6000, Vulkan 1.1.128): textureCompressionBC=false (BC1-5 nao existem), ETC2=true, ASTC_LDR=true, logicOp=false, sem depth_clip_enable/custom_border_color/feedback_loop/pipeline_robustness. A quarentena gravou VS=5ae6d5fe34beb432 PS=7fc38db3951826bc (SM3DW); falta testar o SM3DW depois dela. MK8 trava no submit ~99 sem pipeline novo (quarentena nao ajuda); aparelho a 72C nesse momento.
+- OpenGL MK8 (V11.32): 40-49 FPS, sem congelar nos 60s do log; ainda imagem repetida/borrada (Mario copiado ~10x na horizontal) - provavel erro de UV/wrap ou tamanho de textura em render target; nao resolvido.
+- Pesquisa web: nao achei correcao publica para DEVICE_LOST do Adreno 650 nem sobre BC no Vulkan mobile em emuladores; fontes genericas (Unity/Dolphin) so confirmam que drivers Adreno antigos travam por shader/estado especifico. Vita3K corrigiu artefatos BC2/BC5 em Mali (bug de decodificacao, nao de suporte).
+
+V11.34 - SM3DW: resolucao dinamica do jogo ligada no Android (meta 60 fps)
+Analise (log SM3DW OpenGL, Adreno 650): cena leve = 60 fps; gameplay = ~30 fps travado (27-32), com 245 draws/frame, trabalho real da GPU ~19 ms por frame (total 31 ms - 12 ms ocioso). O SM3DW usa vsync: se o frame passa de 16,6 ms cai para exatamente 30 fps. Falta ~15% de folga.
+- A precisao dos shaders GLES ja e highp em tudo (LatteDecompilerEmitGLSL.cpp); nao ha ganho em mudar. Nao adicionei 'invariant gl_Position' por nao poder compilar/testar (risco de shader invalido = tela preta).
+- GamePatch.cpp: o Cemu desativa a resolucao dinamica do SM3DW (patch BLR) - no Android agora ela fica LIGADA (o jogo reduz a resolucao sozinho quando a GPU nao aguenta, como no Wii U). Arquivo vazio 'sm3dw_fixed_res' na pasta de dados restaura o comportamento antigo. Risco: o motivo do patch era spam de criacao de texturas na fase 1-5 (stutter/RAM); observar.
+- Nao confirmado em aparelho.
+
+V11.35 - Limpeza de texturas de profundidade no GLES
+- ARB_clear_texture nao existe no GLES; o fallback por FBO (OpenGLRenderer::texture_clearSlice) retornava SEM limpar para texturas de profundidade/stencil ("Unsupported clear for depth texture"), deixando profundidade antiga (candidato a sombras/z-fighting errados). Agora limpa via FBO (DEPTH ou DEPTH_STENCIL, desliga scissor e liga depth mask durante o clear, restaura depois). Compressed continua sem clear.
+- NV_depth_buffer_float (glDepthRangedNV) e extensao so da NVIDIA; DirectSound/XAudio sao so de Windows (Android usa Cubeb). Nada a implementar.
+- Nao testado em aparelho.

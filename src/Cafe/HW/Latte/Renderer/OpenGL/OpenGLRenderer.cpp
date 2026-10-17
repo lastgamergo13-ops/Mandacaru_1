@@ -2161,8 +2161,38 @@ void OpenGLRenderer::texture_clearSlice(LatteTexture* hostTextureGeneric, sint32
 		}
 		if (hostTextureGeneric->isDepth)
 		{
-			cemuLog_logDebug(LogType::Force, "Unsupported clear for depth texture");
-			return; // todo - use depth clear
+			// V11.35: limpa texturas de profundidade (e stencil) via FBO. Antes retornava sem limpar no GLES, deixando
+			// profundidade antiga na textura (sombras/z-fighting errados).
+			const bool hasStencil = (formatInfoGL.glInternalFormat == 0x88F0 /*GL_DEPTH24_STENCIL8*/ || formatInfoGL.glInternalFormat == 0x8CAD /*GL_DEPTH32F_STENCIL8*/);
+			const GLenum attachment = hasStencil ? 0x821A /*GL_DEPTH_STENCIL_ATTACHMENT*/ : GL_DEPTH_ATTACHMENT;
+			glBindFramebuffer(GL_FRAMEBUFFER_EXT, glRendererState.clearFBO);
+			glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+			if (hostTexture->dim == Latte::E_DIM::DIM_2D)
+				glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, attachment, GL_TEXTURE_2D, hostTexture->glId_texture, mipIndex);
+			else
+				glFramebufferTextureLayer(GL_FRAMEBUFFER, attachment, hostTexture->glId_texture, mipIndex, sliceIndex);
+			GLboolean prevDepthMask = GL_TRUE;
+			glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+			const GLboolean scissorWasOn = glIsEnabled(GL_SCISSOR_TEST);
+			glDepthMask(GL_TRUE);
+			if (hasStencil)
+				glStencilMask(0xFF);
+			if (scissorWasOn)
+				glDisable(GL_SCISSOR_TEST);
+			glClearDepth(0.0);
+			if (hasStencil)
+			{
+				glClearStencil(0);
+				glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+			}
+			else
+				glClear(GL_DEPTH_BUFFER_BIT);
+			if (scissorWasOn)
+				glEnable(GL_SCISSOR_TEST);
+			glDepthMask(prevDepthMask);
+			glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, attachment, GL_TEXTURE_2D, 0, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER_EXT, prevBoundFBO);
+			return;
 		}
 
 		glBindFramebuffer(GL_FRAMEBUFFER_EXT, glRendererState.clearFBO);

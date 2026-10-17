@@ -12,6 +12,10 @@
 #ifdef __ANDROID__
 #include "Common/android/FilesystemAndroid.h"
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <cerrno>
+#include <cstring>
 #endif
 
 // Abre um ZArchiveReader tanto para um fs::path normal quanto para uma URI SAF
@@ -28,7 +32,31 @@ static ZArchiveReader* OpenZArchiveReaderCompat(const fs::path& path)
 		int fd = FilesystemAndroid::OpenContentUri(path);
 		if (fd < 0)
 			return nullptr;
-		ZArchiveReader* zar = ZArchiveReader::OpenFromFile(fmt::format("/proc/self/fd/{}", fd));
+		const std::string procPath = fmt::format("/proc/self/fd/{}", fd);
+		ZArchiveReader* zar = ZArchiveReader::OpenFromFile(procPath);
+		if (!zar)
+		{
+			// diagnostico real: le tamanho/rodape direto pelo fd e testa a reabertura via /proc (EACCES no Android 11?)
+			struct stat st{};
+			const int fsr = fstat(fd, &st);
+			cemuLog_log(LogType::Force, "[WUA] fd={} fstat={} tamanho={} bytes errno={}", fd, fsr, (long long)st.st_size, fsr ? errno : 0);
+			uint8 head[8] = {}, tail[16] = {};
+			const ssize_t hr = pread(fd, head, sizeof(head), 0);
+			const ssize_t tr = st.st_size >= 16 ? pread(fd, tail, sizeof(tail), st.st_size - 16) : -1;
+			std::string hx, tx;
+			for (int i = 0; i < 8; i++) hx += fmt::format("{:02x} ", head[i]);
+			for (int i = 0; i < 16; i++) tx += fmt::format("{:02x} ", tail[i]);
+			cemuLog_log(LogType::Force, "[WUA] pread inicio={} bytes: {} | fim={} bytes: {}", (long long)hr, hx, (long long)tr, tx);
+			errno = 0;
+			const int probe = open(procPath.c_str(), O_RDONLY);
+			cemuLog_log(LogType::Force, "[WUA] reabrir {} -> {} (errno={} {})", procPath, probe, probe < 0 ? errno : 0, probe < 0 ? strerror(errno) : "ok");
+			if (probe >= 0)
+				close(probe);
+			else if (errno == EACCES || errno == EPERM)
+				cemuLog_log(LogType::Force, "[WUA] CAUSA: o Android bloqueou reabrir o arquivo via /proc/self/fd (permissao). O arquivo em si pode estar ok.");
+			if (fsr == 0 && st.st_size > 0 && st.st_size < 1024 * 1024)
+				cemuLog_log(LogType::Force, "[WUA] CAUSA: arquivo pequeno demais ({} bytes) - copia incompleta?", (long long)st.st_size);
+		}
 		close(fd);
 		return zar;
 	}

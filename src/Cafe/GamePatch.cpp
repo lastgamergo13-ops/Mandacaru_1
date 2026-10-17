@@ -2,6 +2,7 @@
 #include "Cafe/OS/RPL/rpl.h"
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include "CafeSystem.h"
+#include <filesystem>
 #include "config/ActiveSettings.h" // Selectively add some patches based on network settings.
 
 void hleExport_breathOfTheWild_busyLoop(PPCInterpreter_t* hCPU)
@@ -471,8 +472,22 @@ void GamePatch_scan()
 	hleAddr = hle_locate(sm3dw_dynFrameBufferResScale, nullptr, sizeof(sm3dw_dynFrameBufferResScale));
 	if (hleAddr)
 	{
-		cemuLog_log(LogType::Force, "Patching SM3DW dynamic resolution scaling at: 0x{:08x}", hleAddr);
-		memory_writeU32(hleAddr, 0x4E800020); // BLR
+#if defined(__ANDROID__)
+		// V11.34: no Android a resolucao dinamica do proprio jogo fica LIGADA (e o que permite ao SM3DW manter 60 fps
+		// quando a GPU do celular nao aguenta a resolucao cheia). Para voltar ao comportamento do Cemu desktop
+		// (resolucao fixa), crie o arquivo vazio "sm3dw_fixed_res" na pasta de dados do app.
+		std::error_code dynEc;
+		const bool keepFixedRes = std::filesystem::exists(ActiveSettings::GetUserDataPath("sm3dw_fixed_res"), dynEc);
+		if (!keepFixedRes)
+		{
+			cemuLog_log(LogType::Force, "[SM3DW] resolucao dinamica do jogo mantida ligada (crie 'sm3dw_fixed_res' para desligar)");
+		}
+		else
+#endif
+		{
+			cemuLog_log(LogType::Force, "Patching SM3DW dynamic resolution scaling at: 0x{:08x}", hleAddr);
+			memory_writeU32(hleAddr, 0x4E800020); // BLR
+		}
 	}
 
 	// remove unnecessary lock from a wait function in TWW
