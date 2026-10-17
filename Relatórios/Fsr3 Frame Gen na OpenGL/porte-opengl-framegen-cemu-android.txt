@@ -465,3 +465,6 @@ Analise dos logs de 17/10 (SM3DW Vulkan e OpenGL com BC1-BC5 ligados):
 - OpenGL: com as opcoes BC->ETC2 ligadas o log mostrou FPS medio 25.7 (31.6 com decodificacao 8 bits), frame maximo 7.8 s (1.8 s) e RSS 1.1 GB: o transcode ETC2 e mais lento e com perda. Agora no GLES as opcoes ETC2 sao ignoradas e BC1-5 usam o decoder 8 bits (V11.28). Em desktop GL nada muda.
 - Frame gen no GL custa GPU (31 -> 24 fps medio no Adreno 650); glGetError 0x500 em CreateResources vem do renderer, nao do frame gen.
 - Inclui: V11.30 (TitleList.cpp diagnostico WUA) e V11.31 (VulkanCapsReport.h, relatorio [GLCaps]).
+
+V11.32b - Erro de build
+- VulkanCapsReport.h usava vkGetPhysicalDeviceFeatures, que o Cemu nao carrega (so vkGetPhysicalDeviceFeatures2). Trocado por Features2. Unico erro do log do GitHub.

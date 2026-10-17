@@ -23,8 +23,10 @@ namespace VkCapsReport
 			props.deviceName, props.vendorID, props.deviceID, (int)props.deviceType, VK_VERSION_MAJOR(v), VK_VERSION_MINOR(v), VK_VERSION_PATCH(v), props.driverVersion);
 
 		// ---- features basicas
-		VkPhysicalDeviceFeatures f{};
-		vkGetPhysicalDeviceFeatures(pd, &f);
+		VkPhysicalDeviceFeatures2 f2{};
+		f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+		vkGetPhysicalDeviceFeatures2(pd, &f2);
+		const VkPhysicalDeviceFeatures& f = f2.features;
 		std::string s;
 #define FT(n) s += fmt::format("{}={} ", #n, B(f.n))
 		FT(robustBufferAccess); FT(fullDrawIndexUint32); FT(imageCubeArray); FT(independentBlend); FT(geometryShader); FT(tessellationShader);
