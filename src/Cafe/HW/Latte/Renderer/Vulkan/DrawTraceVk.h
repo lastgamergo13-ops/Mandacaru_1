@@ -132,10 +132,10 @@ namespace DrawTraceVk
 		return g_quarantine.count(PipelineKey(vs, ps, gs)) != 0;
 	}
 
-	// chamado no DEVICE_LOST: grava como suspeitos os pipelines vistos pela 1a vez nos ultimos 3 submits
+	// chamado no DEVICE_LOST: grava como suspeitos os pipelines vistos pela 1a vez nos ultimos 12 submits
 	inline void RecordSuspects(uint64_t cur)
 	{
-		const uint64_t from = cur > 3 ? cur - 3 : 0;
+		const uint64_t from = cur > 12 ? cur - 12 : 0; // V11.43: era 3; a GPU trava varios submits depois do pipeline culpado (log SM3DW: 1o uso no submit 1075, travou no 1081)
 		const uint32_t total = g_pos < kRing ? g_pos : kRing;
 		std::unordered_set<uint64_t> old, suspects;
 		std::vector<Rec> sus;

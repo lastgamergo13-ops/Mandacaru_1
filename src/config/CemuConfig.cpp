@@ -27,6 +27,7 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	enable_recompiler_aot_cache = parser.get("enable_recompiler_aot_cache", enable_recompiler_aot_cache.GetInitValue());
 	limit_shader_compiler_threads = parser.get("limit_shader_compiler_threads", limit_shader_compiler_threads.GetInitValue());
 	limit_to_half_fps = parser.get("limit_to_half_fps", limit_to_half_fps.GetInitValue());
+	skip_depth_only_draws = parser.get("skip_depth_only_draws", skip_depth_only_draws.GetInitValue());
 	emulation_speed_percent = parser.get("emulation_speed_percent", emulation_speed_percent.GetInitValue());
 	fsr3_frame_gen = parser.get("fsr3_frame_gen", fsr3_frame_gen.GetInitValue());
 	fsr3_fg_multiplier = parser.get("fsr3_fg_multiplier", fsr3_fg_multiplier.GetInitValue());
@@ -344,6 +345,7 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	config.set("enable_recompiler_aot_cache", enable_recompiler_aot_cache.GetValue());
 	config.set("limit_shader_compiler_threads", limit_shader_compiler_threads.GetValue());
 	config.set("limit_to_half_fps", limit_to_half_fps.GetValue());
+	config.set("skip_depth_only_draws", skip_depth_only_draws.GetValue());
 	config.set("emulation_speed_percent", emulation_speed_percent.GetValue());
 	config.set("fsr3_frame_gen", fsr3_frame_gen.GetValue());
 	config.set("fsr3_fg_multiplier", fsr3_fg_multiplier.GetValue());

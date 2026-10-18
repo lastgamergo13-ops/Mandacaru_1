@@ -1,3 +1,4 @@
+#include "config/CemuConfig.h" // V11.46
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
@@ -1359,6 +1360,19 @@ void VulkanRenderer::draw_beginSequence()
 
 	if (rasterizerEnable == false && streamoutEnable == false)
 		m_state.drawSequenceSkip = true;
+
+	// V11.46: opcao experimental - pula desenhos so de profundidade (sem cor): mapas de sombra / z-prepass
+	if (!m_state.drawSequenceSkip && !streamoutEnable && GetConfig().skip_depth_only_draws.GetValue())
+	{
+		LatteDecompilerShader* depthPs = (LatteDecompilerShader*)LatteSHRC_GetActivePixelShader();
+		if (LatteMRT::GetActiveColorBufferMask(depthPs, LatteGPUState.contextNew) == 0 && LatteMRT::GetActiveDepthBufferMask(LatteGPUState.contextNew))
+		{
+			static uint32 s_skippedDepthSequences = 0;
+			if ((++s_skippedDepthSequences % 300) == 1)
+				cemuLog_log(LogType::Force, "[PuladoDepth] sequencias de desenho so de profundidade puladas ate agora (Vulkan): {}", s_skippedDepthSequences);
+			m_state.drawSequenceSkip = true;
+		}
+	}
 }
 
 void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, uint32 instanceCount, uint32 count, MPTR indexDataMPTR, Latte::LATTE_VGT_DMA_INDEX_TYPE::E_INDEX_TYPE indexType, const LatteDrawcallContext& drawcallContext)

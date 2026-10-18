@@ -576,5 +576,40 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             },
             onValueChange = NativeSettings::setEmulationSpeedPercent,
         )
+        InfoDialogButton(
+            title = tr("Full sync at GX2DrawDone"),
+            explanation = tr(
+                "O que faz: quando o jogo pede para esperar a GPU terminar o desenho (GX2DrawDone), o " +
+                        "emulador faz a CPU parar ate a GPU acabar tudo. E mais seguro, mas a CPU e a GPU " +
+                        "deixam de trabalhar ao mesmo tempo: o tempo de cada quadro vira CPU + GPU em vez do " +
+                        "maior dos dois. Em celulares onde a GPU e o gargalo (ex.: Moto G54) isso custa fps.\n\n" +
+                        "Desligado: CPU e GPU trabalham em paralelo, o que pode aumentar o fps. Risco: alguns " +
+                        "jogos que leem de volta a imagem ou usam consultas de oclusao podem ter pequenos " +
+                        "defeitos visuais. Ligado por padrao. Precisa reiniciar o jogo."
+            ),
+        )
+        Toggle(
+            label = tr("Full sync at GX2DrawDone"),
+            description = tr("Desligue para tentar mais fps quando a GPU for o gargalo. Veja \"O que faz\" acima."),
+            initialCheckedState = NativeSettings::getGX2DrawDoneSync,
+            onCheckedChanged = NativeSettings::setGX2DrawDoneSync,
+        )
+        InfoDialogButton(
+            title = tr("Pular sombras"),
+            explanation = tr(
+                "O que faz: pula os desenhos que so escrevem profundidade, sem cor. Na pratica sao os mapas " +
+                        "de sombra (e alguns pre-passes de profundidade). Eles custam bastante da GPU em " +
+                        "celulares fracos; pulando, o fps sobe e o jogo pode chegar mais perto de 60 fps.\n\n" +
+                        "Custo: as sombras dinamicas somem ou ficam erradas. Alguns jogos podem ter defeitos " +
+                        "visuais. Desligado por padrao. Precisa reiniciar o jogo. " +
+                        "O log mostra [PuladoDepth] com quantos desenhos foram pulados."
+            ),
+        )
+        Toggle(
+            label = tr("Pular sombras"),
+            description = tr("Mais fps, sem sombras dinamicas. Veja \"O que faz\" acima."),
+            initialCheckedState = NativeSettings::getSkipDepthOnlyDraws,
+            onCheckedChanged = NativeSettings::setSkipDepthOnlyDraws,
+        )
     }
 }

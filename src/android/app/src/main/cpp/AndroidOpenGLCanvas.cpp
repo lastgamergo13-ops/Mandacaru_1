@@ -67,11 +67,31 @@ bool AndroidOpenGLCanvas::Initialize(ANativeWindow* mainWindow)
 		return false;
 	}
 
-	const EGLint contextAttribs[] = {
-		EGL_CONTEXT_CLIENT_VERSION, 3,
-		EGL_NONE,
-	};
-	m_context = eglCreateContext(m_display, m_config, EGL_NO_CONTEXT, contextAttribs);
+	// V11.44: contexto GLES "robusto". Jogos do Wii U leem uniform buffers / vertex buffers alem do tamanho ligado e o
+	// hardware do Wii U devolve 0. Em GPUs sem protecao propria (PowerVR confirmado pela Imagination: "PowerVR lacks this
+	// safety layer"), a leitura fora do limite vira lixo -> texturas pretas/com ruido. Com robust access o driver devolve 0.
+	// Tenta EGL 1.5 (0x31B2), depois EGL_EXT_create_context_robustness (0x30BF), por fim sem robustez.
+	constexpr EGLint kEglContextOpenGLRobustAccess = 0x31B2;
+	constexpr EGLint kEglContextOpenGLRobustAccessExt = 0x30BF;
+	m_context = EGL_NO_CONTEXT;
+	for (const EGLint robustAttr : { kEglContextOpenGLRobustAccess, kEglContextOpenGLRobustAccessExt, (EGLint)0 })
+	{
+		const EGLint robustAttribs[] = {
+			EGL_CONTEXT_CLIENT_VERSION, 3,
+			robustAttr, EGL_TRUE,
+			EGL_NONE,
+		};
+		const EGLint plainAttribs[] = {
+			EGL_CONTEXT_CLIENT_VERSION, 3,
+			EGL_NONE,
+		};
+		m_context = eglCreateContext(m_display, m_config, EGL_NO_CONTEXT, robustAttr ? robustAttribs : plainAttribs);
+		if (m_context != EGL_NO_CONTEXT)
+		{
+			cemuLog_log(LogType::Force, "[GL] contexto EGL criado {}", robustAttr ? (robustAttr == kEglContextOpenGLRobustAccess ? "COM acesso robusto a buffers (EGL 1.5)" : "COM acesso robusto a buffers (EXT)") : "SEM acesso robusto a buffers (driver recusou)");
+			break;
+		}
+	}
 	if (m_context == EGL_NO_CONTEXT)
 	{
 		LogEGLError("eglCreateContext");

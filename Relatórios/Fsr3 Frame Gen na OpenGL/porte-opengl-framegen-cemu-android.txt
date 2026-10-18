@@ -553,3 +553,51 @@ impossivel de testar aqui). Solucao segura: no modo Auto, se o Vulkan nao tem ge
 cai para OpenGL ES (g_vkRequireGeometryShader em VulkanRenderer.cpp / NativeEmulation.cpp). Modo "Vulkan" manual continua abrindo
 sem GS (V11.41; RECT_LIST/GS do jogo podem sair errados). Este zip e CUMULATIVO com a V11.41 (substitui o zip da V11.41).
 NAO compilado nem testado.
+
+=== V11.43 - Cache AOT corrompido (crash signal 11) + quarentena Vulkan ===
+LOGS (18/10): 3 crashes "signal 11" (MK8 Vulkan/GL, SM3DW GL) TODOS com cache_AOT=true e logo na 1a funcao vinda do cache
+ ("Recent JIT code entries [0] funcPtr=..."), PC em enderecos invalidos (SEGV_ACCERR/MAPERR). Sem AOT nao houve esse crash.
+CAUSA: o codigo AArch64 gravado no cache embute enderecos absolutos que mudam a cada execucao (ASLR) e NAO estavam em
+ 'relocations': (1) emitRegisterCanaryCheck (instance data, memory_base, texto, funcao report) emitido em todo macro();
+ (2) call_imm (endereco absoluto de funcao C++). So PPCRecompiler_virtualHLE era relocado.
+CORRECAO: canario nao e emitido quando o cache AOT esta ligado; funcoes com call_imm nao sao gravadas (PPCRecFunction_t::aotCacheable);
+ kCacheFormatVersion 1->2 (invalida os caches ruins ja gravados). Arquivos: PPCRecompiler.h, PPCRecompilerCache.cpp, BackendAArch64.cpp.
+ Obs.: com AOT ligado o canario (diagnostico) fica desligado. NAO compilado nem testado.
+QUARENTENA VULKAN: SM3DW Vulkan (Adreno 650 stock) DEVICE_LOST: o pipeline VS=5ae6d5fe34beb432 PS=7fc38db3951826bc foi criado 55 ms antes e
+ aparece nos submits 1075..1081 (travou no 1081), mas RecordSuspects olhava so os ultimos 3 submits e disse "nenhum pipeline novo".
+ Janela agora = 12 submits (DrawTraceVk.h). Se o travamento repetir, o suspeito e gravado em vk_quarantine.txt e pulado na proxima abertura.
+GL (SM3DW G54/Adreno): linha [Perf] etapas mostra draws ~8-10 ms e "outros" ~14 ms por frame de ~33 ms: o resto e espera da GPU real
+ (full sync GX2DrawDone=true) -> gargalo e a GPU, nao o driver/CPU. Velocidade do emulador: todos os 8 logs mostram velocidade=100%.
+
+=== V11.44 - Contexto OpenGL ES robusto (texturas pretas/ruido no PowerVR) ===
+PESQUISA: forum Imagination "BXM-8-256 - Long list of driver issues" (forums.imgtec.com/t/.../3891): a Imagination diz que PowerVR NAO tem a
+ "camada oculta de seguranca" que outras GPUs tem contra leitura de buffer fora do limite; apps que dependem disso parecem bugs de driver.
+ Tambem: driver 1.15@6133109 tinha bugs corrigidos na 1.15@6133110 (o G54 ja esta na ...110). Issue cemu-libretro #29 (Adreno 840, texturas pretas):
+ relata falha de pipeline/streamout, nao e o mesmo caso (Vulkan).
+HIPOTESE: shaders do Wii U (modo FULL_CBANK/vertex fetch) leem alem do tamanho do UBO/VBO ligado (OpenGLRendererCore buffer_bindUniformBuffer usa
+ glBindBufferRange com o tamanho real); o hardware do Wii U devolve 0. Sem robustez do driver vira lixo -> textura preta/ruido.
+ No Vulkan o Cemu ja liga robustBufferAccess nesses casos (VulkanRenderer.cpp); no GL do Android nao havia equivalente.
+CORRECAO: AndroidOpenGLCanvas.cpp cria o contexto EGL com EGL_CONTEXT_OPENGL_ROBUST_ACCESS (0x31B2; fallback EXT 0x30BF; fallback sem).
+ Log novo: "[GL] contexto EGL criado COM/SEM acesso robusto a buffers". NAO compilado nem testado. Hipotese NAO confirmada.
+
+=== V11.45 - Alivio de GPU: opcao "Full sync at GX2DrawDone" (Experimental) ===
+ANALISE (logs G54 OpenGL): por frame ~33 ms = ~10 ms ociosos esperando CPU + ~8-10 ms de comandos de draw + ~14 ms esperando a GPU real.
+ Com "Full sync at GX2DrawDone" ligado (padrao do Cemu) a CPU espera a GPU a cada GX2DrawDone: frame = CPU + GPU em vez de max(CPU, GPU).
+NOVO: toggle em Experimental (config gx2drawdone_sync, ja persistida em settings.xml, chave GX2DrawdoneSync). Padrao continua LIGADO.
+ Desligado -> CPU e GPU em paralelo (potencial de mais fps). Risco: defeitos em jogos que leem a imagem de volta / oclusao.
+ O log de inicio ja mostra "Full sync at GX2DrawDone: true/false". Vulkan ignora (forca sync). NAO compilado nem testado.
+Outras alavancas para a GPU (nao implementadas): resolucao interna menor (SM3DW: resolucao fixa menor), FSR1 e frame gen desligados no G54,
+ descartar depth/stencil ao fim do render pass (glInvalidateFramebuffer; so seguro se o jogo nao ler depois) - arriscado.
+Arquivos: NativeSettings.cpp, NativeSettings.kt, ExperimentalSettingsScreen.kt
+
+=== V11.46 - "Pular sombras" (desenhos so de profundidade, OpenGL) ===
+PROBLEMA: SM3DW tem logica presa ao quadro (60 fps). Se a GPU nao entrega 60 fps o personagem anda em camera lenta; "Velocidade do emulador"
+ nao resolve (CPU esta ok: 1243 MHz = 100%); o gargalo e a GPU.
+NOVO (experimental, desligado por padrao): config skip_depth_only_draws. No OpenGL pula draws sem saida de cor e com buffer de profundidade ativo
+ (mapas de sombra / z-prepass) -> menos trabalho de GPU. Custo: sombras dinamicas somem/ficam erradas. Log: "[PuladoDepth] ... pulados".
+ Toggle em Experimental ("Pular sombras (so OpenGL)"). Vulkan nao implementado. NAO compilado nem testado; ganho de fps NAO medido.
+ Zip CUMULATIVO com V11.45 para NativeSettings.cpp/.kt e ExperimentalSettingsScreen.kt (substitui o zip da V11.45).
+Arquivos: CemuConfig.h/.cpp, OpenGLRendererCore.cpp, NativeSettings.cpp/.kt, ExperimentalSettingsScreen.kt
+V11.46b: o "Pular sombras" agora tambem funciona no VULKAN (VulkanRendererCore.cpp, draw_beginSequence: marca a sequencia de draws como pulada
+ quando nao ha cor ativa e ha profundidade ativa). Log Vulkan: "[PuladoDepth] sequencias ... (Vulkan)". Texto do toggle em Experimental diz "so OpenGL" -
+ ignorar; vale para as duas APIs. NAO compilado nem testado.

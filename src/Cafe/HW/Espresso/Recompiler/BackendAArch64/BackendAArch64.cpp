@@ -11,6 +11,7 @@
 #include "../PPCRecompiler.h"
 #include "Common/precompiled.h"
 #include "Common/cpu_features.h"
+#include "config/CemuConfig.h" // V11.43 (GetConfig no canario)
 #include "HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include "HW/Espresso/Interpreter/PPCInterpreterHelper.h"
 #include "HW/Espresso/PPCState.h"
@@ -432,6 +433,7 @@ struct AArch64GenContext_t : CodeGenerator
 	// movAbsFixed() below. Only valid for this process run (ASLR); the AOT disk cache uses this
 	// list to re-patch every such location if this function's code is loaded in a later run.
 	std::vector<struct PPCRecRelocEntry> relocations;
+	bool aotCacheable = true; // V11.43: vira false se o codigo tiver endereco absoluto nao relocavel (call_imm)
 
 	// Loads a 64-bit absolute address into dst using an UNCONDITIONAL, always-4-instruction
 	// (16 byte) movz+movk+movk+movk sequence, and records a relocation entry for it.
@@ -1259,6 +1261,10 @@ void PPCRecompiler_reportRegisterCorruption(const char* checkpointTag, uint32 wh
 // máximo ONDE exatamente a corrupção acontece.
 void AArch64GenContext_t::emitRegisterCanaryCheck(const char* checkpointTag)
 {
+	// V11.43: o canario embute enderecos absolutos (instance data, memory_base, funcao, texto) que mudam a cada
+	// execucao (ASLR). Com o cache AOT ligado o canario nao e emitido, senao o codigo gravado quebra na proxima abertura.
+	if (GetConfig().enable_recompiler_aot_cache.GetValue())
+		return;
 	{
 		mov(TEMP_GPR1.XReg, (uint64)ppcRecompilerInstanceData);
 		cmp(PPC_REC_INSTANCE_REG, TEMP_GPR1.XReg);
@@ -1856,6 +1862,7 @@ void AArch64GenContext_t::call_imm(IMLInstruction* imlInstruction)
 	// chamada pra código C++ arbitrário pode, em teoria, mexer nesses 3 registradores
 	// reservados sem que isso apareça em nenhuma busca no código-fonte (ex: "outline
 	// atomics" do compilador). Salvar/restaurar manualmente nos protege de qualquer forma.
+	aotCacheable = false; // V11.43: endereco absoluto da funcao C++ nao e relocado pelo cache AOT
 	stp(x27, x28, AdrPreImm(sp, -16));
 	stp(x29, x30, AdrPreImm(sp, -16));
 	mov(TEMP_GPR1.XReg, imlInstruction->op_call_imm.callAddress);
@@ -2047,6 +2054,7 @@ bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, 
 	PPCRecFunction->x86Code = AArch64Allocator::FinalizeExecutableCode(aarch64GenContext.getCode<void*>(), aarch64GenContext.getSize());
 	PPCRecFunction->x86Size = aarch64GenContext.getMaxSize();
 	PPCRecFunction->relocations = std::move(aarch64GenContext.relocations);
+	PPCRecFunction->aotCacheable = aarch64GenContext.aotCacheable;
 	// set free disabled to skip freeing the code from the CodeGenerator destructor
 	allocator.setFreeDisabled(true);
 	return true;

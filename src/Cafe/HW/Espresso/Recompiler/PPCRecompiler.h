@@ -61,6 +61,9 @@ struct PPCRecFunction_t
 	// consumed by the AOT disk cache (PPCRecompilerCache.cpp); a normal, freshly compiled
 	// function that's never cached simply carries this around unused.
 	std::vector<PPCRecRelocEntry> relocations;
+	// V11.43: false se o codigo gerado contem enderecos absolutos do host que NAO estao em 'relocations'
+	// (ex.: call_imm). Esses codigos nunca podem ir para o cache AOT (quebrariam na proxima execucao por causa do ASLR).
+	bool aotCacheable = true;
 };
 
 #include "Cafe/HW/Espresso/Recompiler/IML/IMLInstruction.h"

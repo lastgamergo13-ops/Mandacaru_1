@@ -836,6 +836,30 @@ Java_info_cemu_cemu_nativeinterface_NativeSettings_setEmulationSpeedPercent([[ma
 	GetConfig().emulation_speed_percent = (uint32)clamped;
 }
 
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getGX2DrawDoneSync([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().gx2drawdone_sync.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setGX2DrawDoneSync([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().gx2drawdone_sync = static_cast<bool>(enabled);
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getSkipDepthOnlyDraws([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return GetConfig().skip_depth_only_draws.GetValue();
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setSkipDepthOnlyDraws([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
+{
+	GetConfig().skip_depth_only_draws = static_cast<bool>(enabled);
+}
+
 extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_saveSettings([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
 {

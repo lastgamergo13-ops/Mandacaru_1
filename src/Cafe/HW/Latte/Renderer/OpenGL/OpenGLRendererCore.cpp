@@ -916,6 +916,19 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 		LatteGPUState.drawCallCounter++;
 		return;
 	}
+	// V11.46: opcao experimental - pula desenhos so de profundidade (sem cor): mapas de sombra / z-prepass
+	if (GetConfig().skip_depth_only_draws.GetValue() && !streamoutEnable)
+	{
+		LatteDecompilerShader* depthPs = (LatteDecompilerShader*)LatteSHRC_GetActivePixelShader();
+		if (LatteMRT::GetActiveColorBufferMask(depthPs, LatteGPUState.contextNew) == 0 && LatteMRT::GetActiveDepthBufferMask(LatteGPUState.contextNew))
+		{
+			static uint32 s_skippedDepthDraws = 0;
+			if ((++s_skippedDepthDraws % 3000) == 1)
+				cemuLog_log(LogType::Force, "[PuladoDepth] desenhos so de profundidade pulados ate agora: {}", s_skippedDepthDraws);
+			LatteGPUState.drawCallCounter++;
+			return;
+		}
+	}
 	// get primitive
 	if (primitiveMode == Latte::LATTE_VGT_PRIMITIVE_TYPE::E_PRIMITIVE_TYPE::TRIANGLES)
 		sGLActiveDrawMode = GL_TRIANGLES;

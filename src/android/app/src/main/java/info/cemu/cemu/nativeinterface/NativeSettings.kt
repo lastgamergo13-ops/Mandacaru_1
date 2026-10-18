@@ -514,4 +514,18 @@ object NativeSettings {
 
     @JvmStatic
     external fun setEmulationSpeedPercent(value: Int)
+
+    // V11.45: "Full sync at GX2DrawDone" (config gx2drawdone_sync, padrao ligado)
+    @JvmStatic
+    external fun getGX2DrawDoneSync(): Boolean
+
+    @JvmStatic
+    external fun setGX2DrawDoneSync(value: Boolean)
+
+    // V11.46: pular desenhos so de profundidade (sombras) no OpenGL
+    @JvmStatic
+    external fun getSkipDepthOnlyDraws(): Boolean
+
+    @JvmStatic
+    external fun setSkipDepthOnlyDraws(value: Boolean)
 }

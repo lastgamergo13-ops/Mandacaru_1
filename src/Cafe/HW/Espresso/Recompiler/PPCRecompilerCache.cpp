@@ -17,7 +17,7 @@ namespace
 {
 	// bump this whenever the on-disk layout (or the meaning of a relocation type) changes,
 	// so that old, incompatible cache files are simply treated as empty rather than crash-loaded
-	constexpr uint32 kCacheFormatVersion = 1;
+	constexpr uint32 kCacheFormatVersion = 2; // V11.43: v1 gravou codigo com enderecos absolutos (canario/call_imm) que quebram apos reiniciar
 
 	// entry point table is stored as flat (ppcAddress, codeOffset) pairs rather than the
 	// std::pair the rest of the recompiler uses internally, so it can be treated as POD data
@@ -157,6 +157,8 @@ void PPCRecompilerCache_Store(PPCRecFunction_t* ppcRecFunc, const std::vector<st
 		return;
 	if (!ppcRecFunc || !ppcRecFunc->x86Code || ppcRecFunc->x86Size == 0)
 		return;
+	if (!ppcRecFunc->aotCacheable)
+		return; // V11.43: contem endereco absoluto nao relocavel
 
 	const uint8* srcCode = memory_getPointerFromVirtualOffsetAllowNull(ppcRecFunc->ppcAddress);
 	if (!srcCode)

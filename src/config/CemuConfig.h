@@ -540,6 +540,8 @@ struct CemuConfig
 
 	ConfigValue<int> vsync{ 0 }; // 0 = off, 1+ = depending on render backend
 	ConfigValue<bool> gx2drawdone_sync { true };
+	// V11.46: pula desenhos so de profundidade (mapas de sombra / z-prepass) no OpenGL. Mais fps, sombras somem. Desligado por padrao.
+	ConfigValue<bool> skip_depth_only_draws { false };
 	ConfigValue<bool> render_upside_down{ false };
 	ConfigValue<bool> async_compile{ true };
 
