@@ -128,6 +128,7 @@ RendererShaderVk* rectsEmulationGS_generate(LatteDecompilerShader* vertexShader,
 /* pipeline compiler and cache helper */
 
 extern std::atomic_int g_compiling_pipelines;
+extern bool g_vkGeometryShaderSupported; // V11.41
 extern std::atomic_int g_compiling_pipelines_async;
 extern std::atomic_uint64_t g_compiling_pipelines_syncTimeSum;
 
@@ -371,7 +372,11 @@ bool PipelineCompiler::InitShaderStages(VulkanRenderer* vkRenderer, RendererShad
 	if (vkVertexShader)
 		shaderStages.emplace_back(vkRenderer->CreatePipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, vkVertexShader->GetShaderModule(), "main"));
 
-	if (vkGeometryShader)
+	if (!g_vkGeometryShaderSupported)
+	{
+		// V11.41: driver sem geometry shader (ex.: PowerVR) - pipeline segue sem o estagio GS
+	}
+	else if (vkGeometryShader)
 		shaderStages.emplace_back(vkRenderer->CreatePipelineShaderStageCreateInfo(VK_SHADER_STAGE_GEOMETRY_BIT, vkGeometryShader->GetShaderModule(), "main"));
 	else if (m_rectEmulationGS)
 		shaderStages.emplace_back(vkRenderer->CreatePipelineShaderStageCreateInfo(VK_SHADER_STAGE_GEOMETRY_BIT, m_rectEmulationGS->GetShaderModule(), "main"));

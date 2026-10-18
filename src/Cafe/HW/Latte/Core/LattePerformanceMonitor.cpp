@@ -128,6 +128,12 @@ void LattePerformanceMonitor_frameEnd()
 					(uint64)PPCTimer_tscToMicroseconds(performanceMonitor.gpuTime_waitForAsync.getPreviousFrameValue()),
 					(bool)cfg.limit_to_half_fps.GetValue(), (uint32)cfg.emulation_speed_percent.GetValue(), (int)cfg.vsync.GetValue(),
 					api, drv, cust.empty() ? "" : (" (custom: " + cust + ")"));
+				{
+					auto us = [](LattePerfStatTimer& t) { return (uint64)PPCTimer_tscToMicroseconds(t.getPreviousFrameValue()); };
+					cemuLog_log(LogType::Force, "[Perf] etapas do ultimo frame (us, so draws completos): texturas+render targets={} MRT={} shader+uniforms={} indices={} vertex={} chamada_de_draw_na_API={} esperando_async={}",
+						us(performanceMonitor.gpuTime_dcStageTextures), us(performanceMonitor.gpuTime_dcStageMRT), us(performanceMonitor.gpuTime_dcStageShaderAndUniformMgr),
+						us(performanceMonitor.gpuTime_dcStageIndexMgr), us(performanceMonitor.gpuTime_dcStageVertexMgr), us(performanceMonitor.gpuTime_dcStageDrawcallAPI), us(performanceMonitor.gpuTime_waitForAsync));
+				}
 				const std::string top = PerfLog::ThreadTop(wall);
 				if (!top.empty())
 					cemuLog_log(LogType::Force, "[Perf] CPU por thread (>=5%): {}", top);

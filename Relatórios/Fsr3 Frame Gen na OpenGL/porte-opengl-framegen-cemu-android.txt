@@ -507,3 +507,49 @@ Logcat (SM3DW Vulkan, Adreno 650 stock): AdrenoVK "Shader compilation failed for
 
 V11.37b - Erro de build
 - src/zarchive/zarchivereader.h (vendorizado na V11.36) incluia "zarchivecommon.h" entre aspas (relativo a pasta); la so existe zarchivereader.h. Trocado por <zarchive/zarchivecommon.h>, que vem de dependencies/ZArchive/include (o projeto usa o ZArchive como dependencia propria, nao o do vcpkg - o header vendorizado continua na frente no include path).
+
+V11.38 - Onde a GPU gasta tempo (log) - SM3DW/G8
+Logs de 18/10: Moto G8 (Adreno 610): biblioteca funciona (V11.36 ok, jogo abre). SM3DW GL no G8: menu 53-60 fps (12-38 draws) e depois cena de ~500 draws a 4 fps (GPU(thread Latte) 190-307 ms/frame, ocioso ~10 ms). No A650 essa mesma cena de ~500 draws leva ~130 ms: nao escala com o poder da GPU (A610 e ~3-4x mais fraca; aqui so ~1,5x pior), o que aponta para espera dentro do driver (sincronizacao/copias/upload), nao para pixel shader. CPU com folga (Latte 40%).
+- Nao ha causa confirmada, entao nao mexi no render: sem saber a etapa, qualquer "otimizacao" seria chute (e mediump/precisao menor piora as sombras bugadas).
+- OpenGLRendererCore.cpp: o cronometro por etapa do draw (ja existia, vinha desligado) agora fica ligado nos draws completos.
+- LattePerformanceMonitor.cpp: [Perf] ganha 1 linha: etapas do ultimo frame em us (texturas+render targets, MRT, shader+uniforms, indices, vertex, chamada de draw na API, esperando async). A maior etapa na cena de 500 draws mostra onde esta o gargalo.
+- Nao compilado/testado.
+
+=== V11.39 - Opcoes experimentais que nao funcionavam ===
+CAUSA: o jogo roda no processo :EmulationProcess e so le o settings.xml. "Limite de 30 FPS" (limit_to_half_fps) e
+"Velocidade do emulador" (emulation_speed_percent) nunca eram gravados nem lidos em CemuConfig.cpp, entao o
+emulador sempre via os valores padrao.
+CORRECAO: CemuConfig.cpp agora le/grava os dois valores.
+LOG NOVO (para conferir): linha "[Opcoes] limite_30fps=.. velocidade=..% | cache_AOT=.. | limitar_threads_shader(so Vulkan)=..
+ | otimizacoes_IR_profundas=.. | freio_de_memoria=.. teto=..MB" ao iniciar o jogo (CafeSystem.cpp).
+ "[AOT] cache do recompilador aberto" e, ao fechar, "[AOT] N funcoes carregadas do cache, N nao estavam, N gravadas".
+NOTAS: Recompiler AOT cache so ajuda na 2a execucao do jogo (1a grava). Limit shader compiler threads so afeta Vulkan
+ (no OpenGL nao tem efeito). Memory Usage Brake so age quando a RAM passa do teto configurado. Deep IR so muda o codigo
+ gerado (mais tempo de compilacao, ganho pequeno); nao tem log proprio alem da linha [Opcoes].
+NAO compilado nem testado. Arquivos: src/config/CemuConfig.cpp, src/Cafe/CafeSystem.cpp,
+ src/Cafe/HW/Espresso/Recompiler/PPCRecompilerCache.cpp
+
+=== V11.40 - FSR1 deixava a tela esbranquicada ===
+CAUSA: o "main()" comum dos shaders de saida (PrependFragmentPreamble) aplica codificacao sRGB + gamma depois de
+outputShader(). O FSR roda 2 passes (EASU -> textura intermediaria -> RCAS -> tela) e AMBOS usavam esse main(),
+entao a imagem era codificada/gamma duas vezes = tela lavada/clara (Vulkan e OpenGL).
+CORRECAO: o shader EASU recebe "#define FSR_RAW_PASS" e o main() pula sRGB/gamma nesse caso; so o RCAS (passo final) aplica.
+Arquivos: src/Cafe/HW/Latte/Renderer/RendererOuputShader.cpp / .h. NAO compilado nem testado.
+OBS: "failed to submit command buffer. Error -4" = VK_ERROR_DEVICE_LOST (GPU travou, driver Adreno stock). NAO foi corrigido;
+ o diagnostico segue pendente de log com linhas "[Pipeline]" + logcat (ver V11.37).
+
+=== V11.41 - Vulkan no PowerVR (Moto G54) ===
+CAUSA: vkCreateDevice exigia sempre geometryShader, depthClamp, depthBiasClamp, imageCubeArray, independentBlend,
+occlusionQueryPrecise, samplerAnisotropy. PowerVR BXM-8-256 nao tem geometryShader -> erro -8 (FEATURE_NOT_PRESENT) -> caia para OpenGL.
+CORRECAO: cada recurso so e ligado se o driver suporta (log "[VK] recurso 'X' nao suportado"). Sem geometryShader,
+os pipelines sao criados sem estagio GS (g_vkGeometryShaderSupported). Draws que dependem de GS (RECT_LIST/quads, GS do jogo)
+podem sair errados. Se ficar pior que o OpenGL, escolher OpenGL em Configuracoes > Grafico. NAO compilado nem testado.
+Arquivos: VulkanRenderer.cpp, VulkanPipelineCompiler.cpp
+
+=== V11.42 - Geometry shader (Vulkan x OpenGL) ===
+OpenGL ES 3.2 tem geometry shader nativo (core) -> o GL ja usa o GS de emulacao de RECT_LIST (OpenGLRendererCore.cpp, "#version 320 es").
+Vulkan no PowerVR NAO tem geometryShader; emular RECT_LIST sem GS exigiria reescrever o vertex shader/pre-passe de compute (grande e
+impossivel de testar aqui). Solucao segura: no modo Auto, se o Vulkan nao tem geometryShader o emulador lanca erro controlado e
+cai para OpenGL ES (g_vkRequireGeometryShader em VulkanRenderer.cpp / NativeEmulation.cpp). Modo "Vulkan" manual continua abrindo
+sem GS (V11.41; RECT_LIST/GS do jogo podem sair errados). Este zip e CUMULATIVO com a V11.41 (substitui o zip da V11.41).
+NAO compilado nem testado.

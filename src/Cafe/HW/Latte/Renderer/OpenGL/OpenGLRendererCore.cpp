@@ -1219,7 +1219,7 @@ void OpenGLRenderer::draw_execute(uint32 baseVertex, uint32 baseInstance, uint32
     if (isMinimal)
         draw_genericDrawHandler<true, false>(baseVertex, baseInstance, instanceCount, count, indexDataMPTR, indexType);
     else
-        draw_genericDrawHandler<false, false>(baseVertex, baseInstance, instanceCount, count, indexDataMPTR, indexType);
+        draw_genericDrawHandler<false, true>(baseVertex, baseInstance, instanceCount, count, indexDataMPTR, indexType); // V11.38: cronometra as etapas do draw (log [Perf])
 }
 
 void OpenGLRenderer::draw_endSequence()

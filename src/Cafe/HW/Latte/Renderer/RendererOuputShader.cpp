@@ -663,6 +663,22 @@ vertex VertexOut main0(ushort vid [[vertex_id]]) {
 
 std::string RendererOutputShader::PrependFragmentPreamble(const std::string& shaderSrc)
 {
+	// V11.40: the FSR EASU pass writes into an intermediate texture that RCAS reads afterwards.
+	// It must NOT get the sRGB encode / gamma of the final preamble, otherwise the image is encoded
+	// twice (once after EASU, once after RCAS) and the screen looks washed out.
+	if (shaderSrc.find("FsrEasuF(") != std::string::npos)
+	{
+		std::string full = PrependFragmentPreambleImpl(shaderSrc);
+		size_t nl = full.find('\n'); // inject the define right after the #version line
+		if (nl != std::string::npos)
+			full.insert(nl + 1, "#define FSR_RAW_PASS 1\n");
+		return full;
+	}
+	return PrependFragmentPreambleImpl(shaderSrc);
+}
+
+std::string RendererOutputShader::PrependFragmentPreambleImpl(const std::string& shaderSrc)
+{
 	if (OpenGLRenderer::IsGLES())
 	{
 		// GLSL ES: no #version 430, needs explicit precision qualifiers, and textureGather
@@ -703,6 +719,7 @@ void outputShader();
 void main()
 {
 	outputShader(); // sets colorOut0
+#ifndef FSR_RAW_PASS
 	if(applySRGBEncoding)
 		colorOut0 = vec4(sRGBEncode(colorOut0.rgb), 1.0);
 
@@ -710,6 +727,7 @@ void main()
 		colorOut0 = pow(colorOut0, vec4(targetGamma / displayGamma) );
 	else
 		colorOut0 = vec4( sRGBEncode( pow(colorOut0.rgb, vec3(targetGamma)) ), 1.0);
+#endif
 
 }
 
@@ -754,6 +772,7 @@ void outputShader();
 void main()
 {
 	outputShader(); // sets colorOut0
+#ifndef FSR_RAW_PASS
 	if(applySRGBEncoding)
 		colorOut0 = vec4(sRGBEncode(colorOut0.rgb), 1.0f);
 
@@ -761,6 +780,7 @@ void main()
 		colorOut0 = pow(colorOut0, vec4(targetGamma / displayGamma) );
 	else
 		colorOut0 = vec4( sRGBEncode( pow(colorOut0.rgb, vec3(targetGamma)) ), 1.0f);
+#endif
 
 }
 

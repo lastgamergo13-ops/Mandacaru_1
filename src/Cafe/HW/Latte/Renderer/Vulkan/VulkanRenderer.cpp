@@ -39,6 +39,9 @@
 #include <unordered_map>
 #include <glslang/Public/ShaderLang.h>
 
+bool g_vkGeometryShaderSupported = true; // V11.41
+bool g_vkRequireGeometryShader = false; // V11.42: modo Auto ativa isto para preferir o OpenGL ES quando faltar geometry shader
+
 #ifndef VK_API_VERSION_MAJOR
 #define VK_API_VERSION_MAJOR(version) (((uint32_t)(version) >> 22) & 0x7FU)
 #define VK_API_VERSION_MINOR(version) (((uint32_t)(version) >> 12) & 0x3FFU)
@@ -696,23 +699,32 @@ VulkanRenderer::VulkanRenderer() : Renderer(RendererAPI::Vulkan)
 	deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 	vkGetPhysicalDeviceFeatures2(m_physicalDevice, &deviceFeatures2);
 
-	deviceFeatures.independentBlend = VK_TRUE;
-	deviceFeatures.samplerAnisotropy = VK_TRUE;
-	deviceFeatures.imageCubeArray = VK_TRUE;
+	// V11.41: so liga o que o driver realmente suporta. Antes, geometryShader/depthClamp/etc. eram
+	// exigidos sempre e o PowerVR (Moto G54) falhava com VK_ERROR_FEATURE_NOT_PRESENT (-8).
+	const auto& supported = deviceFeatures2.features;
+	auto enableIfSupported = [&](VkBool32& dst, VkBool32 src, const char* name)
+	{
+		dst = src;
+		if (!src)
+			cemuLog_log(LogType::Force, "[VK] recurso '{}' nao suportado pelo driver: algumas coisas podem renderizar errado", name);
+	};
+	enableIfSupported(deviceFeatures.independentBlend, supported.independentBlend, "independentBlend");
+	enableIfSupported(deviceFeatures.samplerAnisotropy, supported.samplerAnisotropy, "samplerAnisotropy");
+	enableIfSupported(deviceFeatures.imageCubeArray, supported.imageCubeArray, "imageCubeArray");
 	//moltenVK supports logicOp via private api
-	deviceFeatures.logicOp = deviceFeatures2.features.logicOp;
+	deviceFeatures.logicOp = supported.logicOp;
 	if (!deviceFeatures.logicOp) {
 		cemuLog_log(LogType::Force, "LogicOp not supported by the driver, some rendering issues might occur");
-#if BOOST_OS_MACOS
-		cemuLog_log(LogType::Force, "Install the privateapi variant of MoltenVK to get logicOp support on macOS");
-#endif
 	}
 #if !BOOST_OS_MACOS
-	deviceFeatures.geometryShader = VK_TRUE;
+	enableIfSupported(deviceFeatures.geometryShader, supported.geometryShader, "geometryShader");
+	g_vkGeometryShaderSupported = supported.geometryShader != VK_FALSE;
+	if (!g_vkGeometryShaderSupported && g_vkRequireGeometryShader)
+		throw std::runtime_error("GPU sem geometryShader no Vulkan; o OpenGL ES (geometry shader nativo) sera usado");
 #endif
-	deviceFeatures.occlusionQueryPrecise = VK_TRUE;
-	deviceFeatures.depthClamp = VK_TRUE;
-	deviceFeatures.depthBiasClamp = VK_TRUE;
+	enableIfSupported(deviceFeatures.occlusionQueryPrecise, supported.occlusionQueryPrecise, "occlusionQueryPrecise");
+	enableIfSupported(deviceFeatures.depthClamp, supported.depthClamp, "depthClamp");
+	enableIfSupported(deviceFeatures.depthBiasClamp, supported.depthBiasClamp, "depthBiasClamp");
 
 	if (m_featureControl.deviceExtensions.pipeline_robustness)
 	{

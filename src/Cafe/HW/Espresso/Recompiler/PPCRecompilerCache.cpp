@@ -1,4 +1,5 @@
 #include "PPCRecompilerCache.h"
+#include <atomic>
 #include "Cemu/FileCache/FileCache.h"
 #include "config/ActiveSettings.h"
 #include "config/CemuConfig.h"
@@ -27,6 +28,7 @@ namespace
 	};
 
 	FileCache* s_aotCache = nullptr;
+	std::atomic<uint32> s_aotHits{0}, s_aotMisses{0}, s_aotStores{0}; // V11.39: contadores para o log
 
 	bool IsAOTCacheEnabled()
 	{
@@ -68,6 +70,7 @@ void PPCRecompilerCache_Load(TitleId titleId)
 	}
 	// this cache is consulted on every cold function entry, so keep lookups cheap rather than paying zlib decompression on the hot path
 	s_aotCache->UseCompression(false);
+	cemuLog_log(LogType::Force, "[AOT] cache do recompilador aberto: {}", _pathToUtf8(cachePath));
 #endif
 }
 
@@ -75,6 +78,7 @@ void PPCRecompilerCache_Unload()
 {
 	if (s_aotCache)
 	{
+		cemuLog_log(LogType::Force, "[AOT] cache do recompilador: {} funcoes carregadas do cache, {} nao estavam no cache, {} gravadas nesta sessao", (uint32)s_aotHits, (uint32)s_aotMisses, (uint32)s_aotStores);
 		delete s_aotCache;
 		s_aotCache = nullptr;
 	}
@@ -88,7 +92,10 @@ PPCRecFunction_t* PPCRecompilerCache_TryLoad(const PPCFunctionBoundaryTracker::P
 
 	std::vector<uint8> blob;
 	if (!s_aotCache->GetFile({ (uint64)range.startAddress, 0 }, blob))
+	{
+		s_aotMisses++;
 		return nullptr; // cache miss
+	}
 
 	MemStreamReader reader(blob.data(), (sint32)blob.size());
 	uint32 formatVersion = reader.readBE<uint32>();
@@ -140,6 +147,7 @@ PPCRecFunction_t* PPCRecompilerCache_TryLoad(const PPCFunctionBoundaryTracker::P
 	for (auto& ep : entryPointsRaw)
 		entryPointsOut.emplace_back((MPTR)ep.ppcAddress, ep.codeOffset);
 
+	s_aotHits++;
 	return ppcRecFunc;
 }
 
@@ -174,5 +182,6 @@ void PPCRecompilerCache_Store(PPCRecFunction_t* ppcRecFunc, const std::vector<st
 	writer.getResultAndReset(blob);
 
 	// the actual disk write happens on FileCache's own background thread - never blocks recompilation
+	s_aotStores++;
 	s_aotCache->AddFileAsync({ (uint64)ppcRecFunc->ppcAddress, 0 }, blob.data(), (sint32)blob.size());
 }

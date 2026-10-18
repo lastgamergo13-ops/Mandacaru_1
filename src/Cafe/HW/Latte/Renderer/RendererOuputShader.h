@@ -68,6 +68,7 @@ public:
 	static std::string GetMetalVertexSource(bool render_upside_down);
 
 	static std::string PrependFragmentPreamble(const std::string& shaderSrc);
+	static std::string PrependFragmentPreambleImpl(const std::string& shaderSrc);
 
 protected:
 	std::unique_ptr<RendererShader> m_vertex_shader;

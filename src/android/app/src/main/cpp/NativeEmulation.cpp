@@ -28,6 +28,8 @@
 
 #include <android/native_window_jni.h>
 
+extern bool g_vkRequireGeometryShader; // V11.42 (VulkanRenderer.cpp)
+
 // forward declaration from main.cpp
 void CemuCommonInit();
 
@@ -434,11 +436,14 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_initializeRenderer(JNIEnv* e
 		{
 			const RenderBackend preferred = NativeEmulation::ChooseAutoRenderBackend();
 			const bool vulkanFirst = (preferred == RenderBackend::Vulkan);
+			// V11.42: no modo Auto, GPU sem geometryShader no Vulkan (ex.: PowerVR) usa o OpenGL ES, que tem geometry shader nativo (GLES 3.2)
+			g_vkRequireGeometryShader = true;
 
 			if (vulkanFirst ? tryVulkan(error) : tryOpenGL(error))
 				return;
 			cemuLog_log(LogType::Force, "Render API (Auto): {} - tentando a outra API", error);
 
+			g_vkRequireGeometryShader = false; // o fallback para Vulkan (se o GL falhar) aceita GPU sem geometry shader
 			createTestSurface();
 			std::string fallbackError;
 			if (vulkanFirst ? tryOpenGL(fallbackError) : tryVulkan(fallbackError))
