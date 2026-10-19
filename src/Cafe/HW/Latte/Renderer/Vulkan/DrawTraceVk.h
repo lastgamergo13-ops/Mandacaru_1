@@ -161,12 +161,21 @@ namespace DrawTraceVk
 		{
 			// V11.47: nenhum pipeline era novo (ex.: Mario Kart 8 na Adreno, travou no submit 133 com todos os pipelines ja
 			// vistos). Em vez de nao gravar nada e travar de novo igual, poe em quarentena os pipelines dos 2 ultimos submits.
-			const uint64_t from2 = cur > 1 ? cur - 1 : 0;
+			// V11.47b: os ultimos submits podem nao ter draws (MK8: draws no submit 119, travou no 124). Usa o ultimo
+			// submit que TEM draws (e o anterior).
+			uint64_t lastDrawSubmit = 0;
+			for (uint32_t i = 0; i < total; i++)
+			{
+				const Rec& r = g_ring[(g_pos - total + i) % kRing];
+				if (r.submit <= cur && r.submit > lastDrawSubmit)
+					lastDrawSubmit = r.submit;
+			}
+			const uint64_t from2 = lastDrawSubmit > 1 ? lastDrawSubmit - 1 : 0;
 			std::unordered_set<uint64_t> seen;
 			for (uint32_t i = 0; i < total; i++)
 			{
 				const Rec& r = g_ring[(g_pos - total + i) % kRing];
-				if (r.submit < from2 || r.submit > cur)
+				if (r.submit < from2 || r.submit > lastDrawSubmit)
 					continue;
 				if (!seen.insert(PipelineKey(r.vs, r.ps, r.gs)).second)
 					continue;

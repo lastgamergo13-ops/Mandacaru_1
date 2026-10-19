@@ -4237,7 +4237,9 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 				if (shaderContext->typeTracker.defaultDataType == LATTE_DECOMPILER_DTYPE_FLOAT)
 					src->addFmt("{} = GET_FRAGCOORD();" _CRLF, _getRegisterVarName(shaderContext, gprIndex));
 				else
-					src->addFmt("{} = floatBitsToInt(GET_FRAGCOORD());" _CRLF, _getRegisterVarName(shaderContext, gprIndex));
+					// V11.47: a compilador GLSL da Adreno rejeita a macro chamada dentro de floatBitsToInt(...) ("'(' syntax error",
+					// Zelda BOTW, mesmo com a macro definida); usa uma variavel temporaria.
+					src->addFmt("{{ vec4 fragCoordTmp = GET_FRAGCOORD(); {} = floatBitsToInt(fragCoordTmp); }}" _CRLF, _getRegisterVarName(shaderContext, gprIndex));
 				continue;
 			}
 

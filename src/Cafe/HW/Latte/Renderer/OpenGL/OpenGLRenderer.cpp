@@ -1213,6 +1213,39 @@ void OpenGLRenderer::QuerySupportedFormats()
 		}
 		cemuLog_log(LogType::Force, "[GLCaps] extensoes uteis = TRUE: {}", yes);
 		cemuLog_log(LogType::Force, "[GLCaps] extensoes uteis = FALSE: {}", no);
+		// V11.49: resumo "o que falta e o que o emulador faz no lugar" (cada item: qualquer uma das extensoes serve)
+		{
+			struct Need { const char* what; std::initializer_list<const char*> exts; const char* consequence; };
+			const Need needs[] = {
+				{ "texture_shadow_lod", { "GL_EXT_texture_shadow_lod" }, "SAMPLE_C_L/LZ em shadow array vira erro de compilacao do shader (Zelda BOTW); sem emulacao" },
+				{ "clip_control", { "GL_ARB_clip_control", "GL_EXT_clip_control" }, "Z/Y emulados no vertex shader (uf_clipFlipY)" },
+				{ "buffer_storage", { "GL_ARB_buffer_storage", "GL_EXT_buffer_storage" }, "buffers persistentes indisponiveis -> uploads mais lentos" },
+				{ "texture_view", { "GL_ARB_texture_view", "GL_EXT_texture_view", "GL_OES_texture_view" }, "views de textura emuladas por copia" },
+				{ "copy_image", { "GL_ARB_copy_image", "GL_EXT_copy_image", "GL_OES_copy_image" }, "copias de textura via FBO/blit" },
+				{ "draw_buffers_indexed", { "GL_ARB_draw_buffers_blend", "GL_EXT_draw_buffers_indexed", "GL_OES_draw_buffers_indexed" }, "blend/mascara por alvo de render nao individual" },
+				{ "base_vertex", { "GL_EXT_draw_elements_base_vertex", "GL_OES_draw_elements_base_vertex" }, "indices com base vertex reescritos na CPU" },
+				{ "geometry_shader", { "GL_EXT_geometry_shader", "GL_OES_geometry_shader" }, "RECT_LIST/geometry shaders do Wii U sem emulacao" },
+				{ "texture_barrier", { "GL_ARB_texture_barrier", "GL_NV_texture_barrier", "GL_EXT_shader_framebuffer_fetch" }, "feedback de textura/framebuffer sem barreira" },
+				{ "float_render_targets", { "GL_EXT_color_buffer_float" }, "render targets float indisponiveis" },
+				{ "float_blend", { "GL_EXT_float_blend" }, "blend em alvos float indisponivel" },
+				{ "depth_clamp", { "GL_ARB_depth_clamp", "GL_EXT_depth_clamp" }, "depth clamp ausente (sombras/ceu podem cortar)" },
+				{ "anisotropic", { "GL_EXT_texture_filter_anisotropic" }, "filtro anisotropico ausente" },
+				{ "border_clamp", { "GL_EXT_texture_border_clamp", "GL_OES_texture_border_clamp" }, "wrap CLAMP_BORDER vira clamp_to_edge" },
+				{ "mirror_clamp", { "GL_EXT_texture_mirror_clamp_to_edge", "GL_ARB_texture_mirror_clamp_to_edge" }, "wrap MIRROR_CLAMP vira mirror" },
+				{ "sample_shading", { "GL_ARB_sample_shading", "GL_OES_sample_shading" }, "MSAA por amostra ausente" },
+				{ "robustness", { "GL_KHR_robustness", "GL_EXT_robustness" }, "leitura fora do limite de buffer nao e zerada pelo driver" },
+			};
+			std::string missing;
+			for (const Need& nd : needs)
+			{
+				bool any = false;
+				for (const char* e : nd.exts)
+					any = any || IsGLExtensionSupported(e);
+				if (!any)
+					missing += fmt::format("\n[GLCaps]   FALTA {}: {}", nd.what, nd.consequence);
+			}
+			cemuLog_log(LogType::Force, "[GLCaps] resumo do que FALTA no driver (e o efeito/emulacao):{}", missing.empty() ? std::string(" nada") : missing);
+		}
 		GLint ne = 0;
 		glGetIntegerv(GL_NUM_EXTENSIONS, &ne);
 		std::string all;

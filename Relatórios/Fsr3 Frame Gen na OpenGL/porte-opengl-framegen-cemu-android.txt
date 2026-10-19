@@ -627,3 +627,55 @@ nao falta de GPU. Testar "Full sync at GX2DrawDone" DESLIGADO. Vulkan SM3DW roda
 de custo de GPU do frame gerado) e aparelho a 58.8 C (throttling).
 Zip: fix-v11-47-adreno-gl-estavel.zip (6 arquivos; ExceptionHandler_posix.cpp, AndroidOpenGLCanvas.cpp, TextureReadbackGL.cpp,
 RendererShaderGL.cpp, DrawTraceVk.h, CafeSystem.cpp).
+
+=== V11.48 - readback GL (CONDITION_SATISFIED), GET_FRAGCOORD, diagnosticos (nao compilado nem testado) ===
+Logs (Adreno 650, V11.47 aplicada): Zelda GL/Vulkan, MK8 GL/Vulkan. Contexto robusto desligado na Adreno: OK ([GL] GPU Adreno detectada).
+1) ZELDA GL crash: glClientWaitSync devolvia 0x911c = GL_CONDITION_SATISFIED (resposta VALIDA; o codigo original so aceitava
+   ALREADY_SIGNALED/SIGNALED e lancava excecao). IsFinished agora aceita CONDITION_SATISFIED. Em seguida havia signal 11 em
+   LatteTextureLoader_writeReadbackTextureToMemory: GetData() devolvia nullptr (glMapBufferRange falhou). Agora devolve buffer zerado
+   (log "[GL] glMapBufferRange do readback devolveu nulo"). Se ainda falhar, o formato do readback nao e suportado/mapeavel.
+2) ZELDA GL shaders 250cb5a06cab6534 / 728b9bc3556c3de1: preambulo mostra GET_FRAGCOORD DEFINIDO (linha 30) e uf_fragCoordScale
+   declarado; o erro "'(' syntax error" e do compilador da Adreno com a macro dentro de floatBitsToInt(GET_FRAGCOORD()).
+   Emissor (LatteDecompilerEmitGLSL.cpp) agora gera { vec4 fragCoordTmp = GET_FRAGCOORD(); R0i = floatBitsToInt(fragCoordTmp); }.
+3) "CONGELAMENTO" MK8 GL: o detector [Stall] mostrou a thread Latte DENTRO do driver Adreno (libllvm-glnext.so,
+   QGLCCompileToIRShader) compilando um VERTEX shader por ~12 s (fps=0.6 num frame), depois recupera. Nao e deadlock. Novo log
+   "[GLSL] compilacao LENTA: ... levou N ms (fonte=B bytes)" (>=500 ms) para identificar o shader. Celular esquentando = compilacoes + GPU.
+4) ZELDA VULKAN: [Stall] mostrou a thread Latte em LatteTexture_ReloadData -> LatteTextureLoader_UpdateTextureSliceData (decodificacao
+   de textura na CPU) por >9 s com RAM livre ~700 MB e swap do sistema 1895/6143 MB: provavel thrash de memoria. DEVICE_LOST depois
+   (submit 9846), 9 pipelines novos para quarentena.
+5) MK8 VULKAN stock: DEVICE_LOST no submit 124 (draws so ate o 119; 4 pipelines prim=6 ja vistos). Fallback da quarentena agora usa o
+   ultimo submit COM draws (V11.47 usava os 2 ultimos submits, que estavam vazios = 0 pipelines). Ambos os crashes de MK8 tem
+   aguardaSemaforoExterno=true (1o submit apos acquire do swapchain) - causa nao confirmada.
+6) PENDENTE: menus/HUD nao aparecem no OpenGL (SM3DW e MK8); no Vulkan aparecem. Sem pista nos logs.
+Zip: fix-v11-48-readback-fragcoord.zip (TextureReadbackGL.cpp, RendererShaderGL.cpp, LatteDecompilerEmitGLSL.cpp, DrawTraceVk.h).
+
+=== V11.49 - relatorio do que FALTA (OpenGL e Vulkan) (nao compilado nem testado) ===
+Pedido: se faltar extensao/recurso, registrar no log o que faltava e o efeito.
+- OpenGL (OpenGLRenderer.cpp): apos [GLCaps] extensoes uteis, nova linha "[GLCaps] resumo do que FALTA no driver (e o efeito/emulacao)"
+  com 17 itens (texture_shadow_lod, clip_control, buffer_storage, texture_view, copy_image, draw_buffers_indexed, base_vertex,
+  geometry_shader, texture_barrier, float RT/blend, depth_clamp, anisotropico, border/mirror clamp, sample_shading, robustness).
+  Na Adreno 650 o item esperado e texture_shadow_lod (shaders SAMPLE_C_L em shadow array nao compilam).
+- Vulkan (VulkanRenderer.cpp): "[VK] FALTA recurso 'X' no driver -> efeito" (geometryShader, depthClamp, depthBiasClamp,
+  independentBlend, imageCubeArray, occlusionQueryPrecise, samplerAnisotropy).
+Obs.: o log so informa; nenhuma emulacao nova foi adicionada (as que ja existiam: clip control e BC em software no GL; geometry shader nativo no GLES).
+Zip: fix-v11-49-relatorio-extensoes.zip (OpenGLRenderer.cpp, VulkanRenderer.cpp).
+
+=== V11.50 - TESTE para o crash do Turnip em vkQueueSubmit (nao compilado nem testado) ===
+Fato (6 logs, Adreno 610 Moto G8 e Adreno 650): Turnip Mesa 26.3.0-devel a995eaeda4 e PurpleVK 62ac221a33 dao SEMPRE signal 11,
+fault 0x1b0, dentro do driver em vkQueueSubmit nos frames 1-3 (mesmo offset libvulkan_freedreno.so+0x9ec874). O emulador do SSimco
+usa o mesmo driver sem crash. A Turnip-Z-v2.0.0 (git-bffd91947e) funcionou em log anterior. O submit do fork e identico ao upstream.
+Hipotese (NAO confirmada): caminhos opcionais do Cemu upstream ausentes no SSimco: VK_EXT_attachment_feedback_loop_layout/_dynamic_state
+e VK_KHR_synchronization2 (ambos ligados nos logs). V11.50: quando o driver e Turnip/PurpleVK esses 3 flags sao desligados
+([Turnip] ... no log). Arquivo "vk_turnip_full_ext" na pasta de dados reativa. Se continuar crashando, a hipotese esta errada.
+Zip: fix-v11-50-turnip-teste.zip (VulkanRenderer.cpp, cumulativo com V11.49).
+
+=== V11.51 - Flow scale 25% e achado sobre a opcao "pyramid" (nao compilado nem testado) ===
+1) FLOW SCALE 25%: o nucleo (FrameGenSettings.h, FrameGenGL.cpp, NativeSettings.cpp, GameProfile.cpp) ja aceitava 25..100; so a UI
+   oferecia 50/75/100. Agora 25% aparece no painel em jogo, em Experimental e no perfil do jogo. (Modo performance continua limitando a <=50.)
+2) PIRAMIDE OPTICAL FLOW: NAO foi ligada. Achado: a opcao fsr3_fg_pyramid vira FrameGenSettings::pyramid mas esse campo NAO e lido
+   em lugar nenhum (nem Vulkan nem GL) - a opcao nao faz nada hoje. No Vulkan (opticalflow_vk.cpp) o passe LuminancePyramid ja roda
+   sempre, com niveis 1-5 de 4x4 e a busca de fluxo usa so o nivel 0 (PyramidLevel=0, Count=1); nenhum shader consome os niveis
+   da piramide. Fluxo multi-nivel de verdade exigiria laco grosso->fino com shaders de busca/escala por nivel (nao e ligar uma chave)
+   e nao da para validar sem aparelho. No GL a piramide nao e dispatchada (PrepareLuma, Histogram, Divergence, Search, Filter, Interp).
+3) Confirmado pelo usuario: FSR1 esbranquicado corrigido; sem imagem fantasma espelhada no Frame Gen GL.
+Zip: fix-v11-51-flow-scale-25.zip (3 arquivos .kt).

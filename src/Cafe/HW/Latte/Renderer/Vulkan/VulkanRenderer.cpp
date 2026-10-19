@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <string_view>
 #include "Cafe/HW/Latte/Core/FrameGenSettings.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
@@ -39,6 +41,7 @@
 #include <unordered_map>
 #include <glslang/Public/ShaderLang.h>
 
+bool g_vkIsTurnipDriver = false; // V11.50
 bool g_vkGeometryShaderSupported = true; // V11.41
 bool g_vkRequireGeometryShader = false; // V11.42: modo Auto ativa isto para preferir o OpenGL ES quando faltar geometry shader
 
@@ -247,6 +250,7 @@ void VulkanRenderer::DetermineVendor()
 
 	if(driverId == VK_DRIVER_ID_MESA_RADV || driverId == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA)
 		m_vendor = GfxVendor::Mesa;
+	g_vkIsTurnipDriver = (driverId == VK_DRIVER_ID_MESA_TURNIP) || (std::string_view(properties.properties.deviceName).find("PurpleVK") != std::string_view::npos);
 
 	cemuLog_log(LogType::Force, "Using GPU: {}", properties.properties.deviceName);
 #if defined(__ANDROID__)
@@ -407,6 +411,24 @@ void VulkanRenderer::GetDeviceFeatures()
 		m_featureControl.deviceExtensions.attachment_feedback_loop_layout = attachmentFeedbackLoopLayoutFeature.attachmentFeedbackLoopLayout == VK_TRUE;
 	if (m_featureControl.deviceExtensions.attachment_feedback_loop_dynamic_state && m_featureControl.deviceExtensions.attachment_feedback_loop_layout)
 		m_featureControl.deviceExtensions.attachment_feedback_loop_dynamic_state = attachmentFeedbackLoopDynamicStateFeature.attachmentFeedbackLoopDynamicState == VK_TRUE;
+	// V11.50: Turnip (Mesa 26.3.0-devel a995eaeda4 e PurpleVK) cai com SIGSEGV (endereco 0x1b0) DENTRO de vkQueueSubmit nos primeiros
+	// frames, igual em Adreno 610 (Moto G8) e 650; o emulador do SSimco usa o mesmo driver sem crash. Suspeitas: caminhos opcionais
+	// do Cemu upstream que o SSimco nao tem (attachment_feedback_loop e synchronization2). Desligados por padrao no Turnip; para
+	// reativar crie o arquivo "vk_turnip_full_ext" na pasta de dados do usuario.
+	if (g_vkIsTurnipDriver)
+	{
+		std::error_code turnipEc;
+		const bool keepFull = std::filesystem::exists(ActiveSettings::GetUserDataPath("vk_turnip_full_ext"), turnipEc);
+		if (!keepFull)
+		{
+			m_featureControl.deviceExtensions.attachment_feedback_loop_layout = false;
+			m_featureControl.deviceExtensions.attachment_feedback_loop_dynamic_state = false;
+			m_featureControl.deviceExtensions.synchronization2 = false;
+			cemuLog_log(LogType::Force, "[Turnip] driver Turnip/PurpleVK detectado: attachment_feedback_loop e synchronization2 DESLIGADOS (teste do crash em vkQueueSubmit). Crie 'vk_turnip_full_ext' para reativar.");
+		}
+		else
+			cemuLog_log(LogType::Force, "[Turnip] 'vk_turnip_full_ext' presente: extensoes opcionais mantidas");
+	}
 	if (!UseAttachmentFeedbackLoop())
 		cemuLog_log(LogType::Force, "VK_EXT_attachment_feedback_loop_layout(_dynamic_state) not supported");
 	// get limits
@@ -706,7 +728,19 @@ VulkanRenderer::VulkanRenderer() : Renderer(RendererAPI::Vulkan)
 	{
 		dst = src;
 		if (!src)
-			cemuLog_log(LogType::Force, "[VK] recurso '{}' nao suportado pelo driver: algumas coisas podem renderizar errado", name);
+		{
+			// V11.49: diz o efeito de cada recurso ausente (o que o emulador faz no lugar)
+			const std::string_view nm = name;
+			const char* effect = "algumas coisas podem renderizar errado";
+			if (nm == "geometryShader") effect = "sem emulacao de RECT_LIST/geometry shader: draws desse tipo sao ignorados (falta de geometria, UI/efeitos) ou o OpenGL ES sera usado no modo Auto";
+			else if (nm == "depthClamp") effect = "sem depth clamp: sombras/ceu podem cortar; o driver ignora o clamp";
+			else if (nm == "depthBiasClamp") effect = "bias de profundidade sem limite: z-fighting em sombras";
+			else if (nm == "independentBlend") effect = "mesmo blend em todos os alvos de render: efeitos com MRT erram";
+			else if (nm == "imageCubeArray") effect = "arrays de cubemap indisponiveis: reflexos/skybox podem falhar";
+			else if (nm == "occlusionQueryPrecise") effect = "consultas de oclusao imprecisas: lens flare/visibilidade aproximados";
+			else if (nm == "samplerAnisotropy") effect = "filtro anisotropico desligado";
+			cemuLog_log(LogType::Force, "[VK] FALTA recurso '{}' no driver -> {}", name, effect);
+		}
 	};
 	enableIfSupported(deviceFeatures.independentBlend, supported.independentBlend, "independentBlend");
 	enableIfSupported(deviceFeatures.samplerAnisotropy, supported.samplerAnisotropy, "samplerAnisotropy");

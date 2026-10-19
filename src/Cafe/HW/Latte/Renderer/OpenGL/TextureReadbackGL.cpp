@@ -1,3 +1,4 @@
+#include <vector>
 #include "Cemu/Logging/CemuLogging.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
@@ -154,8 +155,8 @@ bool LatteTextureReadbackInfoGL::IsFinished()
 	GLenum status = glClientWaitSync(imageCopyFinSync, 0, 0);
 		if (status == GL_TIMEOUT_EXPIRED)
 			return false;
-		else if (status == GL_ALREADY_SIGNALED || status == GL_SIGNALED)
-			return true;
+		else if (status == GL_ALREADY_SIGNALED || status == GL_SIGNALED || status == GL_CONDITION_SATISFIED)
+			return true; // V11.47: GL_CONDITION_SATISFIED (0x911c) e a resposta normal da Adreno e antes derrubava o app (Zelda BOTW)
 		else
 		{
 			// V11.47: GL_WAIT_FAILED (contexto perdido / driver recusou o fence) derrubava o app inteiro com
@@ -170,18 +171,46 @@ bool LatteTextureReadbackInfoGL::IsFinished()
 		}
 }
 
+static thread_local std::vector<uint8> s_zeroFallback;
+static thread_local bool s_usingZeroFallback = false;
+
 uint8* LatteTextureReadbackInfoGL::GetData()
 {
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, texImageBufferGL);
 		// glMapBuffer doesn't exist on GLES (only glMapBufferRange, GLES 3.0+) - desktop GL
 		// has supported glMapBufferRange since 3.0 too, so this now always uses it instead of
 		// branching, same reasoning as the StartTransfer() unification above.
-		return (uint8*)glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, m_image_size, GL_MAP_READ_BIT);
+		uint8* mapped = (uint8*)glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, m_image_size, GL_MAP_READ_BIT);
+		if (!mapped)
+		{
+			// V11.47: o mapeamento falhou (formato nao suportado no readback / buffer vazio). Devolver nullptr causava
+			// signal 11 em LatteTextureLoader_writeReadbackTextureToMemory (Zelda BOTW); devolve zeros no lugar.
+			static bool s_warned = false;
+			if (!s_warned)
+			{
+				s_warned = true;
+				cemuLog_log(LogType::Force, "[GL] glMapBufferRange do readback devolveu nulo (tamanho={}); usando buffer zerado", (uint32)m_image_size);
+			}
+			LatteTexture* baseTexture = m_textureView->baseTexture;
+			size_t need = (size_t)baseTexture->width * (size_t)baseTexture->height * 16;
+			if (need < (size_t)m_image_size)
+				need = (size_t)m_image_size;
+			s_zeroFallback.assign(need, 0);
+			s_usingZeroFallback = true;
+			return s_zeroFallback.data();
+		}
+		s_usingZeroFallback = false;
+		return mapped;
 }
 
 
 
 void LatteTextureReadbackInfoGL::ReleaseData()
 {
+	if (s_usingZeroFallback)
+	{
+		s_usingZeroFallback = false;
+		return;
+	}
 	glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 }

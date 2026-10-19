@@ -1,3 +1,4 @@
+#include <chrono>
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/RendererShaderGL.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
@@ -181,6 +182,7 @@ RendererShaderGL::RendererShaderGL(ShaderType type, uint64 baseHash, uint64 auxH
 		}
 	}
 
+	const auto compileT0 = std::chrono::steady_clock::now(); // V11.47: mede compilacao lenta do driver (Adreno travava ~12 s)
 	m_shader_object = glCreateShader(glShaderType);
 
 	const char *c_str = m_glslSource.c_str();
@@ -218,6 +220,14 @@ RendererShaderGL::RendererShaderGL(ShaderType type, uint64 baseHash, uint64 auxH
 	glLinkProgram(m_program);
 
 	storeBinary();
+
+	{
+		const auto compileMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - compileT0).count();
+		if (compileMs >= 500)
+			cemuLog_log(LogType::Force, "[GLSL] compilacao LENTA: {} shader {:016x} aux={:016x} levou {} ms (fonte={} bytes)",
+				glShaderType == GL_VERTEX_SHADER ? "vertex" : (glShaderType == GL_FRAGMENT_SHADER ? "fragment" : "geometry"),
+				m_baseHash, m_auxHash, (long long)compileMs, (uint32)m_glslSource.size());
+	}
 
 	// count shader compilation
 	if (!s_isLoadingShaders)

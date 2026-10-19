@@ -189,7 +189,7 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE) },
             onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE, it) },
             choiceToString = { "$it%" },
-            choices = listOf(50, 75, 100),
+            choices = listOf(25, 50, 75, 100),
         )
         Toggle(
             label = tr("Frame Gen Optical Flow pyramid"),

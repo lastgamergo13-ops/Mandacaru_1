@@ -192,7 +192,7 @@ fun GameProfileEditScreen(
         SingleSelection(
             label = tr("Flow scale"),
             choice = frameGenOptions[NativeSettings.Fsr3Option.FLOW_SCALE],
-            choices = listOf(-1, 50, 75, 100),
+            choices = listOf(-1, 25, 50, 75, 100),
             choiceToString = { if (it < 0) globalLabel else "$it%" },
             onChoiceChanged = { viewModel.setFrameGenOption(NativeSettings.Fsr3Option.FLOW_SCALE, it) },
         )

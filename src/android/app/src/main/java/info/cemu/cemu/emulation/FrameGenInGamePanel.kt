@@ -77,7 +77,7 @@ fun FrameGenInGamePanel(
             }
 
             Text(tr("Flow scale"), fontSize = 14.sp)
-            ChipRow(listOf(50, 75, 100), flowScale, { "$it%" }) {
+            ChipRow(listOf(25, 50, 75, 100), flowScale, { "$it%" }) {
                 flowScale = it
                 NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE, it)
             }
