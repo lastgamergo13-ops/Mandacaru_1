@@ -62,6 +62,26 @@ static void LogShaderCompileFailureContext(const std::string& glslSource, const 
 			cemuLog_log(LogType::Force, "[GLSL]  {}{:5}: {}", l == ln ? ">" : " ", l, lineStr);
 		}
 	}
+	// V11.47: nas 2 primeiras falhas mostra tambem o preambulo (#define/#extension/uniform) para achar macros ausentes
+	// (ex.: GET_FRAGCOORD sem definicao no Zelda BOTW).
+	{
+		static std::atomic_int s_preambleDumps{0};
+		if (s_preambleDumps.fetch_add(1) < 2)
+		{
+			int shown = 0;
+			for (size_t l = 0; l < lines.size() && l < 140 && shown < 70; l++)
+			{
+				std::string_view s = lines[l];
+				if (s.rfind("#", 0) == 0 || s.rfind("uniform", 0) == 0 || s.find("GET_FRAGCOORD") != std::string_view::npos)
+				{
+					if (s.size() > 200)
+						s = s.substr(0, 200);
+					cemuLog_log(LogType::Force, "[GLSL-preambulo] {:4}: {}", l + 1, s);
+					shown++;
+				}
+			}
+		}
+	}
 	if (errorLines.empty())
 	{
 		// no line numbers in the log, show the beginning of the shader

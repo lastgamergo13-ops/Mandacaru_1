@@ -31,6 +31,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <sys/syscall.h>
 
 // ---------------------------------------------------------------------------------------------
 // Watchdog: lightweight per-thread "what am I doing right now" status registry + a background
@@ -192,6 +193,40 @@ namespace
 					(rssKb - lastRssKb) / 1024, rssKb / 1024);
 			}
 			lastRssKb = rssKb;
+
+			// V11.47: detector de travamento da thread da GPU (Latte). Se o status "processing frame N" nao muda por ~9s,
+			// pede (SIGUSR2) que a propria thread imprima onde esta parada (backtrace). Mostra qual chamada do driver
+			// GL/Vulkan travou (ex.: congelamento do Mario Kart 8 ao entrar na corrida). No maximo 2 dumps por travamento.
+			{
+				static std::string s_stallLastStatus;
+				static pid_t s_stallLastTid = 0;
+				static int s_stallSame = 0;
+				std::string curStatus;
+				pid_t curTid = 0;
+				{
+					std::lock_guard lock(s_watchdogMutex);
+					for (auto& [tid, entry] : s_watchdogEntries)
+					{
+						if (entry.status.rfind("GPU thread - processing frame", 0) == 0)
+						{
+							curStatus = entry.status;
+							curTid = tid;
+							break;
+						}
+					}
+				}
+				if (curTid != 0 && curTid == s_stallLastTid && curStatus == s_stallLastStatus)
+					s_stallSame++;
+				else
+					s_stallSame = 0;
+				s_stallLastTid = curTid;
+				s_stallLastStatus = curStatus;
+				if (curTid != 0 && (s_stallSame == 3 || s_stallSame == 6))
+				{
+					cemuLog_log(LogType::Force, "[Stall] thread da GPU (tid={}) sem avancar ha ~{}s ({}); pedindo backtrace", curTid, s_stallSame * 3, curStatus);
+					syscall(SYS_tgkill, getpid(), curTid, SIGUSR2);
+				}
+			}
 
 			iteration++;
 			if ((iteration % 5) == 0) // ~every 15s
@@ -721,6 +756,17 @@ void ExceptionHandler_InstallAltStackForCurrentThread()
 }
 #endif
 
+#if defined(__ANDROID__)
+// V11.47: SIGUSR2 enviado pelo watchdog a uma thread travada: imprime o backtrace dela no log (nao encerra o app)
+static void handlerStallDump(int sig, siginfo_t* info, void* context)
+{
+	void* frames[40];
+	size_t n = AndroidCaptureBacktrace(frames, 40);
+	CrashLog_WriteLine("[Stall] backtrace da thread travada:");
+	AndroidPrintBacktrace(frames, n);
+}
+#endif
+
 void ExceptionHandler_Init()
 {
 #if defined(__ANDROID__)
@@ -761,4 +807,13 @@ void ExceptionHandler_Init()
 	sigaction(SIGSEGV, &action, nullptr);
 	sigaction(SIGSYS, &action, nullptr);
 	sigaction(SIGTRAP, &action, nullptr);
+#if defined(__ANDROID__)
+	{
+		struct sigaction stallAction{};
+		stallAction.sa_flags = SA_SIGINFO | SA_RESTART;
+		sigemptyset(&stallAction.sa_mask);
+		stallAction.sa_sigaction = handlerStallDump;
+		sigaction(SIGUSR2, &stallAction, nullptr);
+	}
+#endif
 }

@@ -159,7 +159,24 @@ namespace DrawTraceVk
 		}
 		if (sus.empty())
 		{
-			cemuLog_log(LogType::Force, "[Quarentena] nenhum pipeline novo nos ultimos submits; nada gravado");
+			// V11.47: nenhum pipeline era novo (ex.: Mario Kart 8 na Adreno, travou no submit 133 com todos os pipelines ja
+			// vistos). Em vez de nao gravar nada e travar de novo igual, poe em quarentena os pipelines dos 2 ultimos submits.
+			const uint64_t from2 = cur > 1 ? cur - 1 : 0;
+			std::unordered_set<uint64_t> seen;
+			for (uint32_t i = 0; i < total; i++)
+			{
+				const Rec& r = g_ring[(g_pos - total + i) % kRing];
+				if (r.submit < from2 || r.submit > cur)
+					continue;
+				if (!seen.insert(PipelineKey(r.vs, r.ps, r.gs)).second)
+					continue;
+				sus.push_back(r);
+			}
+			cemuLog_log(LogType::Force, "[Quarentena] nenhum pipeline novo nos ultimos submits; usando os {} pipeline(s) dos 2 ultimos submits", (uint32_t)sus.size());
+		}
+		if (sus.empty())
+		{
+			cemuLog_log(LogType::Force, "[Quarentena] nenhum pipeline registrado nos ultimos submits; nada gravado");
 			return;
 		}
 		std::lock_guard<std::mutex> lk(g_fileMutex);

@@ -1,4 +1,5 @@
 #include "AndroidOpenGLCanvas.h"
+#include <unistd.h>
 
 std::unique_ptr<AndroidOpenGLCanvas> g_androidOpenGLCanvas;
 
@@ -74,7 +75,14 @@ bool AndroidOpenGLCanvas::Initialize(ANativeWindow* mainWindow)
 	constexpr EGLint kEglContextOpenGLRobustAccess = 0x31B2;
 	constexpr EGLint kEglContextOpenGLRobustAccessExt = 0x30BF;
 	m_context = EGL_NO_CONTEXT;
-	for (const EGLint robustAttr : { kEglContextOpenGLRobustAccess, kEglContextOpenGLRobustAccessExt, (EGLint)0 })
+	// V11.47: na Adreno (kgsl) o contexto robusto QUEBRA o compilador de shader do driver ("Assertion failed: GVI &&
+	// cannot compute gv size for oob" no link, log do Zelda BOTW) e derruba o readback de texturas. A Adreno ja
+	// zera leituras fora do limite, entao la o contexto robusto fica desligado; so as demais GPUs (PowerVR/Mali) tentam.
+	const bool isAdrenoKgsl = (access("/dev/kgsl-3d0", F_OK) == 0);
+	if (isAdrenoKgsl)
+		cemuLog_log(LogType::Force, "[GL] GPU Adreno (kgsl) detectada: contexto robusto desativado (quebra o compilador de shader da Adreno)");
+	const EGLint robustCandidates[3] = { isAdrenoKgsl ? (EGLint)0 : kEglContextOpenGLRobustAccess, isAdrenoKgsl ? (EGLint)0 : kEglContextOpenGLRobustAccessExt, (EGLint)0 };
+	for (const EGLint robustAttr : robustCandidates)
 	{
 		const EGLint robustAttribs[] = {
 			EGL_CONTEXT_CLIENT_VERSION, 3,

@@ -1,3 +1,4 @@
+#include "Cemu/Logging/CemuLogging.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLTextureReadback.h"
@@ -156,7 +157,17 @@ bool LatteTextureReadbackInfoGL::IsFinished()
 		else if (status == GL_ALREADY_SIGNALED || status == GL_SIGNALED)
 			return true;
 		else
-			throw std::runtime_error("_updateFinishedTransfers(): Error during readback sync check\n");
+		{
+			// V11.47: GL_WAIT_FAILED (contexto perdido / driver recusou o fence) derrubava o app inteiro com
+			// std::runtime_error (crash do Zelda BOTW). Agora so avisa uma vez e considera a transferencia terminada.
+			static bool s_warned = false;
+			if (!s_warned)
+			{
+				s_warned = true;
+				cemuLog_log(LogType::Force, "[GL] glClientWaitSync do readback falhou (status=0x{:x}); tratando como concluido em vez de encerrar o app", (uint32)status);
+			}
+			return true;
+		}
 }
 
 uint8* LatteTextureReadbackInfoGL::GetData()

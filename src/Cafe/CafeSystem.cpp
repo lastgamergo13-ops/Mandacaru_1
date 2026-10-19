@@ -490,12 +490,13 @@ void cemu_initForGame()
 
 	// V11.39: mostra os valores das opcoes experimentais que o emulador realmente recebeu
 	// (o jogo roda em outro processo; so o que esta salvo em settings.xml chega aqui)
-	cemuLog_log(LogType::Force, "[Opcoes] limite_30fps={} velocidade={}% (perfil do jogo: limite={} velocidade={}) | cache_AOT_recompilador={} | limitar_threads_shader(so Vulkan)={} | otimizacoes_IR_profundas={} | freio_de_memoria={} teto={}MB",
+	cemuLog_log(LogType::Force, "[Opcoes] limite_30fps={} velocidade={}% (perfil do jogo: limite={} velocidade={}) | cache_AOT_recompilador={} | limitar_threads_shader(so Vulkan)={} | otimizacoes_IR_profundas={} | freio_de_memoria={} teto={}MB | full_sync_GX2DrawDone={} | pular_sombras={}",
 		(bool)GetConfig().limit_to_half_fps.GetValue(), (uint32)GetConfig().emulation_speed_percent.GetValue(),
 		g_current_game_profile->GetLimitToHalfFps().has_value() ? (g_current_game_profile->GetLimitToHalfFps().value() ? "ligado" : "desligado") : "nao definido",
 		g_current_game_profile->GetEmulationSpeedPercent().has_value() ? (sint32)g_current_game_profile->GetEmulationSpeedPercent().value() : -1,
 		(bool)GetConfig().enable_recompiler_aot_cache.GetValue(), (bool)GetConfig().limit_shader_compiler_threads.GetValue(),
-		(bool)GetConfig().advanced_iml_optimizations.GetValue(), (bool)GetConfig().memory_usage_brake.GetValue(), (sint32)GetConfig().memory_ceiling_mb.GetValue());
+		(bool)GetConfig().advanced_iml_optimizations.GetValue(), (bool)GetConfig().memory_usage_brake.GetValue(), (sint32)GetConfig().memory_ceiling_mb.GetValue(),
+		(bool)GetConfig().gx2drawdone_sync.GetValue(), (bool)GetConfig().skip_depth_only_draws.GetValue());
 
 	// print audio log
 	IAudioAPI::PrintLogging();

@@ -601,3 +601,29 @@ Arquivos: CemuConfig.h/.cpp, OpenGLRendererCore.cpp, NativeSettings.cpp/.kt, Exp
 V11.46b: o "Pular sombras" agora tambem funciona no VULKAN (VulkanRendererCore.cpp, draw_beginSequence: marca a sequencia de draws como pulada
  quando nao ha cor ativa e ha profundidade ativa). Log Vulkan: "[PuladoDepth] sequencias ... (Vulkan)". Texto do toggle em Experimental diz "so OpenGL" -
  ignorar; vale para as duas APIs. NAO compilado nem testado.
+
+=== V11.47 - Adreno GL estavel, detector de travamento, quarentena Vulkan (nao compilado nem testado) ===
+Logs analisados (Adreno 650 / SM-G780G): Zelda BOTW GL+Vulkan, Mario Kart 8 GL+Vulkan, SM3DW GL+Vulkan+Turnip.
+1) CONTEXTO EGL ROBUSTO (V11.44) QUEBRAVA A ADRENO: no Zelda GL o link de shader falhava com
+   "Assertion failed: GVI && cannot compute gv size for oob (no global info)" (compilador da Adreno) e o app caia em
+   LatteTextureReadbackInfoGL::IsFinished (glClientWaitSync != sinalizado -> std::runtime_error).
+   Correcao: AndroidOpenGLCanvas.cpp nao pede contexto robusto quando /dev/kgsl-3d0 existe (Adreno). PowerVR/Mali continuam tentando.
+   TextureReadbackGL.cpp: GL_WAIT_FAILED nao derruba mais o app (loga uma vez e considera concluido).
+2) ZELDA GL: 2 shaders (PS 250cb5a06cab6534 e 728b9bc3556c3de1) falham com "'(' syntax error" em
+   R0i = floatBitsToInt(GET_FRAGCOORD()); - a macro nao esta definida. Causa nao confirmada (a logica analyzer/emitter parece
+   consistente). V11.47 so adiciona diagnostico: nas 2 primeiras falhas o log mostra o preambulo ([GLSL-preambulo]).
+   Mandar o log novo para fechar.
+3) CONGELAMENTO MK8 GL (thread Latte parada no "frame 2598" na entrada da corrida): novo detector no watchdog. Se a thread
+   da GPU nao avanca por ~9 s, envia SIGUSR2 a ela e o handler imprime o backtrace ("[Stall] backtrace da thread travada").
+   Mostra em que chamada do driver ela parou.
+4) QUARENTENA VULKAN: MK8 stock travou no submit 133 com "nenhum pipeline novo" (nada gravado -> travava igual). Agora, sem
+   pipeline novo, grava os pipelines dos 2 ultimos submits. Zelda Vulkan: quarentena ja ajudou (travou so no submit 8162, 6 novos gravados).
+5) [Opcoes] agora mostra full_sync_GX2DrawDone e pular_sombras (nao dava para saber o estado nos logs).
+6) TURNIP SM3DW (v26.3.0-R5-Oneui): signal 11 DENTRO do driver (libvulkan_freedreno.so, vkQueueSubmit, endereco 0x1b0, frame 3).
+   Bug do driver; nao ha o que corrigir no emulador. Usar outra versao (a Turnip-Z-v2.0.0 ja funcionou em log anterior).
+Observacoes de desempenho (SM3DW Adreno 650): GL chega a 57-60 fps em jogo; em cenas de 30 fps a thread Latte fica ociosa
+~80% do frame ("ocioso(esperando CPU)=28ms de 34ms") com a thread PPC em ~42% -> padrao de serializacao CPU<->GPU / vsync,
+nao falta de GPU. Testar "Full sync at GX2DrawDone" DESLIGADO. Vulkan SM3DW rodava com Frame Gen ligado (real ~28 fps, 7 ms/frame
+de custo de GPU do frame gerado) e aparelho a 58.8 C (throttling).
+Zip: fix-v11-47-adreno-gl-estavel.zip (6 arquivos; ExceptionHandler_posix.cpp, AndroidOpenGLCanvas.cpp, TextureReadbackGL.cpp,
+RendererShaderGL.cpp, DrawTraceVk.h, CafeSystem.cpp).
