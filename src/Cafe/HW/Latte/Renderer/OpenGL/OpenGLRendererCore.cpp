@@ -1296,7 +1296,9 @@ static GLint _glClampForHost(uint32 idx)
 	if (OpenGLRenderer::IsGLES())
 	{
 		if (v == GL_MIRROR_CLAMP_TO_EDGE) return GL_MIRRORED_REPEAT;
-		if (v == GL_MIRROR_CLAMP_TO_BORDER_EXT) return GL_CLAMP_TO_BORDER;
+		if (v == GL_MIRROR_CLAMP_TO_BORDER_EXT) v = GL_CLAMP_TO_BORDER;
+		// sem GL_EXT/OES_texture_border_clamp o GL_CLAMP_TO_BORDER gera GL_INVALID_ENUM: usa clamp_to_edge
+		if (v == GL_CLAMP_TO_BORDER && !OpenGLRenderer::HasBorderClamp()) return GL_CLAMP_TO_EDGE;
 	}
 	return v;
 }
@@ -1620,7 +1622,12 @@ void OpenGLRenderer::renderstate_updateTextureSettingsGL(LatteDecompilerShader* 
 			if (samplerState->borderColor[0] != borderColor[0] || samplerState->borderColor[1] != borderColor[1] || samplerState->borderColor[2] != borderColor[2] || samplerState->borderColor[3] != borderColor[3])
 			{
 				quickBindTexture();
-				glTexParameterfv(hostTextureView->glTexTarget, GL_TEXTURE_BORDER_COLOR, borderColor);
+				if (!OpenGLRenderer::IsGLES() || OpenGLRenderer::HasBorderClamp())
+				{
+					glTexParameterfv(hostTextureView->glTexTarget, GL_TEXTURE_BORDER_COLOR, borderColor);
+					if (OpenGLRenderer::IsGLES())
+						while (glGetError() != GL_NO_ERROR) {} // alguns drivers PowerVR rejeitam o enum em certos alvos; o erro nao deve contaminar o catchOpenGLError()
+				}
 				samplerState->borderColor[0] = borderColor[0];
 				samplerState->borderColor[1] = borderColor[1];
 				samplerState->borderColor[2] = borderColor[2];

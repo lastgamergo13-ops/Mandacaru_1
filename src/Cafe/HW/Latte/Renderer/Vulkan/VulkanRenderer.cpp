@@ -44,6 +44,7 @@
 bool g_vkIsTurnipDriver = false; // V11.50
 bool g_vkGeometryShaderSupported = true; // V11.41
 bool g_vkRequireGeometryShader = false; // V11.42: modo Auto ativa isto para preferir o OpenGL ES quando faltar geometry shader
+bool g_vkAvoidCrashProneDrivers = false; // modo Auto ativa isto: drivers Vulkan que crasham em vkCreateGraphicsPipelines (PowerVR/MediaTek antigo) caem para o OpenGL ES
 
 #ifndef VK_API_VERSION_MAJOR
 #define VK_API_VERSION_MAJOR(version) (((uint32_t)(version) >> 22) & 0x7FU)
@@ -253,6 +254,13 @@ void VulkanRenderer::DetermineVendor()
 	g_vkIsTurnipDriver = (driverId == VK_DRIVER_ID_MESA_TURNIP) || (std::string_view(properties.properties.deviceName).find("PurpleVK") != std::string_view::npos);
 
 	cemuLog_log(LogType::Force, "Using GPU: {}", properties.properties.deviceName);
+	// Logs do Moto G54 (PowerVR BXM-8-256, Vulkan 1.1.170, vulkan.mtk.so): SIGSEGV dentro do driver em vkCreateGraphicsPipelines,
+	// tanto ao carregar o cache de pipelines quanto em jogo. No modo Auto o OpenGL ES desse aparelho funciona (60 fps em Mario 3D World),
+	// entao a inicializacao do Vulkan e recusada aqui e o chamador cai para o OpenGL. No modo "Vulkan" fixo continua funcionando
+	// (agora com a quarentena automatica de pipelines que derrubam o driver).
+	if (g_vkAvoidCrashProneDrivers && properties.properties.vendorID == 0x1010 /*Imagination Technologies (PowerVR)*/ &&
+		VK_API_VERSION_MAJOR(properties.properties.apiVersion) == 1 && VK_API_VERSION_MINOR(properties.properties.apiVersion) < 2)
+		throw std::runtime_error("Driver Vulkan PowerVR antigo (crasha ao criar pipelines); o OpenGL ES sera usado");
 #if defined(__ANDROID__)
 	AndroidDiag::LogSystemInfo();      // aparelho, SoC, CPU, RAM, temperatura
 	AndroidDiag::StartPeriodic();      // linha [Stats] a cada 5 s (RAM, JIT, calor, GPU/CPU MHz, alertas)

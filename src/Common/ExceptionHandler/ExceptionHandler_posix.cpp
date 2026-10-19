@@ -20,6 +20,7 @@
 #include <ucontext.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <exception>
 #include <cstdio>
 #include <cstdlib>
@@ -489,6 +490,51 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 		CrashLog_WriteLine(fmt::format("Ultima operacao Vulkan/FrameGen desta thread (migalha #{}): {}", CrashCrumb::g_count, CrashCrumb::g_text));
 	else
 		CrashLog_WriteLine("Ultima operacao Vulkan/FrameGen desta thread: (nenhuma registrada - a thread nao estava em chamada Vulkan rastreada)");
+
+	// Quarentena automatica: se esta thread estava DENTRO de vkCreateGraphicsPipelines quando o driver crashou, grava os
+	// hashes VS/PS/GS desse pipeline em vk_quarantine.txt. Na proxima abertura ele e pulado (o jogo pode perder um efeito,
+	// mas nao derruba mais o app). So usa open/write/close com buffer na pilha (seguro dentro de tratador de sinal).
+	if (CrashCrumb::g_pipeActive && CrashCrumb::g_quarantinePath[0] != 0)
+	{
+		char line[64];
+		const unsigned long long vals[3] = { CrashCrumb::g_pipeVs, CrashCrumb::g_pipePs, CrashCrumb::g_pipeGs };
+		int pos = 0;
+		for (int v = 0; v < 3; v++)
+		{
+			for (int shift = 60; shift >= 0; shift -= 4)
+				line[pos++] = "0123456789abcdef"[(vals[v] >> shift) & 0xF];
+			line[pos++] = (v == 2) ? '\n' : ' ';
+		}
+		int fd = open(CrashCrumb::g_quarantinePath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+		if (fd >= 0)
+		{
+			ssize_t written = write(fd, line, (size_t)pos);
+			(void)written;
+			close(fd);
+			CrashLog_WriteLine("[Quarentena] o crash foi DENTRO de vkCreateGraphicsPipelines: pipeline gravado em vk_quarantine.txt (sera pulado na proxima abertura)");
+		}
+	}
+	// Idem para o OpenGL ES: crash dentro do compilador de shader do driver -> gl_shader_quarantine.txt (shader e pulado na proxima abertura)
+	if (CrashCrumb::g_glShaderActive && CrashCrumb::g_glQuarantinePath[0] != 0)
+	{
+		char line[64];
+		const unsigned long long vals[3] = { CrashCrumb::g_glBase, CrashCrumb::g_glAux, CrashCrumb::g_glType };
+		int pos = 0;
+		for (int v = 0; v < 3; v++)
+		{
+			for (int shift = 60; shift >= 0; shift -= 4)
+				line[pos++] = "0123456789abcdef"[(vals[v] >> shift) & 0xF];
+			line[pos++] = (v == 2) ? '\n' : ' ';
+		}
+		int fd = open(CrashCrumb::g_glQuarantinePath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+		if (fd >= 0)
+		{
+			ssize_t written = write(fd, line, (size_t)pos);
+			(void)written;
+			close(fd);
+			CrashLog_WriteLine("[Quarentena] o crash foi DENTRO da compilacao de um shader GLSL: gravado em gl_shader_quarantine.txt (sera pulado na proxima abertura)");
+		}
+	}
 
 #if defined(__aarch64__)
 	AndroidPrintRegisters(context);

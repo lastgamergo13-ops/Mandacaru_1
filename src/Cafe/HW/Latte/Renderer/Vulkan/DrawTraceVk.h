@@ -15,6 +15,9 @@
 #include <sstream>
 #include <atomic>
 #include <vector>
+#include <mutex>
+#include <cstring>
+#include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 
 namespace DrawTraceVk
 {
@@ -91,7 +94,7 @@ namespace DrawTraceVk
 	// desses pipelines sao PULADOS (o jogo pode perder um efeito, mas nao trava). Apague o arquivo para desfazer.
 	inline std::unordered_set<uint64_t> g_quarantine;
 	inline std::atomic<bool> g_quarantineActive{false};
-	inline bool g_quarantineLoaded = false;
+	inline std::atomic<bool> g_quarantineLoaded{false};
 
 	inline uint64_t PipelineKey(uint64_t vs, uint64_t ps, uint64_t gs)
 	{
@@ -101,15 +104,24 @@ namespace DrawTraceVk
 		return h;
 	}
 
+	inline std::mutex g_quarantineLoadMutex;
+
+	// Thread-safe: agora tambem e chamado pelas threads de compilacao de pipeline (plCacheCompiler), nao so pela thread da GPU.
 	inline void LoadQuarantine()
 	{
 		if (g_quarantineLoaded)
 			return;
-		g_quarantineLoaded = true;
-		std::error_code ec;
-		std::ifstream f(ActiveSettings::GetUserDataPath("vk_quarantine.txt"));
-		if (!f)
+		std::lock_guard<std::mutex> loadLock(g_quarantineLoadMutex);
+		if (g_quarantineLoaded)
 			return;
+		const std::string quarantinePath = ActiveSettings::GetUserDataPath("vk_quarantine.txt").string();
+		std::strncpy(CrashCrumb::g_quarantinePath, quarantinePath.c_str(), sizeof(CrashCrumb::g_quarantinePath) - 1); // usado pelo tratador de sinais
+		std::ifstream f(quarantinePath);
+		if (!f)
+		{
+			g_quarantineLoaded = true;
+			return;
+		}
 		std::string line;
 		while (std::getline(f, line))
 		{
@@ -118,8 +130,18 @@ namespace DrawTraceVk
 				g_quarantine.insert(PipelineKey(vs, ps, gs));
 		}
 		g_quarantineActive = !g_quarantine.empty();
+		g_quarantineLoaded = true;
 		if (g_quarantineActive)
 			cemuLog_log(LogType::Force, "[Quarentena] {} pipeline(s) suspeito(s) de travar a GPU serao PULADOS (vk_quarantine.txt). Apague o arquivo para desativar.", (uint32_t)g_quarantine.size());
+	}
+
+	// true se esse trio VS/PS/GS esta na quarentena (usado antes de criar o pipeline, para nem chamar o driver)
+	inline bool IsQuarantined(uint64_t vs, uint64_t ps, uint64_t gs)
+	{
+		LoadQuarantine();
+		if (!g_quarantineActive.load(std::memory_order_relaxed))
+			return false;
+		return g_quarantine.count(PipelineKey(vs, ps, gs)) != 0;
 	}
 
 	inline bool ShouldSkip(const PipelineInfo* p)
@@ -183,6 +205,13 @@ namespace DrawTraceVk
 			}
 			cemuLog_log(LogType::Force, "[Quarentena] nenhum pipeline novo nos ultimos submits; usando os {} pipeline(s) dos 2 ultimos submits", (uint32_t)sus.size());
 		}
+		// Os logs do Mario 3D World/Mario Kart 8 (Vulkan) mostraram 58-59 pipelines em quarentena: pular o draw de um pipeline que
+		// PREENCHE um render target (mapa de luz, sombra) deixa esse alvo sem inicializar -> quadrados brancos/cinzas no jogo.
+		// Por isso so os pipelines vistos pela primeira vez MAIS PERTO do travamento sao suspeitos (ordem do anel: antigos -> recentes),
+		// e os ja quarentenados nao sao gravados de novo (o arquivo nao cresce a cada travamento).
+		constexpr size_t kMaxSuspects = 6;
+		if (sus.size() > kMaxSuspects)
+			sus.erase(sus.begin(), sus.end() - kMaxSuspects);
 		if (sus.empty())
 		{
 			cemuLog_log(LogType::Force, "[Quarentena] nenhum pipeline registrado nos ultimos submits; nada gravado");
@@ -192,6 +221,8 @@ namespace DrawTraceVk
 		std::ofstream f(ActiveSettings::GetUserDataPath("vk_quarantine.txt"), std::ios::app);
 		for (const Rec& r : sus)
 		{
+			if (g_quarantine.count(PipelineKey(r.vs, r.ps, r.gs)))
+				continue;
 			f << fmt::format("{:016x} {:016x} {:016x}\n", r.vs, r.ps, r.gs);
 			cemuLog_log(LogType::Force, "[Quarentena] suspeito gravado: VS={:016x} PS={:016x} GS={:016x} prim={} (sera pulado na proxima abertura)", r.vs, r.ps, r.gs, r.prim);
 		}

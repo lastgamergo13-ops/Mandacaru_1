@@ -7,11 +7,53 @@
 
 #include "config/ActiveSettings.h"
 #include "config/LaunchSettings.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
+#include <fstream>
+#include <cstring>
+#include <mutex>
+#include <unordered_set>
 
 extern std::atomic_int g_compiled_shaders_total;
 extern std::atomic_int g_compiled_shaders_async;
 
 bool s_isLoadingShaders{false};
+
+// Quarentena de shader GLSL que derruba o compilador do driver (SIGSEGV em libllvm-glnext.so no Mario Kart 8 / Adreno).
+// O tratador de sinais grava o shader em compilacao em gl_shader_quarantine.txt; nas aberturas seguintes ele nem e enviado ao driver
+// (fica como um shader que falhou ao compilar, que o emulador ja tolera: o draw some, mas o app nao fecha). Apague o arquivo para desfazer.
+namespace
+{
+	std::mutex s_glQuarantineMutex;
+	std::unordered_set<std::string> s_glQuarantine;
+	bool s_glQuarantineLoaded = false;
+
+	std::string GLQuarantineKey(uint64 baseHash, uint64 auxHash, uint64 type)
+	{
+		return fmt::format("{:016x} {:016x} {:016x}", baseHash, auxHash, type);
+	}
+
+	bool IsGLShaderQuarantined(uint64 baseHash, uint64 auxHash, uint64 type)
+	{
+		std::lock_guard<std::mutex> lk(s_glQuarantineMutex);
+		if (!s_glQuarantineLoaded)
+		{
+			s_glQuarantineLoaded = true;
+			const std::string path = ActiveSettings::GetUserDataPath("gl_shader_quarantine.txt").string();
+			std::strncpy(CrashCrumb::g_glQuarantinePath, path.c_str(), sizeof(CrashCrumb::g_glQuarantinePath) - 1);
+			std::ifstream f(path);
+			std::string line;
+			while (f && std::getline(f, line))
+			{
+				unsigned long long b = 0, a = 0, t = 0;
+				if (sscanf(line.c_str(), "%llx %llx %llx", &b, &a, &t) == 3)
+					s_glQuarantine.insert(GLQuarantineKey(b, a, t));
+			}
+			if (!s_glQuarantine.empty())
+				cemuLog_log(LogType::Force, "[Quarentena] {} shader(s) GLSL que derrubaram o driver serao PULADOS (gl_shader_quarantine.txt). Apague o arquivo para desativar.", (uint32)s_glQuarantine.size());
+		}
+		return s_glQuarantine.count(GLQuarantineKey(baseHash, auxHash, type)) != 0;
+	}
+}
 
 // Prints the source lines referenced by the driver error log (GLSL ES drivers are much less forgiving than desktop ones,
 // the log alone usually isn't enough to tell what the offending generated code looks like)
@@ -182,7 +224,19 @@ RendererShaderGL::RendererShaderGL(ShaderType type, uint64 baseHash, uint64 auxH
 		}
 	}
 
+	if (IsGLShaderQuarantined(m_baseHash, m_auxHash, (uint64)glShaderType))
+	{
+		cemuLog_log(LogType::Force, "[Quarentena] shader GLSL {:016x} aux={:016x} PULADO (derrubou o compilador do driver antes)", m_baseHash, m_auxHash);
+		// programa vazio (nao linkado): igual a um shader que falhou ao compilar
+		m_program = glCreateProgram();
+		m_glslSource.clear();
+		m_glslSource.shrink_to_fit();
+		return;
+	}
+
 	const auto compileT0 = std::chrono::steady_clock::now(); // V11.47: mede compilacao lenta do driver (Adreno travava ~12 s)
+	CrashCrumb::g_glBase = m_baseHash; CrashCrumb::g_glAux = m_auxHash; CrashCrumb::g_glType = (uint64)glShaderType;
+	CrashCrumb::g_glShaderActive = true;
 	m_shader_object = glCreateShader(glShaderType);
 
 	const char *c_str = m_glslSource.c_str();
@@ -218,6 +272,7 @@ RendererShaderGL::RendererShaderGL(ShaderType type, uint64 baseHash, uint64 auxH
 	glAttachShader(m_program, m_shader_object);
 	m_shader_attached = true;
 	glLinkProgram(m_program);
+	CrashCrumb::g_glShaderActive = false; // compilador do driver terminou sem derrubar o app
 
 	storeBinary();
 

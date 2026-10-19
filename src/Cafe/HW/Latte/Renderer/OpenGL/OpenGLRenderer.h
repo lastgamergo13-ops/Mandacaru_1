@@ -73,6 +73,10 @@ public:
 	// places - see the OpenGL-on-Android technical report for why those two areas in
 	// particular need to diverge from the desktop code.
 	static bool IsGLES() { return s_isGLES; }
+	// GL_EXT_texture_shadow_lod (textureLod em sampler2DArrayShadow). Desktop GL 4.x tem isso no core; no GLES so com a extensao.
+	static bool HasTextureShadowLod() { return s_hasTextureShadowLod; }
+	// GL_EXT/OES_texture_border_clamp (GL_CLAMP_TO_BORDER + cor de borda). No GLES 3.2 e core, em 3.0/3.1 so por extensao.
+	static bool HasBorderClamp() { return s_hasBorderClamp; }
 
 	// True quando o driver GLES nao tem clip control (nem GL_EXT_clip_control): origem Y (UPPER_LEFT) e
 	// faixa Z (0..1) sao emuladas nos vertex/geometry shaders (uf_clipFlipY + SET_POSITION) e no front face.
@@ -84,6 +88,8 @@ public:
 
   private:
 	static inline bool s_isGLES = false;
+	static inline bool s_hasTextureShadowLod = true;
+	static inline bool s_hasBorderClamp = true;
 	static inline bool s_clipControlEmulated = false;
 
   public:

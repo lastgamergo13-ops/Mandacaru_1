@@ -1,5 +1,6 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
+#include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
 #include "Cafe/HW/Latte/Core/FetchShader.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineCompiler.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineStableCache.h"
@@ -1030,8 +1031,18 @@ bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool show
 			if (hit != g_pcHashes.end())
 				pcHashes = hit->second;
 		}
+		// Quarentena: pipeline que ja derrubou o driver (ou travou a GPU) numa execucao anterior nem chega a ser criado.
+		const bool pcHaveHashes = (pcHashes[0] | pcHashes[1] | pcHashes[2]) != 0;
+		if (pcHaveHashes && DrawTraceVk::IsQuarantined(pcHashes[0], pcHashes[1], pcHashes[2]))
+		{
+			cemuLog_log(LogType::Force, "[Quarentena] pipeline VS={:016x} PS={:016x} GS={:016x} PULADO (derrubou o driver antes)", pcHashes[0], pcHashes[1], pcHashes[2]);
+			return true; // true = o chamador nao tenta compilar de novo
+		}
 		const auto pcT0 = std::chrono::steady_clock::now();
+		if (pcHaveHashes)
+			PIPE_CREATE_BEGIN(pcHashes[0], pcHashes[1], pcHashes[2]);
 		result = vkCreateGraphicsPipelines(vkRenderer->m_logicalDevice, vkRenderer->m_pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
+		PIPE_CREATE_END();
 		const auto pcMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - pcT0).count();
 		// V11.37: a hora desta linha (fim da criacao) deve bater com "AdrenoVK ... Shader compilation failed" no logcat
 		cemuLog_log(LogType::Force, "[Pipeline] criado VS={:016x} PS={:016x} GS={:016x} resultado={} tempo={}ms thread={}", pcHashes[0], pcHashes[1], pcHashes[2], (sint32)result, (long long)pcMs, isRenderThread ? "render" : "async");

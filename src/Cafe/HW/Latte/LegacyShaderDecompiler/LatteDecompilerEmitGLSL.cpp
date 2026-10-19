@@ -2263,6 +2263,14 @@ char* _getTexGPRAccess(LatteDecompilerShaderContext* shaderContext, sint32 gprIn
 	return tempBuffer;
 }
 
+// GLES sem GL_EXT_texture_shadow_lod (Adreno, PowerVR...): textureLod()/textureLodOffset() em sampler2DArrayShadow NAO existe no GLSL ES 3.2 core
+// e o shader inteiro falha ao compilar (Zelda BOTW: tela preta/sem textura). Nesse caso usamos as funcoes emuTextureLod*ShadowArray()
+// definidas no cabecalho do shader, que chamam textureGrad() (core no ES 3.0+ para sampler2DArrayShadow).
+static bool _needsShadowArrayLodEmulation(Latte::E_DIM texDim)
+{
+	return OpenGLRenderer::IsGLES() && !OpenGLRenderer::HasTextureShadowLod() && texDim == Latte::E_DIM::DIM_2D_ARRAY;
+}
+
 void _emitTEXSampleTextureCode(LatteDecompilerShaderContext* shaderContext, LatteDecompilerTEXInstruction* texInstruction)
 {
 	StringBuf* src = shaderContext->shaderSource;
@@ -2407,7 +2415,9 @@ void _emitTEXSampleTextureCode(LatteDecompilerShaderContext* shaderContext, Latt
 	else if (texOpcode == GPU7_TEX_INST_SAMPLE_C_L)
 	{
 		// sample with LOD value set in gpr.w (replaces computed LOD value)
-		if (hasOffset)
+		if (_needsShadowArrayLodEmulation(texDim))
+			src->add(hasOffset ? "emuTextureLodOffsetShadowArray(" : "emuTextureLodShadowArray(");
+		else if (hasOffset)
 			src->add("textureLodOffset(");
 		else
 			src->add("textureLod(");
@@ -2415,7 +2425,9 @@ void _emitTEXSampleTextureCode(LatteDecompilerShaderContext* shaderContext, Latt
 	else if (texOpcode == GPU7_TEX_INST_SAMPLE_C_LZ)
 	{
 		// sample with LOD set to 0.0 (replaces computed LOD value)
-		if (hasOffset)
+		if (_needsShadowArrayLodEmulation(texDim))
+			src->add(hasOffset ? "emuTextureLodOffsetShadowArray(" : "emuTextureLodShadowArray(");
+		else if (hasOffset)
 			src->add("textureLodOffset(");
 		else
 			src->add("textureLod(");
@@ -3994,7 +4006,8 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 		src->add("#version 320 es" _CRLF);
 		// textureLod() on sampler2DArrayShadow (needed for SAMPLE_C_L/SAMPLE_C_LZ on 2D array shadow maps) is not part of core ES 3.2.
 		// "enable" (not "require") so drivers lacking the extension just see a warning and only fail if such a sample is actually used
-		src->add("#extension GL_EXT_texture_shadow_lod : enable" _CRLF);
+		if (OpenGLRenderer::HasTextureShadowLod())
+			src->add("#extension GL_EXT_texture_shadow_lod : enable" _CRLF);
 		src->add("precision highp float;" _CRLF);
 		src->add("precision highp int;" _CRLF);
 		src->add("precision highp sampler2D;" _CRLF);
@@ -4014,6 +4027,22 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 		src->add("precision highp isampler2DArray;" _CRLF);
 		src->add("precision highp usampler3D;" _CRLF);
 		src->add("precision highp isampler3D;" _CRLF);
+		if (!OpenGLRenderer::HasTextureShadowLod())
+		{
+			// emulacao de textureLod()/textureLodOffset() em sampler2DArrayShadow (ver _needsShadowArrayLodEmulation).
+			// O LOD desejado vira um par de gradientes: |dPdx| = 2^lod texels -> o hardware escolhe exatamente o nivel 'lod'
+			// (lod = 0.0 no SAMPLE_C_LZ, que e o nivel base).
+			src->add("float emuTextureLodShadowArray(sampler2DArrayShadow s, vec4 p, float lod)" _CRLF);
+			src->add("{" _CRLF);
+			src->add("	vec2 g = exp2(lod) / vec2(textureSize(s, 0).xy);" _CRLF);
+			src->add("	return textureGrad(s, p, vec2(g.x, 0.0), vec2(0.0, g.y));" _CRLF);
+			src->add("}" _CRLF);
+			src->add("float emuTextureLodOffsetShadowArray(sampler2DArrayShadow s, vec4 p, float lod, ivec2 o)" _CRLF);
+			src->add("{" _CRLF);
+			src->add("	vec2 g = exp2(lod) / vec2(textureSize(s, 0).xy);" _CRLF);
+			src->add("	return textureGradOffset(s, p, vec2(g.x, 0.0), vec2(0.0, g.y), o);" _CRLF);
+			src->add("}" _CRLF);
+		}
 		// Streamout/geometry-shader output on GLES does NOT go through GL_ARB_enhanced_layouts
 		// (desktop-only, no GLES equivalent) - it uses the same SSBO-based manual streamout
 		// path Vulkan and Metal already rely on instead of native transform feedback (see
@@ -4234,12 +4263,14 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 			uint32 psInputSemanticId = psInputTable->import[i].semanticId;
 			if (psInputSemanticId == LATTE_ANALYZER_IMPORT_INDEX_SPIPOSITION)
 			{
+				// No GLES a macro GET_FRAGCOORD() e a causa do "'(' : Syntax error" do compilador da Adreno (Zelda BOTW: os 5 shaders que
+				// usam gl_FragCoord falhavam todos na linha dessa macro, mesmo guardando o resultado numa variavel temporaria como na V11.47).
+				// Entao no GLES a expressao e escrita direto, sem macro. (No GLES o uniform e sempre vec2, ver preambulo.)
+				const char* fragCoordExpr = OpenGLRenderer::IsGLES() ? "vec4(gl_FragCoord.xy*uf_fragCoordScale,gl_FragCoord.zw)" : "GET_FRAGCOORD()";
 				if (shaderContext->typeTracker.defaultDataType == LATTE_DECOMPILER_DTYPE_FLOAT)
-					src->addFmt("{} = GET_FRAGCOORD();" _CRLF, _getRegisterVarName(shaderContext, gprIndex));
+					src->addFmt("{} = {};" _CRLF, _getRegisterVarName(shaderContext, gprIndex), fragCoordExpr);
 				else
-					// V11.47: a compilador GLSL da Adreno rejeita a macro chamada dentro de floatBitsToInt(...) ("'(' syntax error",
-					// Zelda BOTW, mesmo com a macro definida); usa uma variavel temporaria.
-					src->addFmt("{{ vec4 fragCoordTmp = GET_FRAGCOORD(); {} = floatBitsToInt(fragCoordTmp); }}" _CRLF, _getRegisterVarName(shaderContext, gprIndex));
+					src->addFmt("{{ vec4 fragCoordTmp = {}; {} = floatBitsToInt(fragCoordTmp); }}" _CRLF, fragCoordExpr, _getRegisterVarName(shaderContext, gprIndex));
 				continue;
 			}
 

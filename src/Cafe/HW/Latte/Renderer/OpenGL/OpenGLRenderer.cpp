@@ -669,23 +669,32 @@ namespace ESShim
 	}
 
 	// ---- queries ----
+	// GL_SAMPLES_PASSED (0x8914) NAO existe no GLES: glBeginQuery() com esse alvo gera GL_INVALID_ENUM, a query nunca comeca e o
+	// glGetQueryObject*() seguinte fica preso dentro do driver (logs do Zelda BOTW/Mario Kart 8 em OpenGL: a thread da GPU congelava em
+	// LatteQueryObjectGL::getResult). O GLES 3.0+ tem GL_ANY_SAMPLES_PASSED(_CONSERVATIVE), que da 0/1 - o suficiente para a oclusao do Wii U.
+	static GLenum MapQueryTarget(GLenum target)
+	{
+		constexpr GLenum kSamplesPassed = 0x8914;                  // GL_SAMPLES_PASSED (desktop)
+		constexpr GLenum kAnySamplesPassedConservative = 0x8D6A;   // GL_ANY_SAMPLES_PASSED_CONSERVATIVE (GLES 3.0)
+		return target == kSamplesPassed ? kAnySamplesPassedConservative : target;
+	}
 	static void BeginQueryIndexed(GLenum target, GLuint index, GLuint id)
 	{
 		Load();
 		if (index == 0)
-			g.BeginQuery(target, id);
+			g.BeginQuery(MapQueryTarget(target), id);
 	}
 	static void EndQueryIndexed(GLenum target, GLuint index)
 	{
 		Load();
 		if (index == 0)
-			g.EndQuery(target);
+			g.EndQuery(MapQueryTarget(target));
 	}
 	static void GetQueryIndexediv(GLenum target, GLuint index, GLenum pname, GLint* params)
 	{
 		Load();
 		if (index == 0)
-			g.GetQueryiv(target, pname, params);
+			g.GetQueryiv(MapQueryTarget(target), pname, params);
 		else if (params)
 			*params = 0;
 	}
@@ -1116,6 +1125,8 @@ void OpenGLRenderer::QuerySupportedFormats()
 	const char* glVersionString = (const char*)glGetString(GL_VERSION);
 	bool isGLES = glVersionString && boost::icontains(glVersionString, "OpenGL ES");
 	s_isGLES = isGLES;
+	s_hasTextureShadowLod = !isGLES || IsGLExtensionSupported("GL_EXT_texture_shadow_lod");
+	s_hasBorderClamp = !isGLES || IsGLExtensionSupported("GL_EXT_texture_border_clamp") || IsGLExtensionSupported("GL_OES_texture_border_clamp");
 	int versionMajor = 0, versionMinor = 0;
 	if (glVersionString)
 	{
@@ -1217,7 +1228,7 @@ void OpenGLRenderer::QuerySupportedFormats()
 		{
 			struct Need { const char* what; std::initializer_list<const char*> exts; const char* consequence; };
 			const Need needs[] = {
-				{ "texture_shadow_lod", { "GL_EXT_texture_shadow_lod" }, "SAMPLE_C_L/LZ em shadow array vira erro de compilacao do shader (Zelda BOTW); sem emulacao" },
+				{ "texture_shadow_lod", { "GL_EXT_texture_shadow_lod" }, "SAMPLE_C_L/LZ em shadow array emulado com textureGrad() (Zelda BOTW)" },
 				{ "clip_control", { "GL_ARB_clip_control", "GL_EXT_clip_control" }, "Z/Y emulados no vertex shader (uf_clipFlipY)" },
 				{ "buffer_storage", { "GL_ARB_buffer_storage", "GL_EXT_buffer_storage" }, "buffers persistentes indisponiveis -> uploads mais lentos" },
 				{ "texture_view", { "GL_ARB_texture_view", "GL_EXT_texture_view", "GL_OES_texture_view" }, "views de textura emuladas por copia" },
@@ -1230,7 +1241,7 @@ void OpenGLRenderer::QuerySupportedFormats()
 				{ "float_blend", { "GL_EXT_float_blend" }, "blend em alvos float indisponivel" },
 				{ "depth_clamp", { "GL_ARB_depth_clamp", "GL_EXT_depth_clamp" }, "depth clamp ausente (sombras/ceu podem cortar)" },
 				{ "anisotropic", { "GL_EXT_texture_filter_anisotropic" }, "filtro anisotropico ausente" },
-				{ "border_clamp", { "GL_EXT_texture_border_clamp", "GL_OES_texture_border_clamp" }, "wrap CLAMP_BORDER vira clamp_to_edge" },
+				{ "border_clamp", { "GL_EXT_texture_border_clamp", "GL_OES_texture_border_clamp" }, "wrap CLAMP_BORDER vira clamp_to_edge (implementado em OpenGLRendererCore.cpp)" },
 				{ "mirror_clamp", { "GL_EXT_texture_mirror_clamp_to_edge", "GL_ARB_texture_mirror_clamp_to_edge" }, "wrap MIRROR_CLAMP vira mirror" },
 				{ "sample_shading", { "GL_ARB_sample_shading", "GL_OES_sample_shading" }, "MSAA por amostra ausente" },
 				{ "robustness", { "GL_KHR_robustness", "GL_EXT_robustness" }, "leitura fora do limite de buffer nao e zerada pelo driver" },

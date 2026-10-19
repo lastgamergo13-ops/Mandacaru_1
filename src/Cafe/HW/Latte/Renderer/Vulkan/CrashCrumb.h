@@ -7,5 +7,22 @@ namespace CrashCrumb
 {
 	inline thread_local const char* g_text = nullptr;
 	inline thread_local unsigned long long g_count = 0;
+
+	// Quarentena automatica de pipeline que derruba o DRIVER (SIGSEGV dentro de vkCreateGraphicsPipelines, ex.: PowerVR/MediaTek).
+	// Cada thread guarda os hashes (VS/PS/GS) do pipeline que esta criando agora. Se o app tomar um sinal fatal nessa thread,
+	// o tratador de sinais grava esses hashes direto em vk_quarantine.txt (so open/write/close, sem alocar) e, na proxima
+	// abertura, esse pipeline e PULADO em vez de derrubar o app de novo.
+	inline thread_local bool g_pipeActive = false;
+	inline thread_local unsigned long long g_pipeVs = 0, g_pipePs = 0, g_pipeGs = 0;
+	// caminho completo de vk_quarantine.txt (preenchido uma vez, em DrawTraceVk::LoadQuarantine)
+	inline char g_quarantinePath[1024] = {0};
+
+	// Mesma ideia para o OpenGL ES: SIGSEGV dentro do compilador de shader do driver (ex.: libllvm-glnext.so da Adreno no Mario Kart 8).
+	// Hashes (base, aux, tipo) do shader que esta sendo compilado/linkado agora; gravados em gl_shader_quarantine.txt no crash.
+	inline thread_local bool g_glShaderActive = false;
+	inline thread_local unsigned long long g_glBase = 0, g_glAux = 0, g_glType = 0;
+	inline char g_glQuarantinePath[1024] = {0};
 }
 #define CRUMB(s) do { CrashCrumb::g_text = (s); CrashCrumb::g_count++; } while (0)
+#define PIPE_CREATE_BEGIN(vs, ps, gs) do { CrashCrumb::g_pipeVs = (vs); CrashCrumb::g_pipePs = (ps); CrashCrumb::g_pipeGs = (gs); CrashCrumb::g_pipeActive = true; } while (0)
+#define PIPE_CREATE_END() do { CrashCrumb::g_pipeActive = false; } while (0)
