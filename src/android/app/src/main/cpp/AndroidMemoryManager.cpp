@@ -166,11 +166,28 @@ static void MonitorThread() {
         // "Memory Usage Brake": independent of the system-wide check above, compare this
         // process's own RSS against the user-configured ceiling (if any).
         uint64_t ceilingMB = s_memoryCeilingMB;
+        // Teto AUTOMATICO para celulares de 4-6 GB (ate 7 GB): o Android mata o processo bem antes de a RAM do aparelho acabar
+        // (o sistema, o launcher e a zRAM tambem consomem), entao a limpeza preventiva comeca quando o emulador passa de ~50% da RAM
+        // total - em vez de so reagir quando MemAvailable ja caiu. O teto manual do usuario (se ligado) tem prioridade.
+        bool autoCeiling = false;
+        if (ceilingMB == 0 && s_totalRamMB != 0 && s_totalRamMB <= 7168) {
+            ceilingMB = s_totalRamMB * 50 / 100;
+            autoCeiling = true;
+        }
         uint64_t rssMB;
         if (ceilingMB != 0 && ReadProcessRssMB(rssMB)) {
             s_processRssMB = rssMB;
             bool isOver = rssMB >= ceilingMB;
             bool wasOver = s_overMemoryCeiling.exchange(isOver);
+            if (autoCeiling && isOver && wasOver) {
+                // continua acima do teto: repete o pedido de limpeza a cada ~10 s (o teto manual so pede na subida)
+                static auto lastRepeat = std::chrono::steady_clock::now();
+                auto nowTp = std::chrono::steady_clock::now();
+                if (nowTp - lastRepeat >= std::chrono::seconds(10)) {
+                    lastRepeat = nowTp;
+                    LatteTC_RequestAggressiveCleanup();
+                }
+            }
             if (isOver && !wasOver) {
                 // rising edge: just crossed the ceiling. Ask the render thread to reclaim
                 // memory soon (see LatteTC_RequestAggressiveCleanup() for why this is safe to

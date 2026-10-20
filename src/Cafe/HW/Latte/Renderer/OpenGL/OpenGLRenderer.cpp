@@ -1887,7 +1887,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc1)
 			texDecoder = TextureDecoder_BC1::getInstance();
-		else if ((GetConfig().texture_compression_bc1 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc1 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
 		else
 			texDecoder = TextureDecoder_BC1_RGBA8::getInstance();
@@ -1896,7 +1896,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc1)
 			texDecoder = TextureDecoder_BC1::getInstance();
-		else if ((GetConfig().texture_compression_bc1 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc1 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC1_To_ETC2_RGB8::getInstance();
 		else
 			texDecoder = TextureDecoder_BC1_RGBA8::getInstance();
@@ -1905,7 +1905,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc2)
 			texDecoder = TextureDecoder_BC2::getInstance();
-		else if ((GetConfig().texture_compression_bc2 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc2 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC2_RGBA8::getInstance();
@@ -1914,7 +1914,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc2)
 			texDecoder = TextureDecoder_BC2::getInstance();
-		else if ((GetConfig().texture_compression_bc2 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc2 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC2_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC2_RGBA8::getInstance();
@@ -1923,7 +1923,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc3)
 			texDecoder = TextureDecoder_BC3::getInstance();
-		else if ((GetConfig().texture_compression_bc3 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc3 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC3_RGBA8::getInstance();
@@ -1932,7 +1932,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc3)
 			texDecoder = TextureDecoder_BC3::getInstance();
-		else if ((GetConfig().texture_compression_bc3 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc3 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC3_To_ETC2_RGBA8_EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC3_RGBA8::getInstance();
@@ -1947,7 +1947,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
 		else if (GetInstance()->m_supportedFormatInfo.fmt_bc4)
 			texDecoder = TextureDecoder_BC4::getInstance();
-		else if ((GetConfig().texture_compression_bc4 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc4 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC4_R8::getInstance();
@@ -1965,7 +1965,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 			texDecoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
 		else if (GetInstance()->m_supportedFormatInfo.fmt_bc4)
 			texDecoder = TextureDecoder_BC4::getInstance();
-		else if ((GetConfig().texture_compression_bc4 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc4 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC4_To_ETC2_R11EAC_SNORM::getInstance();
 		else
 			texDecoder = TextureDecoder_BC4_R8_SNORM::getInstance();
@@ -1974,7 +1974,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc5)
 			texDecoder = TextureDecoder_BC5::getInstance();
-		else if ((GetConfig().texture_compression_bc5 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc5 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC::getInstance();
 		else
 			texDecoder = TextureDecoder_BC5_RG8::getInstance();
@@ -1983,7 +1983,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	{
 		if (GetInstance()->m_supportedFormatInfo.fmt_bc5)
 			texDecoder = TextureDecoder_BC5::getInstance();
-		else if ((GetConfig().texture_compression_bc5 && !OpenGLRenderer::IsGLES()) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
+		else if ((GetConfig().texture_compression_bc5 && OpenGLRenderer::CanUseEtc2Transcode(dim)) && GetInstance()->m_supportedFormatInfo.fmt_etc2)
 			texDecoder = TextureDecoder_BC5_To_ETC2_RG11EAC_SNORM::getInstance();
 		else
 			texDecoder = TextureDecoder_BC5_RG8_SNORM::getInstance();

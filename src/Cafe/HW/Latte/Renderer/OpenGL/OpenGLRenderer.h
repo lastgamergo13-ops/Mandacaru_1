@@ -75,6 +75,15 @@ public:
 	static bool IsGLES() { return s_isGLES; }
 	// GL_EXT_texture_shadow_lod (textureLod em sampler2DArrayShadow). Desktop GL 4.x tem isso no core; no GLES so com a extensao.
 	static bool HasTextureShadowLod() { return s_hasTextureShadowLod; }
+	// Pode a textura BC desta dimensao ser guardada como ETC2/EAC (4-8x menos RAM/VRAM que o RGBA8 decodificado)?
+	// Desktop: sempre. GLES: so 2D e 2D array - o GLES 3.x NAO aceita formatos ETC2/EAC em texturas 3D (GL_INVALID_OPERATION),
+	// e 1D/cubemap/MSAA passam por caminhos de upload proprios; esses continuam decodificados em RGBA8/R8/RG8 como antes.
+	static bool CanUseEtc2Transcode(Latte::E_DIM dim)
+	{
+		if (!s_isGLES)
+			return true;
+		return dim == Latte::E_DIM::DIM_2D || dim == Latte::E_DIM::DIM_2D_ARRAY;
+	}
 	// GL_EXT/OES_texture_border_clamp (GL_CLAMP_TO_BORDER + cor de borda). No GLES 3.2 e core, em 3.0/3.1 so por extensao.
 	static bool HasBorderClamp() { return s_hasBorderClamp; }
 
