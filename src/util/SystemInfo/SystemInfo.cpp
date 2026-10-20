@@ -15,7 +15,10 @@ double ProcessorTime::Compare(ProcessorTime &last, ProcessorTime &now)
 	auto dwork = now.work() - last.work();
 	auto dtotal = now.total() - last.total();
 
-	return (double)dwork / dtotal;
+	if (dtotal == 0 || now.total() < last.total())
+		return 0.0; // sem dados novos (ou leitura invalida): evita 0/0 = "nan%" no overlay
+	const double usage = (double)dwork / (double)dtotal;
+	return usage > 1.0 ? 1.0 : usage;
 }
 
 uint32 GetProcessorCount()
