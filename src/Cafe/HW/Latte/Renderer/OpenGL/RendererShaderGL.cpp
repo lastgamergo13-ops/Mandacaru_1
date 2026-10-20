@@ -237,6 +237,8 @@ RendererShaderGL::RendererShaderGL(ShaderType type, uint64 baseHash, uint64 auxH
 	const auto compileT0 = std::chrono::steady_clock::now(); // V11.47: mede compilacao lenta do driver (Adreno travava ~12 s)
 	CrashCrumb::g_glBase = m_baseHash; CrashCrumb::g_glAux = m_auxHash; CrashCrumb::g_glType = (uint64)glShaderType;
 	CrashCrumb::g_glShaderActive = true;
+	CrashCrumb::g_glCompileBaseGlobal = m_baseHash; CrashCrumb::g_glCompileAuxGlobal = m_auxHash; CrashCrumb::g_glCompileTypeGlobal = (uint64)glShaderType;
+	CrashCrumb::g_glCompileActiveGlobal = true;
 	m_shader_object = glCreateShader(glShaderType);
 
 	const char *c_str = m_glslSource.c_str();
@@ -273,6 +275,7 @@ RendererShaderGL::RendererShaderGL(ShaderType type, uint64 baseHash, uint64 auxH
 	m_shader_attached = true;
 	glLinkProgram(m_program);
 	CrashCrumb::g_glShaderActive = false; // compilador do driver terminou sem derrubar o app
+	CrashCrumb::g_glCompileActiveGlobal = false;
 
 	storeBinary();
 

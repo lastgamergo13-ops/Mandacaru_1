@@ -211,11 +211,18 @@ ImTextureID OpenGLRenderer::GenerateTexture(const std::vector<uint8>& data, cons
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+	// GLES: GL_CLAMP nao existe (GL_INVALID_ENUM) e o formato interno precisa ser sized (GL_SRGB8) - o PowerVR/Adreno registravam
+	// "TexParameter INVALID_ENUM" + "glTexImage2D INVALID_VALUE" em toda abertura, deixando essa textura da interface sem dados.
+	const bool gles = IsGLES();
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gles ? GL_CLAMP_TO_EDGE : GL_CLAMP);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gles ? GL_CLAMP_TO_EDGE : GL_CLAMP);
 
 	glActiveTexture(GL_TEXTURE0);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB, size.x, size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, data.data());
+	GLint prevUnpackAlignment = 4;
+	glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevUnpackAlignment);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // linhas RGB de 3 bytes/pixel nao sao multiplas de 4
+	glTexImage2D(GL_TEXTURE_2D, 0, gles ? GL_SRGB8 : GL_SRGB, size.x, size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, data.data());
+	glPixelStorei(GL_UNPACK_ALIGNMENT, prevUnpackAlignment);
 	return (ImTextureID)(uintptr_t)textureId;
 }
 

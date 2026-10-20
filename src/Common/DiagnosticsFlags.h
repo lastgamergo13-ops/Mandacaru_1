@@ -129,6 +129,7 @@ namespace Diag
 		uint32_t mip = 0, slice = 0, imageSize = 0;
 		int64_t startUs = 0;
 		std::atomic<int64_t> durUs{-1}; // -1 = ainda em andamento (o suspeito de um congelamento)
+		std::atomic<int64_t> decodeUs{-1}; // tempo so da decodificacao/untile na CPU (-1 = ainda nao terminou)
 	};
 
 	constexpr int kTexRingSize = 64;
@@ -150,12 +151,21 @@ namespace Diag
 		const int idx = (int)(seq % kTexRingSize);
 		TexRec& r = g_texRing[idx];
 		r.durUs = -1;
+		r.decodeUs = -1;
 		r.seq = seq;
 		r.physAddr = physAddr; r.physMipAddr = physMipAddr; r.format = format; r.dim = dim;
 		r.width = w; r.height = h; r.depth = depth; r.pitch = pitch; r.tileMode = tileMode;
 		r.mip = mip; r.slice = slice; r.imageSize = imageSize;
 		r.startUs = NowUs();
 		return idx;
+	}
+
+	inline void TexDecoded(int idx)
+	{
+		if (idx < 0)
+			return;
+		TexRec& r = g_texRing[idx];
+		r.decodeUs = NowUs() - r.startUs;
 	}
 
 	inline void TexEnd(int idx)
@@ -166,8 +176,12 @@ namespace Diag
 		const int64_t dur = NowUs() - r.startUs;
 		r.durUs = dur;
 		if (dur > 100000) // carga lenta (>100 ms): vira linha no log na hora
-			cemuLog_log(LogType::Force, "[TexDiag] carga LENTA {} ms: addr={:08x} fmt=0x{:04x} dim={} {}x{}x{} mip={} slice={} tile={} pitch={} bytes={}",
-						(long long)(dur / 1000), r.physAddr, r.format, r.dim, r.width, r.height, r.depth, r.mip, r.slice, r.tileMode, r.pitch, r.imageSize);
+		{
+			const int64_t dec = r.decodeUs.load();
+			cemuLog_log(LogType::Force, "[TexDiag] carga LENTA {} ms (decodificar/untile na CPU: {} ms, envio p/ GPU: {} ms): addr={:08x} fmt=0x{:04x} dim={} {}x{}x{} mip={} slice={} tile={} pitch={} bytes={}",
+						(long long)(dur / 1000), (long long)(dec / 1000), (long long)((dur - std::max<int64_t>(dec, 0)) / 1000),
+						r.physAddr, r.format, r.dim, r.width, r.height, r.depth, r.mip, r.slice, r.tileMode, r.pitch, r.imageSize);
+		}
 	}
 
 	// Despeja as ultimas texturas no log (mais antiga -> mais recente). Linhas "EM ANDAMENTO" = a textura em que a thread estava

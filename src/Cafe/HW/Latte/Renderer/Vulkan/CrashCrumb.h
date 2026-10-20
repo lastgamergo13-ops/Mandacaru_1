@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 // "Migalha de pao" para diagnostico de crash: cada thread guarda um ponteiro para um texto fixo que diz
 // qual chamada Vulkan/etapa estava rodando. O tratador de sinais imprime isso no crash, o que identifica
 // QUAL chamada derrubou o driver mesmo quando o backtrace so mostra enderecos dentro do .so do driver.
@@ -26,6 +27,12 @@ namespace CrashCrumb
 	inline thread_local bool g_glShaderActive = false;
 	inline thread_local unsigned long long g_glBase = 0, g_glAux = 0, g_glType = 0;
 	inline char g_glQuarantinePath[1024] = {0};
+
+	// Visao GLOBAL do shader em compilacao (para o watchdog, que roda em OUTRA thread e nao enxerga os thread_local acima).
+	// Se a thread da GPU ficar presa >=27 s dentro do compilador do driver (PowerVR libusc.so, Adreno libllvm-glnext.so), o
+	// watchdog grava esse shader em gl_shader_quarantine.txt: ele passa a ser PULADO nas proximas aberturas.
+	inline std::atomic<bool> g_glCompileActiveGlobal{false};
+	inline std::atomic<unsigned long long> g_glCompileBaseGlobal{0}, g_glCompileAuxGlobal{0}, g_glCompileTypeGlobal{0};
 }
 #define CRUMB(s) do { CrashCrumb::g_text = (s); CrashCrumb::g_count++; } while (0)
 #define PIPE_CREATE_BEGIN(vs, ps, gs) do { CrashCrumb::g_pipeVs = (vs); CrashCrumb::g_pipePs = (ps); CrashCrumb::g_pipeGs = (gs); CrashCrumb::g_pipeActive = true; } while (0)

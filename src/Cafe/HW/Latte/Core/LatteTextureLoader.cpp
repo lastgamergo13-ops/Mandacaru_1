@@ -707,6 +707,7 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 	{
 		texDecoder->decode(&textureLoader, pixelData);
 	}
+	Diag::TexDecoded(diagTexIdx); // marca o fim da DECODIFICACAO (o resto ate TexEnd e o envio para a GPU)
 #ifdef BENCHMARK_TEXTURE_DECODING
 	QueryPerformanceCounter(&benchmark_end);
 	QueryPerformanceFrequency(&benchmark_freq);
