@@ -4037,11 +4037,9 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 			src->add("	vec2 g = exp2(lod) / vec2(textureSize(s, 0).xy);" _CRLF);
 			src->add("	return textureGrad(s, p, vec2(g.x, 0.0), vec2(0.0, g.y));" _CRLF);
 			src->add("}" _CRLF);
-			src->add("float emuTextureLodOffsetShadowArray(sampler2DArrayShadow s, vec4 p, float lod, ivec2 o)" _CRLF);
-			src->add("{" _CRLF);
-			src->add("	vec2 g = exp2(lod) / vec2(textureSize(s, 0).xy);" _CRLF);
-			src->add("	return textureGradOffset(s, p, vec2(g.x, 0.0), vec2(0.0, g.y), o);" _CRLF);
-			src->add("}" _CRLF);
+			// A variante com offset TEM que ser macro: textureGradOffset() exige offset constante e um parametro de funcao nao e
+			// (Adreno: "'textureGradOffset' : offset must be constant" - isso derrubou TODOS os shaders na versao anterior).
+			src->add("#define emuTextureLodOffsetShadowArray(s, p, lod, o) textureGradOffset(s, p, vec2(exp2(lod) / float(textureSize(s, 0).x), 0.0), vec2(0.0, exp2(lod) / float(textureSize(s, 0).y)), o)" _CRLF);
 		}
 		// Streamout/geometry-shader output on GLES does NOT go through GL_ARB_enhanced_layouts
 		// (desktop-only, no GLES equivalent) - it uses the same SSBO-based manual streamout
