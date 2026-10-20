@@ -1,0 +1,198 @@
+#pragma once
+// Logs & Diagnostico (Experimental/Hackers > Logs e Diagnostico).
+// Concentra num unico lugar as chaves de diagnostico do emulador, para nao ficarem espalhadas:
+//   - GLDebug : log profundo do OpenGL ES (KHR_debug sincrono, todas as severidades, contexto EGL de depuracao)
+//   - TexLog  : registra as ultimas texturas carregadas (formato/dimensao/endereco) e despeja no log em congelamento/crash
+//   - AutoCleanOff : desliga a limpeza automatica da quarentena ao trocar de jogo (padrao = limpeza LIGADA)
+// O estado persiste em arquivos-marcador na pasta de dados do usuario (mesmo mecanismo do "vk_sync_debug").
+#include "config/ActiveSettings.h"
+#include "Cemu/Logging/CemuLogging.h"
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+
+namespace Diag
+{
+	enum class Flag : int
+	{
+		GLDebug = 0,
+		TexLog = 1,
+		AutoCleanOff = 2,
+		Count
+	};
+
+	inline const char* FlagMarkerName(Flag f)
+	{
+		switch (f)
+		{
+		case Flag::GLDebug: return "diag_gl_debug";
+		case Flag::TexLog: return "diag_tex_log";
+		case Flag::AutoCleanOff: return "diag_autoclean_off";
+		default: return "diag_unknown";
+		}
+	}
+
+	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1 }; // -1 = ainda nao lido
+
+	inline bool IsEnabled(Flag f)
+	{
+		int s = g_flagState[(int)f].load(std::memory_order_relaxed);
+		if (s < 0)
+		{
+			std::error_code ec;
+			s = std::filesystem::exists(ActiveSettings::GetUserDataPath(FlagMarkerName(f)), ec) ? 1 : 0;
+			g_flagState[(int)f] = s;
+		}
+		return s == 1;
+	}
+
+	inline void SetEnabled(Flag f, bool on)
+	{
+		std::error_code ec;
+		const auto marker = ActiveSettings::GetUserDataPath(FlagMarkerName(f));
+		if (on)
+			std::ofstream(marker, std::ios::trunc) << "1";
+		else
+			std::filesystem::remove(marker, ec);
+		g_flagState[(int)f] = on ? 1 : 0;
+	}
+
+	// ---------------------------------------------------------------------------------------------------------------
+	// Quarentenas (vk_quarantine*.txt, gl_shader_quarantine.txt)
+	// ---------------------------------------------------------------------------------------------------------------
+	inline bool IsQuarantineFileName(const std::string& n)
+	{
+		return n.rfind("vk_quarantine", 0) == 0 || n == "gl_shader_quarantine.txt";
+	}
+
+	// apaga todos os arquivos de quarentena; devolve quantos foram apagados
+	inline int DeleteQuarantineFiles()
+	{
+		int removed = 0;
+		std::error_code ec;
+		const auto dir = ActiveSettings::GetUserDataPath();
+		for (const auto& entry : std::filesystem::directory_iterator(dir, ec))
+		{
+			if (ec)
+				break;
+			if (!entry.is_regular_file(ec))
+				continue;
+			if (IsQuarantineFileName(entry.path().filename().string()))
+			{
+				std::error_code rec;
+				if (std::filesystem::remove(entry.path(), rec))
+					removed++;
+			}
+		}
+		return removed;
+	}
+
+	// Chamado ao iniciar um jogo. A quarentena e protecao para o MESMO jogo na proxima abertura (um shader que travou a GPU e
+	// pulado), entao NAO e apagada ao abrir o mesmo jogo de novo - isso desfaria a protecao. Ela so e limpa quando o jogo e
+	// OUTRO (os hashes de shader sao especificos de cada jogo), a menos que o usuario tenha desligado a limpeza automatica.
+	inline void OnTitleLaunch(uint64_t titleId)
+	{
+		const auto lastFile = ActiveSettings::GetUserDataPath("diag_last_title");
+		std::string last;
+		{
+			std::ifstream f(lastFile);
+			if (f)
+				std::getline(f, last);
+		}
+		const std::string cur = fmt::format("{:016x}", titleId);
+		if (last != cur)
+		{
+			if (!IsEnabled(Flag::AutoCleanOff))
+			{
+				int n = DeleteQuarantineFiles();
+				if (n > 0)
+					cemuLog_log(LogType::Force, "[Diag] jogo diferente do anterior ({} -> {}): {} arquivo(s) de quarentena apagado(s) automaticamente", last.empty() ? "nenhum" : last, cur, n);
+			}
+			std::ofstream(lastFile, std::ios::trunc) << cur;
+		}
+	}
+
+	// ---------------------------------------------------------------------------------------------------------------
+	// Diagnostico de texturas: anel com as ultimas texturas carregadas na thread da GPU.
+	// ---------------------------------------------------------------------------------------------------------------
+	struct TexRec
+	{
+		uint64_t seq = 0;
+		uint32_t physAddr = 0, physMipAddr = 0;
+		uint32_t format = 0, tileMode = 0, dim = 0;
+		uint32_t width = 0, height = 0, depth = 0, pitch = 0;
+		uint32_t mip = 0, slice = 0, imageSize = 0;
+		int64_t startUs = 0;
+		std::atomic<int64_t> durUs{-1}; // -1 = ainda em andamento (o suspeito de um congelamento)
+	};
+
+	constexpr int kTexRingSize = 64;
+	inline TexRec g_texRing[kTexRingSize];
+	inline std::atomic<uint64_t> g_texSeq{0};
+
+	inline int64_t NowUs()
+	{
+		return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	}
+
+	// devolve o indice do registro (ou -1 se o diagnostico esta desligado)
+	inline int TexBegin(uint32_t physAddr, uint32_t physMipAddr, uint32_t format, uint32_t dim, uint32_t w, uint32_t h, uint32_t depth,
+						uint32_t pitch, uint32_t tileMode, uint32_t mip, uint32_t slice, uint32_t imageSize)
+	{
+		if (!IsEnabled(Flag::TexLog))
+			return -1;
+		const uint64_t seq = g_texSeq.fetch_add(1) + 1;
+		const int idx = (int)(seq % kTexRingSize);
+		TexRec& r = g_texRing[idx];
+		r.durUs = -1;
+		r.seq = seq;
+		r.physAddr = physAddr; r.physMipAddr = physMipAddr; r.format = format; r.dim = dim;
+		r.width = w; r.height = h; r.depth = depth; r.pitch = pitch; r.tileMode = tileMode;
+		r.mip = mip; r.slice = slice; r.imageSize = imageSize;
+		r.startUs = NowUs();
+		return idx;
+	}
+
+	inline void TexEnd(int idx)
+	{
+		if (idx < 0)
+			return;
+		TexRec& r = g_texRing[idx];
+		const int64_t dur = NowUs() - r.startUs;
+		r.durUs = dur;
+		if (dur > 100000) // carga lenta (>100 ms): vira linha no log na hora
+			cemuLog_log(LogType::Force, "[TexDiag] carga LENTA {} ms: addr={:08x} fmt=0x{:04x} dim={} {}x{}x{} mip={} slice={} tile={} pitch={} bytes={}",
+						(long long)(dur / 1000), r.physAddr, r.format, r.dim, r.width, r.height, r.depth, r.mip, r.slice, r.tileMode, r.pitch, r.imageSize);
+	}
+
+	// Despeja as ultimas texturas no log (mais antiga -> mais recente). Linhas "EM ANDAMENTO" = a textura em que a thread estava
+	// quando o congelamento/crash foi detectado.
+	inline void DumpRecentTextures(const char* reason)
+	{
+		if (!IsEnabled(Flag::TexLog))
+			return;
+		const uint64_t last = g_texSeq.load();
+		if (last == 0)
+		{
+			cemuLog_log(LogType::Force, "[TexDiag] ({}) nenhuma textura registrada ainda", reason);
+			return;
+		}
+		const uint64_t count = std::min<uint64_t>(last, 24);
+		cemuLog_log(LogType::Force, "[TexDiag] ({}) ultimas {} texturas carregadas (total ate agora: {}):", reason, (unsigned long long)count, (unsigned long long)last);
+		for (uint64_t s = last - count + 1; s <= last; s++)
+		{
+			const TexRec& r = g_texRing[s % kTexRingSize];
+			if (r.seq != s)
+				continue;
+			const int64_t d = r.durUs.load();
+			cemuLog_log(LogType::Force, "[TexDiag]  #{} addr={:08x} mipAddr={:08x} fmt=0x{:04x} dim={} {}x{}x{} mip={} slice={} tile={} pitch={} bytes={} {}",
+						(unsigned long long)r.seq, r.physAddr, r.physMipAddr, r.format, r.dim, r.width, r.height, r.depth, r.mip, r.slice, r.tileMode,
+						r.pitch, r.imageSize, d < 0 ? "<< EM ANDAMENTO" : fmt::format("{}us", (long long)d));
+		}
+	}
+}

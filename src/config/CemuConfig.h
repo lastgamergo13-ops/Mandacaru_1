@@ -478,7 +478,7 @@ struct CemuConfig
 	// (an in-game action button, a background hotkey handler, etc.) - the switch is what the QoL
 	// screen's Toggle actually controls; the feature itself checks this before doing anything.
 	// All off by default, like the rest of Experimental/Hackers.
-	ConfigValue<bool> qol_quick_screenshot_enabled{ false };
+	ConfigValue<bool> qol_quick_screenshot_enabled{ true }; // ligado por padrao
 	ConfigValue<bool> qol_quick_controller_profile_switcher_enabled{ false };
 	ConfigValue<bool> qol_in_game_cheats_enabled{ false };
 

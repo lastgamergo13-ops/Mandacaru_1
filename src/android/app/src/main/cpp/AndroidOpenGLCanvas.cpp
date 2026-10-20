@@ -1,3 +1,4 @@
+#include "Common/DiagnosticsFlags.h"
 #include "AndroidOpenGLCanvas.h"
 #include <unistd.h>
 
@@ -93,7 +94,18 @@ bool AndroidOpenGLCanvas::Initialize(ANativeWindow* mainWindow)
 			EGL_CONTEXT_CLIENT_VERSION, 3,
 			EGL_NONE,
 		};
-		m_context = eglCreateContext(m_display, m_config, EGL_NO_CONTEXT, robustAttr ? robustAttribs : plainAttribs);
+		m_context = EGL_NO_CONTEXT;
+		if (!robustAttr && Diag::IsEnabled(Diag::Flag::GLDebug))
+		{
+			// "Log profundo do OpenGL": pede contexto de DEPURACAO (EGL_CONTEXT_FLAGS_KHR=0x30FC, EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR=1);
+			// sem isso muitos drivers (Adreno) quase nao emitem mensagens de KHR_debug. Se o driver recusar, cai no contexto normal.
+			const EGLint debugAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 3, 0x30FC, 1, EGL_NONE };
+			m_context = eglCreateContext(m_display, m_config, EGL_NO_CONTEXT, debugAttribs);
+			if (m_context != EGL_NO_CONTEXT)
+				cemuLog_log(LogType::Force, "[GL] contexto EGL de DEPURACAO criado (Log profundo do OpenGL ligado)");
+		}
+		if (m_context == EGL_NO_CONTEXT)
+			m_context = eglCreateContext(m_display, m_config, EGL_NO_CONTEXT, robustAttr ? robustAttribs : plainAttribs);
 		if (m_context != EGL_NO_CONTEXT)
 		{
 			cemuLog_log(LogType::Force, "[GL] contexto EGL criado {}", robustAttr ? (robustAttr == kEglContextOpenGLRobustAccess ? "COM acesso robusto a buffers (EGL 1.5)" : "COM acesso robusto a buffers (EXT)") : "SEM acesso robusto a buffers (driver recusou)");

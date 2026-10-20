@@ -167,69 +167,8 @@ fun QualityOfLifeSettingsScreen(
             )
         }
 
-        // --- HUD: extra stats + opacity --------------------------------------------------
-        InfoDialogButton(
-            title = tr("HUD: extra stats + opacity"),
-            explanation = tr(
-                "What this adds to the HUD (Overlay settings): CPU usage per core and VRAM " +
-                        "usage were already supported by the emulation engine but had no toggle " +
-                        "anywhere in the app - they're here now. Frame time is the same 5-second " +
-                        "FPS average already used by the FPS stat, just shown as milliseconds per " +
-                        "frame instead. Background opacity replaces what used to be a fixed value " +
-                        "in the code, for both the stats HUD and notifications.\n\n" +
-                        "Device thermal status shows Android's own coarse thermal level (Nominal, " +
-                        "Light, Moderate, Severe, Critical, Emergency, Shutdown) - honestly, this is " +
-                        "NOT a precise temperature in degrees. A normal app has no access to real " +
-                        "component temperatures; this coarse level is the most specific thing the " +
-                        "system exposes, and only from Android 10 (API 29) onward - on older " +
-                        "versions the toggle is harmless but shows nothing.\n\n" +
-                        "Horizontal layout lays every enabled stat line above out side by side in " +
-                        "one row instead of stacked vertically. It does not apply to the Debug " +
-                        "block (Overlay settings), which can have several lines of arbitrary text " +
-                        "and would look wrong squeezed onto one line. All off by default; existing " +
-                        "HUD stats (FPS, draw calls, CPU, RAM, Debug) are unaffected and still live " +
-                        "in Overlay settings."
-            ),
-        )
-        Toggle(
-            label = tr("CPU usage per core"),
-            description = tr("Per-core CPU usage in the HUD."),
-            initialCheckedState = NativeSettings::isOverlayCPUPerCoreUsageEnabled,
-            onCheckedChanged = NativeSettings::setOverlayCPUPerCoreUsageEnabled,
-        )
-        Toggle(
-            label = tr("VRAM usage"),
-            description = tr("Cemu VRAM usage in MB, in the HUD."),
-            initialCheckedState = NativeSettings::isOverlayVRAMUsageEnabled,
-            onCheckedChanged = NativeSettings::setOverlayVRAMUsageEnabled,
-        )
-        Toggle(
-            label = tr("Frame time"),
-            description = tr("Milliseconds per frame, next to FPS in the HUD. See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::isOverlayFrameTimeEnabled,
-            onCheckedChanged = NativeSettings::setOverlayFrameTimeEnabled,
-        )
-        Toggle(
-            label = tr("Device thermal status"),
-            description = tr("Coarse Android thermal level, not a precise temperature. See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::isOverlayDeviceThermalStatusEnabled,
-            onCheckedChanged = NativeSettings::setOverlayDeviceThermalStatusEnabled,
-        )
-        Toggle(
-            label = tr("Horizontal layout"),
-            description = tr("Lays HUD stat lines out side by side instead of stacked. See \"What does this do?\" above."),
-            initialCheckedState = NativeSettings::isOverlayHorizontalLayoutEnabled,
-            onCheckedChanged = NativeSettings::setOverlayHorizontalLayoutEnabled,
-        )
-        Slider(
-            label = tr("HUD/notification background opacity"),
-            initialValue = NativeSettings::getOverlayBackgroundOpacityPercentage,
-            valueFrom = 0,
-            valueTo = 100,
-            steps = 9,
-            onValueChange = NativeSettings::setOverlayBackgroundOpacityPercentage,
-            labelFormatter = { "$it%" },
-        )
+        // HUD (CPU por nucleo, VRAM, frame time, termico, layout horizontal) e opacidade do fundo: agora em
+        // Settings > Overlay settings (juntos com as demais opcoes do HUD).
 
         // --- Quick screenshot ------------------------------------------------------------
         InfoDialogButton(

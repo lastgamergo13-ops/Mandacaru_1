@@ -42,6 +42,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -95,9 +96,8 @@ fun EmulationScreen(
     var showQuitConfirmationDialog by remember { mutableStateOf(false) }
     var inputOverlayInputMode by rememberSaveable { mutableStateOf(DEFAULT) }
     var showEmulatedUSBDevices by remember { mutableStateOf(false) }
-    var showQuickControllerProfileSwitcher by remember { mutableStateOf(false) }
-    var showInGameCheats by remember { mutableStateOf(false) }
-    var frameGenPanelUnlocked by rememberSaveable { mutableStateOf(false) }
+    // Painel lateral DIREITO aberto em jogo (um por vez): Frame Gen, HUD/FPS, Cheats ou Controle. Ver InGamePanels.kt.
+    var sidePanel by rememberSaveable { mutableIntStateOf(InGamePanel.NONE) }
     var frameGenOn by remember { mutableStateOf(NativeSettings.getFsr3FrameGen()) }
 
     val emulationError by viewModel.emulationError.collectAsState()
@@ -168,6 +168,12 @@ fun EmulationScreen(
         }
     }
 
+    val onSideMenuStateChange: (SideMenuState) -> Unit = {
+        viewModel.updateSideMenuState(it)
+        setMotionSensorEnabled(it.isMotionEnabled)
+        NativeEmulation.setReplaceTVWithPadView(it.isTVReplacedWithPad)
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
@@ -182,9 +188,7 @@ fun EmulationScreen(
                     EmulationSideMenuContent(
                         sideMenuState = sideMenuState,
                         updateState = {
-                            viewModel.updateSideMenuState(it)
-                            setMotionSensorEnabled(it.isMotionEnabled)
-                            NativeEmulation.setReplaceTVWithPadView(it.isTVReplacedWithPad)
+                            onSideMenuStateChange(it)
                             closeDrawer()
                         },
                         onEditInputOverlay = {
@@ -209,17 +213,21 @@ fun EmulationScreen(
                             showEmulatedUSBDevices = true
                             closeDrawer()
                         },
-                        onShowQuickControllerProfileSwitcher = {
-                            showQuickControllerProfileSwitcher = true
+                        onShowControllerPanel = {
+                            sidePanel = InGamePanel.CONTROLLER
                             closeDrawer()
                         },
                         onShowInGameCheats = {
-                            showInGameCheats = true
+                            sidePanel = InGamePanel.CHEATS
                             closeDrawer()
                         },
-                        frameGenPanelUnlocked = frameGenPanelUnlocked,
+                        onShowHudPanel = {
+                            sidePanel = InGamePanel.HUD
+                            closeDrawer()
+                        },
+                        frameGenPanelUnlocked = sidePanel == InGamePanel.FRAME_GEN,
                         onFrameGenPanelUnlockedChange = {
-                            frameGenPanelUnlocked = it
+                            sidePanel = if (it) InGamePanel.FRAME_GEN else InGamePanel.NONE
                             closeDrawer()
                         },
                     )
@@ -262,15 +270,38 @@ fun EmulationScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (frameGenPanelUnlocked) {
-            FrameGenInGamePanel(
+        when (sidePanel) {
+            InGamePanel.FRAME_GEN -> FrameGenInGamePanel(
                 modifier = Modifier.align(Alignment.CenterEnd),
                 frameGenEnabled = frameGenOn,
                 onFrameGenChange = {
                     frameGenOn = it
                     NativeSettings.setFsr3FrameGen(it)
                 },
-                onClose = { frameGenPanelUnlocked = false },
+                onClose = { sidePanel = InGamePanel.NONE },
+            )
+
+            InGamePanel.HUD -> HudInGamePanel(
+                modifier = Modifier.align(Alignment.CenterEnd),
+                onClose = { sidePanel = InGamePanel.NONE },
+            )
+
+            InGamePanel.CHEATS -> CheatsInGamePanel(
+                modifier = Modifier.align(Alignment.CenterEnd),
+                onClose = { sidePanel = InGamePanel.NONE },
+            )
+
+            InGamePanel.CONTROLLER -> ControllerInGamePanel(
+                modifier = Modifier.align(Alignment.CenterEnd),
+                sideMenuState = sideMenuState,
+                onSideMenuStateChange = onSideMenuStateChange,
+                onEditInputOverlay = {
+                    snackbarHostState.showMessage(scope, tr("Edit input positions"))
+                    inputOverlayInputMode = EDIT_POSITION
+                    sidePanel = InGamePanel.NONE // fecha o painel para poder arrastar os botoes
+                },
+                onResetInputOverlay = { viewModel.resetInputOverlayLayout() },
+                onClose = { sidePanel = InGamePanel.NONE },
             )
         }
         SnackbarHost(
@@ -299,18 +330,6 @@ fun EmulationScreen(
     if (showEmulatedUSBDevices) {
         EmulatedUSBDevicesDialog(
             onDismiss = { showEmulatedUSBDevices = false },
-        )
-    }
-
-    if (showQuickControllerProfileSwitcher) {
-        QuickControllerProfileDialog(
-            onDismiss = { showQuickControllerProfileSwitcher = false },
-        )
-    }
-
-    if (showInGameCheats) {
-        InGameCheatsDialog(
-            onDismiss = { showInGameCheats = false },
         )
     }
 
@@ -360,8 +379,9 @@ private fun EmulationSideMenuContent(
     sideMenuState: SideMenuState,
     updateState: (SideMenuState) -> Unit,
     onShowEmulatedUSBDevices: () -> Unit,
-    onShowQuickControllerProfileSwitcher: () -> Unit,
+    onShowControllerPanel: () -> Unit,
     onShowInGameCheats: () -> Unit,
+    onShowHudPanel: () -> Unit,
     frameGenPanelUnlocked: Boolean,
     onFrameGenPanelUnlockedChange: (Boolean) -> Unit,
     onEditInputOverlay: () -> Unit,
@@ -392,14 +412,11 @@ private fun EmulationSideMenuContent(
         onClick = onShowEmulatedUSBDevices,
     )
 
-    // Quality of Life (Experimental/Hackers), off by default: only shown once explicitly enabled
-    // in the Quality of Life settings screen.
-    if (NativeSettings.isQuickControllerProfileSwitcherEnabled()) {
-        TextButtonItem(
-            label = tr("Switch controller profile"),
-            onClick = onShowQuickControllerProfileSwitcher,
-        )
-    }
+    // Abre o painel lateral direito com tudo que da para mudar nos controles durante o jogo (inclui a troca de perfil).
+    TextButtonItem(
+        label = tr("Controller"),
+        onClick = onShowControllerPanel,
+    )
 
     if (NativeCheats.isInGameCheatsEnabled()) {
         TextButtonItem(
@@ -415,14 +432,10 @@ private fun EmulationSideMenuContent(
         onCheckedChange = onFrameGenPanelUnlockedChange,
     )
 
-    var showFps by remember { mutableStateOf(NativeSettings.isOverlayFPSEnabled()) }
-    CheckboxItem(
-        label = tr("Show FPS"),
-        checked = showFps,
-        onCheckedChange = {
-            showFps = it
-            NativeSettings.setOverlayFPSEnabled(it)
-        },
+    // Abre o painel lateral direito com todas as opcoes do HUD (FPS, frame time, CPU, RAM, VRAM...), aplicadas na hora.
+    TextButtonItem(
+        label = tr("Show FPS / HUD"),
+        onClick = onShowHudPanel,
     )
 
     CheckboxItem(

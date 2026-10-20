@@ -219,9 +219,10 @@ fun GameProfileEditScreen(
         )
 
         // ── Graphic packs for this game (saved per-title, not globally) ──
-        if (graphicPackChoices.isNotEmpty()) {
+        if (graphicPackChoices.any { !it.basicInfo.virtualPath.contains("cheat", ignoreCase = true) }) {
             Header(text = tr("Graphic packs"))
-            graphicPackChoices.forEach { choice ->
+            // Packs de CHEATS nao aparecem aqui (a lista ficava bagunçada): eles sao controlados em jogo, pelo botao "Cheats" do menu lateral.
+            graphicPackChoices.filterNot { it.basicInfo.virtualPath.contains("cheat", ignoreCase = true) }.forEach { choice ->
                 Toggle(
                     label = choice.basicInfo.virtualPath,
                     checked = choice.selectedForThisGame,

@@ -5,6 +5,7 @@
 #include "config/CemuConfig.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceFlag.h"
 #include "config/NetworkSettings.h"
+#include "Common/DiagnosticsFlags.h"
 
 extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_getOverlayPosition([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
@@ -877,4 +878,29 @@ extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
 Java_info_cemu_cemu_nativeinterface_NativeSettings_setVkSyncDebug([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jboolean enabled)
 {
 	DrawTraceVk::SetSyncEnabled(enabled);
+}
+
+// ---- Logs e Diagnostico (Experimental/Hackers > Logs e Diagnostico) --------------------------------------------------
+// flag: 0 = Log profundo do OpenGL, 1 = Diagnostico de texturas, 2 = Limpeza automatica DESLIGADA (padrao: ligada)
+extern "C" [[maybe_unused]] JNIEXPORT jboolean JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_getDiagFlag([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint flag)
+{
+	if (flag < 0 || flag >= (jint)Diag::Flag::Count)
+		return false;
+	return Diag::IsEnabled((Diag::Flag)flag);
+}
+
+extern "C" [[maybe_unused]] JNIEXPORT void JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_setDiagFlag([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz, jint flag, jboolean enabled)
+{
+	if (flag < 0 || flag >= (jint)Diag::Flag::Count)
+		return;
+	Diag::SetEnabled((Diag::Flag)flag, enabled);
+}
+
+// apaga vk_quarantine*.txt e gl_shader_quarantine.txt; devolve quantos arquivos foram apagados
+extern "C" [[maybe_unused]] JNIEXPORT jint JNICALL
+Java_info_cemu_cemu_nativeinterface_NativeSettings_deleteQuarantineFiles([[maybe_unused]] JNIEnv* env, [[maybe_unused]] jclass clazz)
+{
+	return Diag::DeleteQuarantineFiles();
 }

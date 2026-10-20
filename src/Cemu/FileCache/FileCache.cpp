@@ -2,6 +2,7 @@
 #include "util/helpers/helpers.h"
 
 #include <mutex>
+#include <algorithm>
 #include <condition_variable>
 #include "zlib.h"
 #include "Common/FileStream.h"
@@ -364,6 +365,7 @@ void FileCache::_addFileInternal(uint64 name1, uint64 name2, const uint8* fileDa
 	std::unique_lock lock(this->mutex);
 	// find free entry in file table
 	sint32 entryIndex = -1;
+	bool isNewEntryForAppend = false;
 	// scan for already existing entry
 	for (sint32 i = 0; i < this->fileTableEntryCount; i++)
 	{
@@ -373,6 +375,7 @@ void FileCache::_addFileInternal(uint64 name1, uint64 name2, const uint8* fileDa
 			break;
 		}
 	}
+	isNewEntryForAppend = (entryIndex == -1);
 	if (entryIndex == -1)
 	{
 		while (true)
@@ -404,6 +407,20 @@ void FileCache::_addFileInternal(uint64 name1, uint64 name2, const uint8* fileDa
 	}
 	// find free space
 	sint64 currentStartOffset = 0;
+	if (isNewEntryForAppend)
+	{
+		// Arquivo NOVO: grava no fim do cache em vez de procurar buracos. A busca original e O(N) por colisao, ou seja ~O(N^2) por
+		// arquivo (cada colisao reinicia a varredura da tabela); com milhares de shaders a thread "fileCache" ficava a 90-97% de CPU
+		// nos logs do Zelda/Mario Kart em OpenGL (celular esquentando). Anexar no fim e uma unica varredura O(N).
+		const FileTableEntry* e = this->fileTableEntries;
+		const FileTableEntry* eEnd = this->fileTableEntries + this->fileTableEntryCount;
+		for (; e < eEnd; e++)
+		{
+			if (e->name1 == FILECACHE_FILETABLE_FREE_NAME && e->name2 == FILECACHE_FILETABLE_FREE_NAME)
+				continue;
+			currentStartOffset = std::max<sint64>(currentStartOffset, (sint64)e->fileOffset + (sint64)e->fileSize);
+		}
+	}
 	while (true)
 	{
 		bool hasCollision = false;

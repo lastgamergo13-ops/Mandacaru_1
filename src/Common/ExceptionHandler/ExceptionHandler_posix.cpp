@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "Common/DiagnosticsFlags.h"
 #include <exception>
 #include <cstdio>
 #include <cstdlib>
@@ -225,6 +226,8 @@ namespace
 				if (curTid != 0 && (s_stallSame == 3 || s_stallSame == 6))
 				{
 					cemuLog_log(LogType::Force, "[Stall] thread da GPU (tid={}) sem avancar ha ~{}s ({}); pedindo backtrace", curTid, s_stallSame * 3, curStatus);
+					if (s_stallSame == 3)
+						Diag::DumpRecentTextures("travamento da GPU"); // so escreve se "Diagnostico de texturas" estiver ligado
 					syscall(SYS_tgkill, getpid(), curTid, SIGUSR2);
 				}
 			}

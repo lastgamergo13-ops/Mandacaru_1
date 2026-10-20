@@ -3,6 +3,8 @@
 #include "Cafe/HW/Latte/Core/FrameGenSettings.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
+#include <cstdio>
+#include "Common/DiagnosticsFlags.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
 #include "Cafe/HW/Latte/Core/RendererInfo.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
@@ -254,6 +256,7 @@ void VulkanRenderer::DetermineVendor()
 	g_vkIsTurnipDriver = (driverId == VK_DRIVER_ID_MESA_TURNIP) || (std::string_view(properties.properties.deviceName).find("PurpleVK") != std::string_view::npos);
 
 	cemuLog_log(LogType::Force, "Using GPU: {}", properties.properties.deviceName);
+	std::snprintf(CrashCrumb::g_driverKey, sizeof(CrashCrumb::g_driverKey), "%04x_%08x", (unsigned)properties.properties.vendorID, (unsigned)properties.properties.driverVersion);
 	// Logs do Moto G54 (PowerVR BXM-8-256, Vulkan 1.1.170, vulkan.mtk.so): SIGSEGV dentro do driver em vkCreateGraphicsPipelines,
 	// tanto ao carregar o cache de pipelines quanto em jogo. No modo Auto o OpenGL ES desse aparelho funciona (60 fps em Mario 3D World),
 	// entao a inicializacao do Vulkan e recusada aqui e o chamador cai para o OpenGL. No modo "Vulkan" fixo continua funcionando
@@ -2447,6 +2450,7 @@ void VulkanRenderer::SubmitCommandBuffer(VkSemaphore signalSemaphore, VkSemaphor
 	}
 	if (result != VK_SUCCESS)
 	{
+		Diag::DumpRecentTextures("falha no vkQueueSubmit");
 		const char* name = result == VK_ERROR_DEVICE_LOST ? "VK_ERROR_DEVICE_LOST (a GPU travou/reiniciou)" :
 			result == VK_ERROR_OUT_OF_HOST_MEMORY ? "VK_ERROR_OUT_OF_HOST_MEMORY" :
 			result == VK_ERROR_OUT_OF_DEVICE_MEMORY ? "VK_ERROR_OUT_OF_DEVICE_MEMORY" : "outro";

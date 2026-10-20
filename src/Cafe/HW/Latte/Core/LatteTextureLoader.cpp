@@ -1,3 +1,4 @@
+#include "Common/DiagnosticsFlags.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/LatteAddrLib/LatteAddrLib.h"
 #include "config/ActiveSettings.h"
@@ -692,6 +693,9 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 	uint32 imageSize = texDecoder->calculateImageSize(&textureLoader);
 
 	uint8* pixelData = (uint8*)g_renderer->texture_acquireTextureUploadBuffer(imageSize);
+	// Diagnostico de texturas (Experimental > Logs e Diagnostico): registra esta carga; se a thread congelar aqui, o log mostra
+	// "EM ANDAMENTO" nesta textura.
+	const int diagTexIdx = Diag::TexBegin(physImagePtr, physMipPtr, (uint32)format, (uint32)dim, textureLoader.width, textureLoader.height, depth, pitch, (uint32)tileMode, mipIndex, sliceIndex, imageSize);
 	// decode texture (if data is required)
 #ifdef BENCHMARK_TEXTURE_DECODING
 	LARGE_INTEGER benchmark_begin;
@@ -749,6 +753,7 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 	}
 	// clean up
 	g_renderer->texture_releaseTextureUploadBuffer(pixelData);
+	Diag::TexEnd(diagTexIdx);
 	catchOpenGLError();
 }
 

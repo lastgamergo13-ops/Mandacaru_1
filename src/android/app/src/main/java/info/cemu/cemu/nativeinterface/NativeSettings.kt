@@ -48,6 +48,23 @@ object NativeSettings {
     @JvmStatic
     external fun getVkSyncDebug(): Boolean
 
+    /** Chaves de "Logs e Diagnostico" (ver DiagFlag). */
+    object DiagFlag {
+        const val GL_DEBUG = 0
+        const val TEX_LOG = 1
+        const val AUTO_CLEAN_OFF = 2
+    }
+
+    @JvmStatic
+    external fun getDiagFlag(flag: Int): Boolean
+
+    @JvmStatic
+    external fun setDiagFlag(flag: Int, enabled: Boolean)
+
+    /** Apaga vk_quarantine*.txt e gl_shader_quarantine.txt. Devolve quantos arquivos foram apagados. */
+    @JvmStatic
+    external fun deleteQuarantineFiles(): Int
+
     @JvmStatic
     external fun setVkSyncDebug(value: Boolean)
 

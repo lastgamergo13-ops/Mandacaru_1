@@ -1,3 +1,4 @@
+#include "Common/DiagnosticsFlags.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "WindowSystem.h"
 
@@ -905,6 +906,11 @@ void OpenGLRenderer::Initialize()
 	if (glDebugMessageCallback)
 	{
 		glEnable(GL_DEBUG_OUTPUT);
+		if (Diag::IsEnabled(Diag::Flag::GLDebug))
+		{
+			glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS); // a mensagem chega na chamada GL que a causou
+			glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE); // todas as fontes/tipos/severidades
+		}
 		glDebugMessageCallback(_glDebugCallbackAndroid, NULL);
 		cemuLog_log(LogType::Force, "[GL] KHR_debug ativo (mensagens do driver em [GLDEBUG])");
 	}
@@ -1296,13 +1302,16 @@ void _glDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GL
 // o que o renderer faz de errado em cada jogo. So loga erros/comportamento indefinido/portabilidade/severidade alta.
 static void _glDebugCallbackAndroid(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam)
 {
-	if (severity == GL_DEBUG_SEVERITY_NOTIFICATION || severity == GL_DEBUG_SEVERITY_LOW)
+	// "Log profundo do OpenGL" (Experimental > Logs e Diagnostico): sem filtro de severidade, ate 6 repeticoes por id e 3000 no total.
+	// Desligado (padrao): so erros/severidade media+, 2 por id e 250 no total (como antes).
+	const bool deepLog = Diag::IsEnabled(Diag::Flag::GLDebug);
+	if (!deepLog && (severity == GL_DEBUG_SEVERITY_NOTIFICATION || severity == GL_DEBUG_SEVERITY_LOW))
 		return;
 	static std::mutex m;
 	static std::unordered_map<uint32, int> perId;
 	static int total = 0;
 	std::lock_guard<std::mutex> l(m);
-	if (++perId[id] > 2 || total >= 250)
+	if (++perId[id] > (deepLog ? 6 : 2) || total >= (deepLog ? 3000 : 250))
 		return;
 	total++;
 	cemuLog_log(LogType::Force, "[GLDEBUG] tipo=0x{:x} sev=0x{:x} id={}: {}", (uint32)type, (uint32)severity, (uint32)id, message ? message : "");

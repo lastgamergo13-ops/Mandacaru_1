@@ -1,3 +1,4 @@
+#include "Common/DiagnosticsFlags.h"
 #include "AndroidFilesystemCallbacks.h"
 #include "AndroidInputHelpers.h"
 #include "AndroidMemoryManager.h"
@@ -573,6 +574,7 @@ Java_info_cemu_cemu_nativeinterface_NativeEmulation_prepareTitle([[maybe_unused]
 		{
 			return ERROR_GAME_BASE_FILES_NOT_FOUND;
 		}
+		Diag::OnTitleLaunch(baseTitleId); // limpa a quarentena se o jogo mudou (ver Common/DiagnosticsFlags.h)
 		CafeSystem::PREPARE_STATUS_CODE r = CafeSystem::PrepareForegroundTitle(baseTitleId);
 		if (r != CafeSystem::PREPARE_STATUS_CODE::SUCCESS)
 		{

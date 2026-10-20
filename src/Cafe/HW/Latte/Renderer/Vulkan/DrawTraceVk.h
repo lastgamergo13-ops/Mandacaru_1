@@ -106,6 +106,14 @@ namespace DrawTraceVk
 
 	inline std::mutex g_quarantineLoadMutex;
 
+	// vk_quarantine_<vendor><driverVersion>.txt (por driver); sem chave de driver cai no nome antigo vk_quarantine.txt
+	inline std::filesystem::path QuarantineFilePath()
+	{
+		if (CrashCrumb::g_driverKey[0] != 0)
+			return ActiveSettings::GetUserDataPath(fmt::format("vk_quarantine_{}.txt", CrashCrumb::g_driverKey));
+		return ActiveSettings::GetUserDataPath("vk_quarantine.txt");
+	}
+
 	// Thread-safe: agora tambem e chamado pelas threads de compilacao de pipeline (plCacheCompiler), nao so pela thread da GPU.
 	inline void LoadQuarantine()
 	{
@@ -114,7 +122,7 @@ namespace DrawTraceVk
 		std::lock_guard<std::mutex> loadLock(g_quarantineLoadMutex);
 		if (g_quarantineLoaded)
 			return;
-		const std::string quarantinePath = ActiveSettings::GetUserDataPath("vk_quarantine.txt").string();
+		const std::string quarantinePath = QuarantineFilePath().string();
 		std::strncpy(CrashCrumb::g_quarantinePath, quarantinePath.c_str(), sizeof(CrashCrumb::g_quarantinePath) - 1); // usado pelo tratador de sinais
 		std::ifstream f(quarantinePath);
 		if (!f)
@@ -218,7 +226,7 @@ namespace DrawTraceVk
 			return;
 		}
 		std::lock_guard<std::mutex> lk(g_fileMutex);
-		std::ofstream f(ActiveSettings::GetUserDataPath("vk_quarantine.txt"), std::ios::app);
+		std::ofstream f(QuarantineFilePath(), std::ios::app);
 		for (const Rec& r : sus)
 		{
 			if (g_quarantine.count(PipelineKey(r.vs, r.ps, r.gs)))

@@ -10,6 +10,8 @@ import info.cemu.cemu.settings.audio.AudioSettingsScreen
 import info.cemu.cemu.settings.customdrivers.CustomDriversScreen
 import info.cemu.cemu.settings.emulatedusbdevices.EmulatedUSBDevicesSettingsScreen
 import info.cemu.cemu.settings.experimental.ExperimentalSettingsScreen
+import info.cemu.cemu.settings.experimental.logs.LogsSettingsScreen
+import info.cemu.cemu.settings.experimental.audio.ExperimentalAudioSettingsScreen
 import info.cemu.cemu.settings.experimental.qualityoflife.QualityOfLifeSettingsScreen
 import info.cemu.cemu.settings.gamespath.GamePathsScreen
 import info.cemu.cemu.settings.general.GeneralSettingsScreen
@@ -80,6 +82,12 @@ private object SettingsRoutes {
 
     @Serializable
     object QualityOfLifeSettingsScreenRoute
+
+    @Serializable
+    object LogsSettingsScreenRoute
+
+    @Serializable
+    object ExperimentalAudioSettingsScreenRoute
 }
 
 fun NavGraphBuilder.settingsNavigation(navController: NavHostController) {
@@ -101,6 +109,18 @@ fun NavGraphBuilder.settingsNavigation(navController: NavHostController) {
             ExperimentalSettingsScreen(
                 navigateBack = { navController.popBackStack() },
                 goToQualityOfLifeSettings = { navController.navigate(SettingsRoutes.QualityOfLifeSettingsScreenRoute) },
+                goToLogsSettings = { navController.navigate(SettingsRoutes.LogsSettingsScreenRoute) },
+                goToAudioSettings = { navController.navigate(SettingsRoutes.ExperimentalAudioSettingsScreenRoute) },
+            )
+        }
+        composable<SettingsRoutes.ExperimentalAudioSettingsScreenRoute> {
+            ExperimentalAudioSettingsScreen(
+                navigateBack = { navController.popBackStack() },
+            )
+        }
+        composable<SettingsRoutes.LogsSettingsScreenRoute> {
+            LogsSettingsScreen(
+                navigateBack = { navController.popBackStack() },
             )
         }
         composable<SettingsRoutes.QualityOfLifeSettingsScreenRoute> {

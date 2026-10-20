@@ -22,6 +22,14 @@ fun vkTraceFileExists(): Boolean {
 
 fun tryShareLogFile(context: Context): Boolean = tryShareFile(context, LOG_FILE_NAME)
 
+/** Existe esse arquivo na pasta de dados do usuario? (usado pela tela "Logs e Diagnostico") */
+fun userDataFileExists(fileName: String): Boolean {
+    return File(NativeActiveSettings.getUserDataPath()).resolve(fileName).isFile
+}
+
+/** Compartilha um arquivo da pasta de dados do usuario pelo seletor do Android. */
+fun tryShareUserDataFile(context: Context, fileName: String): Boolean = tryShareFile(context, fileName)
+
 /** Compartilha o log do diagnostico Vulkan (vk_trace.txt) pelo seletor do Android. */
 fun tryShareVkTraceFile(context: Context): Boolean = tryShareFile(context, VK_TRACE_FILE_NAME)
 

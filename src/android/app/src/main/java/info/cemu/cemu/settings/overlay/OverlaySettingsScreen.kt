@@ -34,6 +34,16 @@ fun OverlaySettingsScreen(navigateBack: () -> Unit) {
         navigateBack = navigateBack,
     ) {
         Header(tr("Overlay"))
+        // vale para o HUD e para as notificacoes (antes ficava em Experimental > Quality of Life)
+        Slider(
+            label = tr("HUD/notification background opacity"),
+            initialValue = NativeSettings::getOverlayBackgroundOpacityPercentage,
+            valueFrom = 0,
+            valueTo = 100,
+            steps = 9,
+            onValueChange = NativeSettings::setOverlayBackgroundOpacityPercentage,
+            labelFormatter = { "$it%" },
+        )
         SingleSelection(
             label = tr("Position"),
             choice = overlayPosition,
@@ -96,6 +106,36 @@ private fun OverlaySettings() {
         description = tr("Cemu RAM usage in MB"),
         initialCheckedState = NativeSettings::isOverlayRAMUsageEnabled,
         onCheckedChanged = NativeSettings::setOverlayRAMUsageEnabled,
+    )
+    Toggle(
+        label = tr("CPU usage per core"),
+        description = tr("Per-core CPU usage in the HUD."),
+        initialCheckedState = NativeSettings::isOverlayCPUPerCoreUsageEnabled,
+        onCheckedChanged = NativeSettings::setOverlayCPUPerCoreUsageEnabled,
+    )
+    Toggle(
+        label = tr("VRAM usage"),
+        description = tr("Cemu VRAM usage in MB, in the HUD."),
+        initialCheckedState = NativeSettings::isOverlayVRAMUsageEnabled,
+        onCheckedChanged = NativeSettings::setOverlayVRAMUsageEnabled,
+    )
+    Toggle(
+        label = tr("Frame time"),
+        description = tr("Milliseconds per frame (same 5-second average as FPS), next to FPS in the HUD."),
+        initialCheckedState = NativeSettings::isOverlayFrameTimeEnabled,
+        onCheckedChanged = NativeSettings::setOverlayFrameTimeEnabled,
+    )
+    Toggle(
+        label = tr("Device thermal status"),
+        description = tr("Android's coarse thermal level (Nominal ... Shutdown), not a precise temperature. Needs Android 10+."),
+        initialCheckedState = NativeSettings::isOverlayDeviceThermalStatusEnabled,
+        onCheckedChanged = NativeSettings::setOverlayDeviceThermalStatusEnabled,
+    )
+    Toggle(
+        label = tr("Horizontal layout"),
+        description = tr("Lays the HUD stat lines out side by side instead of stacked (not applied to the Debug block)."),
+        initialCheckedState = NativeSettings::isOverlayHorizontalLayoutEnabled,
+        onCheckedChanged = NativeSettings::setOverlayHorizontalLayoutEnabled,
     )
     Toggle(
         label = tr("Debug"),
