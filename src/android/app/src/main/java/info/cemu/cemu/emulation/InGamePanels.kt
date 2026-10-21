@@ -257,6 +257,38 @@ fun ControllerInGamePanel(
             onSideMenuStateChange(sideMenuState.copy(isInputOverlayVisible = it))
             overlayViewModel.setOverlayEnabled(it)
         }
+
+        // ---- Controle emulado (o que o jogo "enxerga"): GamePad, Pro, Classic ou Wiimote ------------------------------
+        val emulatedIndex = overlaySettings.controllerIndex
+        var emulatedType by remember(emulatedIndex) { mutableIntStateOf(NativeInput.getControllerType(emulatedIndex)) }
+        val typeOptions = listOf(
+            NativeInput.EmulatedControllerType.VPAD to tr("Wii U GamePad"),
+            NativeInput.EmulatedControllerType.PRO to tr("Wii U Pro Controller"),
+            NativeInput.EmulatedControllerType.CLASSIC to tr("Wii U Classic Controller"),
+            NativeInput.EmulatedControllerType.WIIMOTE to tr("Wiimote"),
+        )
+        Text(tr("Emulated controller") + " (${emulatedIndex + 1})", fontSize = 14.sp)
+        typeOptions.forEach { (type, label) ->
+            // mesmas regras da tela de entrada: ha um maximo de GamePads e de controles Wii (Pro/Classic/Wiimote) ao mesmo tempo
+            val types = (0 until NativeInput.MAX_CONTROLLERS).map { NativeInput.getControllerType(it) }
+            val vpadCount = types.count { it == NativeInput.EmulatedControllerType.VPAD }
+            val wpadCount = types.count { it != NativeInput.EmulatedControllerType.VPAD && it != NativeInput.EmulatedControllerType.DISABLED }
+            val current = emulatedType
+            val allowed = if (type == NativeInput.EmulatedControllerType.VPAD)
+                current == NativeInput.EmulatedControllerType.VPAD || vpadCount < NativeInput.MAX_VPAD_CONTROLLERS
+            else
+                (current != NativeInput.EmulatedControllerType.VPAD && current != NativeInput.EmulatedControllerType.DISABLED) || wpadCount < NativeInput.MAX_WPAD_CONTROLLERS
+            FilterChip(
+                selected = emulatedType == type,
+                enabled = allowed,
+                onClick = {
+                    NativeInput.setControllerType(emulatedIndex, type)
+                    emulatedType = type
+                },
+                label = { Text(label, fontSize = 13.sp) },
+            )
+        }
+
         PanelSwitch(tr("Vibrate"), overlaySettings.isVibrateOnTouchEnabled) { overlayViewModel.setVibrateOnTouch(it) }
         PanelSlider(tr("Inputs opacity"), overlaySettings.alpha, 0, 255, 16, "") { overlayViewModel.setAlpha(it) }
         if (activeControllerIndices.size > 1) {

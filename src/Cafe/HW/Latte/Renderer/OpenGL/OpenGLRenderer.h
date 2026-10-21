@@ -86,6 +86,11 @@ public:
 	}
 	// GL_EXT/OES_texture_border_clamp (GL_CLAMP_TO_BORDER + cor de borda). No GLES 3.2 e core, em 3.0/3.1 so por extensao.
 	static bool HasBorderClamp() { return s_hasBorderClamp; }
+	// GL_DEPTH_CLAMP: core no GL desktop; no GLES so com GL_EXT_depth_clamp (sem ela glEnable/glDisable(GL_DEPTH_CLAMP) = GL_INVALID_ENUM)
+	static bool HasDepthClamp() { return s_hasDepthClamp; }
+	// true = GLES sem GL_EXT_depth_clamp: o depth clamp e emulado no vertex/geometry shader (uf_depthClampEmu)
+	static bool NeedsDepthClampEmulation() { return s_isGLES && !s_hasDepthClamp; }
+	float GetDepthClampEmuValue() const { return (NeedsDepthClampEmulation() && prevZClipEnable == 0) ? 1.0f : 0.0f; }
 
 	// True quando o driver GLES nao tem clip control (nem GL_EXT_clip_control): origem Y (UPPER_LEFT) e
 	// faixa Z (0..1) sao emuladas nos vertex/geometry shaders (uf_clipFlipY + SET_POSITION) e no front face.
@@ -99,6 +104,7 @@ public:
 	static inline bool s_isGLES = false;
 	static inline bool s_hasTextureShadowLod = true;
 	static inline bool s_hasBorderClamp = true;
+	static inline bool s_hasDepthClamp = true;
 	static inline bool s_clipControlEmulated = false;
 
   public:

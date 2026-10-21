@@ -112,113 +112,122 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
                 NativeSettings.RendererMode.OPENGL,
             ),
         )
-        InfoDialogButton(
-            title = tr("FSR Upscale"),
-            explanation = tr(
-                "Usa o filtro AMD FSR 1.0 (EASU + RCAS) do Cemu para ampliar a imagem do jogo " +
-                        "(renderizada na resolucao nativa do Wii U) ate a resolucao da sua tela, " +
-                        "com bordas mais nitidas que o bilinear/bicubic.\n\n" +
-                        "Honestidade tecnica: o FSR3 'de verdade' (temporal) precisa de depth e " +
-                        "motion vectors do jogo, que o Cemu nao tem. Por isso este botao liga o FSR 1.0 " +
-                        "(espacial), que e um upscale real e ja funciona. Pode ser definido por jogo no " +
-                        "perfil do jogo. Equivale a escolher \"FSR\" em Graficos > Filtro de upscale, " +
-                        "sem alterar aquela escolha."
-            ),
+        // As opcoes de FSR/Frame Gen ficam recolhidas: so aparecem ao tocar em "FSR3 Frame Gen" (a tela nao fica poluida).
+        var fsr3SectionExpanded by rememberSaveable { mutableStateOf(false) }
+        Button(
+            label = tr("FSR3 Frame Gen") + if (fsr3SectionExpanded) "  \u25B2" else "  \u25BC",
+            description = tr("FSR upscale, frame generation e overlay do Frame Gen. Toque para mostrar ou esconder as opcoes."),
+            onClick = { fsr3SectionExpanded = !fsr3SectionExpanded },
         )
-        var fsr3Upscale by rememberSaveable { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.UPSCALE) != 0) }
-        Toggle(
-            label = tr("FSR Upscale"),
-            description = tr("Liga o filtro FSR 1.0 (EASU+RCAS) no lugar do filtro de upscale normal. Vale na hora."),
-            initialCheckedState = { fsr3Upscale },
-            onCheckedChanged = {
-                fsr3Upscale = it
-                NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.UPSCALE, if (it) 1 else 0)
-            },
-        )
-        InfoDialogButton(
-            title = tr("FSR3 Frame Gen"),
-            explanation = tr(
-                "AMD FSR3 Frame Generation inserts an extra, AI-generated frame between two frames " +
-                        "the game actually rendered, estimating motion between them (Optical Flow) to " +
-                        "synthesize what the in-between frame should look like. This raises the number of " +
-                        "frames shown per second without the GPU having to fully render each one, making " +
-                        "motion look smoother.\n\n" +
-                        "Status: EXPERIMENTAL (Vulkan; OpenGL ES em teste). Uses AMD's real Optical Flow plus a custom " +
-                        "interpolation shader (the game's depth/motion vectors are not available in " +
-                        "Cemu). Can be toggled while a game is running; costs extra GPU time and may " +
-                        "show artifacts."
-            ),
-        )
-        Toggle(
-            label = tr("FSR3 Frame Gen"),
-            description = tr(
-                "Experimental (Vulkan; OpenGL ES em teste). Liga/desliga na hora, ate com o jogo rodando.\n" +
-                        "Resumo: gera um frame extra entre dois frames reais, estimando o movimento " +
-                        "entre eles, pra deixar o movimento na tela mais suave sem a GPU ter que " +
-                        "renderizar cada frame por completo."
-            ),
-            initialCheckedState = NativeSettings::getFsr3FrameGen,
-            onCheckedChanged = NativeSettings::setFsr3FrameGen,
-        )
-        SingleSelection(
-            label = tr("Frame multiplier"),
-            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER) },
-            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER, it) },
-            choiceToString = { "${it}x" },
-            choices = listOf(2, 3, 4),
-        )
-        SingleSelection(
-            label = tr("Flow scale"),
-            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE) },
-            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE, it) },
-            choiceToString = { "$it%" },
-            choices = listOf(25, 50, 75, 100),
-        )
-        Toggle(
-            label = tr("Frame Gen Optical Flow pyramid"),
-            description = tr("Optical Flow multi-nivel (ate 7 niveis, como o FSR3 original): movimento grande mais preciso, custa mais GPU. Se o shader do downsample faltar, volta sozinho ao modo simples."),
-            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PYRAMID) != 0 },
-            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PYRAMID, if (it) 1 else 0) },
-        )
-        Toggle(
-            label = tr("Frame Gen performance mode"),
-            description = tr("Optical Flow mais leve (forca Flow scale ate 50%). Menos custo de GPU, movimento menos preciso."),
-            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE) != 0 },
-            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE, if (it) 1 else 0) },
-        )
-        SingleSelection(
-            label = tr("Frame Gen base FPS limit"),
-            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT) },
-            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT, it) },
-            choiceToString = { if (it == 0) tr("Off") else "$it FPS" },
-            choices = listOf(0, 30, 40, 60),
-        )
-        Toggle(
-            label = tr("Frame Gen overlay"),
-            description = tr("Mostra a linha 'FrameGen: real + gerado = total' no overlay de stats (precisa do FPS ligado). A posicao, cor e tamanho seguem o overlay normal."),
-            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW) != 0 },
-            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW, if (it) 1 else 0) },
-        )
-        SingleSelection(
-            label = tr("Frame Gen overlay decimals"),
-            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS) },
-            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS, it) },
-            choiceToString = { it.toString() },
-            choices = listOf(0, 1, 2),
-        )
-        SingleSelection(
-            label = tr("Frame Gen overlay style"),
-            initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE) },
-            onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE, it) },
-            choiceToString = { if (it == 0) tr("Detailed") else tr("Compact") },
-            choices = listOf(0, 1),
-        )
-        Toggle(
-            label = tr("Frame Gen overlay: GPU cost"),
-            description = tr("Mostra o custo de GPU (ms) do frame gerado (Optical Flow + interpolacao)."),
-            initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS) != 0 },
-            onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS, if (it) 1 else 0) },
-        )
+        if (fsr3SectionExpanded) {
+            InfoDialogButton(
+                title = tr("FSR Upscale"),
+                explanation = tr(
+                    "Usa o filtro AMD FSR 1.0 (EASU + RCAS) do Cemu para ampliar a imagem do jogo " +
+                            "(renderizada na resolucao nativa do Wii U) ate a resolucao da sua tela, " +
+                            "com bordas mais nitidas que o bilinear/bicubic.\n\n" +
+                            "Honestidade tecnica: o FSR3 'de verdade' (temporal) precisa de depth e " +
+                            "motion vectors do jogo, que o Cemu nao tem. Por isso este botao liga o FSR 1.0 " +
+                            "(espacial), que e um upscale real e ja funciona. Pode ser definido por jogo no " +
+                            "perfil do jogo. Equivale a escolher \"FSR\" em Graficos > Filtro de upscale, " +
+                            "sem alterar aquela escolha."
+                ),
+            )
+            var fsr3Upscale by rememberSaveable { mutableStateOf(NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.UPSCALE) != 0) }
+            Toggle(
+                label = tr("FSR Upscale"),
+                description = tr("Liga o filtro FSR 1.0 (EASU+RCAS) no lugar do filtro de upscale normal. Vale na hora."),
+                initialCheckedState = { fsr3Upscale },
+                onCheckedChanged = {
+                    fsr3Upscale = it
+                    NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.UPSCALE, if (it) 1 else 0)
+                },
+            )
+            InfoDialogButton(
+                title = tr("FSR3 Frame Gen"),
+                explanation = tr(
+                    "AMD FSR3 Frame Generation inserts an extra, AI-generated frame between two frames " +
+                            "the game actually rendered, estimating motion between them (Optical Flow) to " +
+                            "synthesize what the in-between frame should look like. This raises the number of " +
+                            "frames shown per second without the GPU having to fully render each one, making " +
+                            "motion look smoother.\n\n" +
+                            "Status: EXPERIMENTAL (Vulkan; OpenGL ES em teste). Uses AMD's real Optical Flow plus a custom " +
+                            "interpolation shader (the game's depth/motion vectors are not available in " +
+                            "Cemu). Can be toggled while a game is running; costs extra GPU time and may " +
+                            "show artifacts."
+                ),
+            )
+            Toggle(
+                label = tr("FSR3 Frame Gen"),
+                description = tr(
+                    "Experimental (Vulkan; OpenGL ES em teste). Liga/desliga na hora, ate com o jogo rodando.\n" +
+                            "Resumo: gera um frame extra entre dois frames reais, estimando o movimento " +
+                            "entre eles, pra deixar o movimento na tela mais suave sem a GPU ter que " +
+                            "renderizar cada frame por completo."
+                ),
+                initialCheckedState = NativeSettings::getFsr3FrameGen,
+                onCheckedChanged = NativeSettings::setFsr3FrameGen,
+            )
+            SingleSelection(
+                label = tr("Frame multiplier"),
+                initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER) },
+                onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.MULTIPLIER, it) },
+                choiceToString = { "${it}x" },
+                choices = listOf(2, 3, 4),
+            )
+            SingleSelection(
+                label = tr("Flow scale"),
+                initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE) },
+                onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.FLOW_SCALE, it) },
+                choiceToString = { "$it%" },
+                choices = listOf(25, 50, 75, 100),
+            )
+            Toggle(
+                label = tr("Frame Gen Optical Flow pyramid"),
+                description = tr("Optical Flow multi-nivel (ate 7 niveis, como o FSR3 original): movimento grande mais preciso, custa mais GPU. Se o shader do downsample faltar, volta sozinho ao modo simples."),
+                initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PYRAMID) != 0 },
+                onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PYRAMID, if (it) 1 else 0) },
+            )
+            Toggle(
+                label = tr("Frame Gen performance mode"),
+                description = tr("Optical Flow mais leve (forca Flow scale ate 50%). Menos custo de GPU, movimento menos preciso."),
+                initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE) != 0 },
+                onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.PERFORMANCE_MODE, if (it) 1 else 0) },
+            )
+            SingleSelection(
+                label = tr("Frame Gen base FPS limit"),
+                initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT) },
+                onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.BASE_FPS_LIMIT, it) },
+                choiceToString = { if (it == 0) tr("Off") else "$it FPS" },
+                choices = listOf(0, 30, 40, 60),
+            )
+            Toggle(
+                label = tr("Frame Gen overlay"),
+                description = tr("Mostra a linha 'FrameGen: real + gerado = total' no overlay de stats (precisa do FPS ligado). A posicao, cor e tamanho seguem o overlay normal."),
+                initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW) != 0 },
+                onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_SHOW, if (it) 1 else 0) },
+            )
+            SingleSelection(
+                label = tr("Frame Gen overlay decimals"),
+                initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS) },
+                onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_DECIMALS, it) },
+                choiceToString = { it.toString() },
+                choices = listOf(0, 1, 2),
+            )
+            SingleSelection(
+                label = tr("Frame Gen overlay style"),
+                initialChoice = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE) },
+                onChoiceChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_STYLE, it) },
+                choiceToString = { if (it == 0) tr("Detailed") else tr("Compact") },
+                choices = listOf(0, 1),
+            )
+            Toggle(
+                label = tr("Frame Gen overlay: GPU cost"),
+                description = tr("Mostra o custo de GPU (ms) do frame gerado (Optical Flow + interpolacao)."),
+                initialCheckedState = { NativeSettings.getFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS) != 0 },
+                onCheckedChanged = { NativeSettings.setFsr3Option(NativeSettings.Fsr3Option.OVERLAY_GPU_MS, if (it) 1 else 0) },
+            )
+        }
         Button(
             label = tr("Quality of Life"),
             description = tr("Convenience features ported from an older branch, kept separate from everything else here. Off by default."),
@@ -339,6 +348,24 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             description = tr("More thorough recompiler cleanup passes. See \"What does this do?\" above."),
             initialCheckedState = NativeSettings::isAdvancedIMLOptimizationsEnabled,
             onCheckedChanged = NativeSettings::setAdvancedIMLOptimizationsEnabled,
+        )
+        InfoDialogButton(
+            title = tr("Performance"),
+            explanation = tr(
+                "Sobre \"overclock\": o Android nao permite que um aplicativo aumente o clock da CPU ou da GPU alem do " +
+                        "limite do fabricante - isso so e possivel com root, e nao existe como o app fazer. No Eden, a opcao " +
+                        "de \"overclock\" mexe no clock EMULADO do console, nao no do celular.\n\n" +
+                        "O que da para fazer legitimamente e o modo de desempenho sustentado: o app pede ao sistema um " +
+                        "nivel estavel de CPU/GPU que ele consegue manter, evitando a oscilacao de frequencia (throttling) " +
+                        "quando o aparelho esquenta. Em muitos aparelhos isso da FPS mais constante, nao mais FPS maximo. " +
+                        "So funciona se o aparelho declarar suporte; vale na proxima vez que voce abrir um jogo."
+            ),
+        )
+        Toggle(
+            label = tr("Sustained performance mode"),
+            description = tr("Pede ao Android um nivel estavel de CPU/GPU (nao e overclock). Vale ao abrir o proximo jogo."),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.SUSTAINED_PERFORMANCE) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.SUSTAINED_PERFORMANCE, it) },
         )
         Button(
             label = tr("Audio"),

@@ -1,4 +1,7 @@
 #pragma once
+#include <algorithm>
+#include <thread>
+#include <vector>
 #include "Cafe/HW/Latte/Core/LatteTextureLoader.h"
 
 // V11.28 - Decoders BC1..BC5 -> formatos de 8 bits (RGBA8 / R8 / RG8), usados no OpenGL/GLES quando o driver
@@ -21,10 +24,12 @@ namespace LatteTexRGBA8
 		return (sint8)(v >= 0.0f ? (v * 127.0f + 0.5f) : (v * 127.0f - 0.5f));
 	}
 
+	// Decodifica as linhas de blocos y em [yBegin, yEnd). Pura: so le o ctx e escreve na sua faixa de 'out', entao varias faixas
+	// podem rodar em threads diferentes ao mesmo tempo.
 	template<int NCOMP, int BLOCKBYTES, bool SNORM, typename TDecodeFn>
-	inline void decodeLoop(LatteTextureLoaderCtx* ctx, uint8* out, TDecodeFn decodeBlock)
+	inline void decodeBand(LatteTextureLoaderCtx* ctx, uint8* out, const TDecodeFn& decodeBlock, sint32 yBegin, sint32 yEnd)
 	{
-		for (sint32 y = 0; y < ctx->height; y += ctx->stepY)
+		for (sint32 y = yBegin; y < yEnd; y += ctx->stepY)
 		{
 			for (sint32 x = 0; x < ctx->width; x += ctx->stepX)
 			{
@@ -50,6 +55,40 @@ namespace LatteTexRGBA8
 				}
 			}
 		}
+	}
+
+	// Nos logs (Moto G54 / Adreno 650) a DECODIFICACAO na CPU era o gargalo das texturas BC: 100-2000 ms por textura (um BC4 de
+	// 5120x720 levava 2 s) enquanto o envio para a GPU levava ~0 ms. Texturas grandes agora sao divididas em faixas de linhas
+	// decodificadas em paralelo (ate 4 threads, nunca mais que metade dos nucleos). Texturas pequenas continuam em 1 thread.
+	template<int NCOMP, int BLOCKBYTES, bool SNORM, typename TDecodeFn>
+	inline void decodeLoop(LatteTextureLoaderCtx* ctx, uint8* out, TDecodeFn decodeBlock)
+	{
+		const sint32 blocksY = (ctx->height + ctx->stepY - 1) / ctx->stepY;
+		const sint32 blocksX = (ctx->width + ctx->stepX - 1) / ctx->stepX;
+		const uint64 totalBlocks = (uint64)blocksX * (uint64)blocksY;
+		const unsigned hw = std::thread::hardware_concurrency();
+		unsigned numThreads = 1;
+		if (totalBlocks >= 16384 && blocksY >= 8 && hw >= 4)
+			numThreads = std::min<unsigned>(4, hw / 2);
+		if (numThreads <= 1)
+		{
+			decodeBand<NCOMP, BLOCKBYTES, SNORM>(ctx, out, decodeBlock, 0, ctx->height);
+			return;
+		}
+		const sint32 rowsPerBand = (sint32)((blocksY + numThreads - 1) / numThreads) * ctx->stepY;
+		std::vector<std::thread> workers;
+		workers.reserve(numThreads - 1);
+		for (unsigned t = 1; t < numThreads; t++)
+		{
+			const sint32 yBegin = (sint32)t * rowsPerBand;
+			if (yBegin >= ctx->height)
+				break;
+			const sint32 yEnd = std::min<sint32>(ctx->height, yBegin + rowsPerBand);
+			workers.emplace_back([=, &decodeBlock]() { decodeBand<NCOMP, BLOCKBYTES, SNORM>(ctx, out, decodeBlock, yBegin, yEnd); });
+		}
+		decodeBand<NCOMP, BLOCKBYTES, SNORM>(ctx, out, decodeBlock, 0, std::min<sint32>(ctx->height, rowsPerBand)); // faixa 0 na thread atual
+		for (auto& w : workers)
+			w.join();
 	}
 
 	template<int NCOMP>

@@ -72,6 +72,19 @@ namespace LatteDecompiler
 			shaderSrc->add("uniform float uf_clipFlipY;" _CRLF);
 			uniformCurrentOffset += 4;
 		}
+		// NOTA (emulacao TEMPORARIA de GL_DEPTH_CLAMP, GLES sem GL_EXT_depth_clamp): ultimo estagio antes do rasterizador recebe
+		// uf_depthClampEmu (1.0 quando o jogo desliga o clipping Z). SET_POSITION entao limita z a [-w, w], o que impede o
+		// recorte pelos planos near/far. Diferenca para o clamp real: aqui o limite e aplicado por VERTICE (a profundidade e
+		// interpolada depois), nao por fragmento - triangulos que cruzam o plano ficam com profundidade levemente diferente.
+		// Quando o driver tem GL_EXT_depth_clamp (ou e desktop GL) este caminho nao e gerado.
+		if (rendererType == RendererAPI::OpenGL && OpenGLRenderer::NeedsDepthClampEmulation() &&
+			((decompilerContext->shaderType == LatteConst::ShaderType::Vertex && !decompilerContext->options->usesGeometryShader) ||
+			decompilerContext->shaderType == LatteConst::ShaderType::Geometry))
+		{
+			uniformCurrentOffset = (uniformCurrentOffset + 3)&~3;
+			shaderSrc->add("uniform float uf_depthClampEmu;" _CRLF);
+			uniformCurrentOffset += 4;
+		}
 		bool alphaTestEnable = decompilerContext->contextRegistersNew->SX_ALPHA_TEST_CONTROL.get_ALPHA_TEST_ENABLE();
 		if (decompilerContext->shaderType == LatteConst::ShaderType::Pixel && alphaTestEnable)
 		{
@@ -335,18 +348,22 @@ namespace LatteDecompiler
 			if (decompilerContext->analyzer.hasStreamoutWrite)
 				src->add("#define XFB_BLOCK_LAYOUT(__bufferIndex, __stride, __location) layout(xfb_buffer = __bufferIndex, xfb_stride = __stride)" _CRLF);
 
+			// emulacao de depth clamp (ver uf_depthClampEmu acima): vazio quando nao e necessaria
+			const bool lastStage = !(decompilerContext->shaderType == LatteConst::ShaderType::Vertex && decompilerContext->options->usesGeometryShader);
+			const char* depthClampEmu = (OpenGLRenderer::NeedsDepthClampEmulation() && lastStage) ?
+				"; gl_Position.z = mix(gl_Position.z, clamp(gl_Position.z, -gl_Position.w, gl_Position.w), uf_depthClampEmu)" : "";
 			if (OpenGLRenderer::IsClipControlEmulated())
 			{
 				// sem glClipControl: Y invertido (UPPER_LEFT) e Z 0..w -> -w..w feitos aqui
 				if (decompilerContext->shaderType == LatteConst::ShaderType::Vertex && decompilerContext->options->usesGeometryShader)
 					src->add("#define SET_POSITION(_v) gl_Position = _v" _CRLF); // o GS aplica
 				else if (decompilerContext->contextRegistersNew->PA_CL_CLIP_CNTL.get_DX_CLIP_SPACE_DEF())
-					src->add("#define SET_POSITION(_v) gl_Position = _v; gl_Position.y *= uf_clipFlipY; gl_Position.z = gl_Position.z * 2.0 - gl_Position.w" _CRLF);
+					src->add(std::string("#define SET_POSITION(_v) gl_Position = _v; gl_Position.y *= uf_clipFlipY; gl_Position.z = gl_Position.z * 2.0 - gl_Position.w") + depthClampEmu + _CRLF);
 				else
-					src->add("#define SET_POSITION(_v) gl_Position = _v; gl_Position.y *= uf_clipFlipY" _CRLF);
+					src->add(std::string("#define SET_POSITION(_v) gl_Position = _v; gl_Position.y *= uf_clipFlipY") + depthClampEmu + _CRLF);
 			}
 			else
-				src->add("#define SET_POSITION(_v) gl_Position = _v\r\n");
+				src->add(std::string("#define SET_POSITION(_v) gl_Position = _v") + depthClampEmu + "\r\n");
 			if (decompilerContext->options->usesGeometryShader)
 			{
 				// GLSL ES requires explicit locations on separable program interfaces

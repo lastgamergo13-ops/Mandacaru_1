@@ -23,6 +23,7 @@ namespace Diag
 		GLDebug = 0,
 		TexLog = 1,
 		AutoCleanOff = 2,
+		SustainedPerformance = 3,
 		Count
 	};
 
@@ -33,11 +34,12 @@ namespace Diag
 		case Flag::GLDebug: return "diag_gl_debug";
 		case Flag::TexLog: return "diag_tex_log";
 		case Flag::AutoCleanOff: return "diag_autoclean_off";
+		case Flag::SustainedPerformance: return "diag_sustained_perf";
 		default: return "diag_unknown";
 		}
 	}
 
-	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1 }; // -1 = ainda nao lido
+	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1 }; // -1 = ainda nao lido
 
 	inline bool IsEnabled(Flag f)
 	{
@@ -97,6 +99,19 @@ namespace Diag
 	// OUTRO (os hashes de shader sao especificos de cada jogo), a menos que o usuario tenha desligado a limpeza automatica.
 	inline void OnTitleLaunch(uint64_t titleId)
 	{
+		// Qual variante nativa esta rodando? Uma build Debug (-O0) deixa o emulador MUITO mais lento (a decodificacao de texturas dos
+		// logs levava ~9 us por bloco, 30-50x mais que o esperado). Aparece no log a cada abertura de jogo.
+#if defined(__OPTIMIZE__)
+		const char* optimized = "SIM (-O1 ou maior)";
+#else
+		const char* optimized = "NAO (-O0, build Debug: o emulador fica muito mais lento - instale a variante RELEASE)";
+#endif
+#if defined(NDEBUG)
+		const char* ndebug = "NDEBUG definido (release)";
+#else
+		const char* ndebug = "NDEBUG NAO definido (debug: asserts ligados)";
+#endif
+		cemuLog_log(LogType::Force, "[Diag] build nativa otimizada: {} | {}", optimized, ndebug);
 		const auto lastFile = ActiveSettings::GetUserDataPath("diag_last_title");
 		std::string last;
 		{

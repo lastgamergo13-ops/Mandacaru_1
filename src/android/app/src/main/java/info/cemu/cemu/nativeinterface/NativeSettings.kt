@@ -53,6 +53,7 @@ object NativeSettings {
         const val GL_DEBUG = 0
         const val TEX_LOG = 1
         const val AUTO_CLEAN_OFF = 2
+        const val SUSTAINED_PERFORMANCE = 3
     }
 
     @JvmStatic

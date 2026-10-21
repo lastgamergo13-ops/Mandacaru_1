@@ -201,6 +201,8 @@ struct LatteDecompilerShader
 		sint32 loc_fragCoordScale;
 		sint32 loc_clipFlipY; // uf_clipFlipY (emulacao de clip control no GLES)
 		float ufCurrentValueClipFlipY;
+		sint32 loc_depthClampEmu; // uf_depthClampEmu (emulacao de GL_DEPTH_CLAMP no GLES sem GL_EXT_depth_clamp)
+		float ufCurrentValueDepthClampEmu;
 		std::vector<LatteUniformTextureScaleEntry_t> list_ufTexRescale; // list of mappings for uf_tex*Scale <-> uniform location
 		float ufCurrentValueAlphaTestRef;
 		float ufCurrentValueFragCoordScale[2];

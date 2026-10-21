@@ -1139,6 +1139,7 @@ void OpenGLRenderer::QuerySupportedFormats()
 	bool isGLES = glVersionString && boost::icontains(glVersionString, "OpenGL ES");
 	s_isGLES = isGLES;
 	s_hasTextureShadowLod = !isGLES || IsGLExtensionSupported("GL_EXT_texture_shadow_lod");
+	s_hasDepthClamp = !isGLES || IsGLExtensionSupported("GL_EXT_depth_clamp");
 	s_hasBorderClamp = !isGLES || IsGLExtensionSupported("GL_EXT_texture_border_clamp") || IsGLExtensionSupported("GL_OES_texture_border_clamp");
 	int versionMajor = 0, versionMinor = 0;
 	if (glVersionString)
@@ -1252,7 +1253,7 @@ void OpenGLRenderer::QuerySupportedFormats()
 				{ "texture_barrier", { "GL_ARB_texture_barrier", "GL_NV_texture_barrier", "GL_EXT_shader_framebuffer_fetch" }, "feedback de textura/framebuffer sem barreira" },
 				{ "float_render_targets", { "GL_EXT_color_buffer_float" }, "render targets float indisponiveis" },
 				{ "float_blend", { "GL_EXT_float_blend" }, "blend em alvos float indisponivel" },
-				{ "depth_clamp", { "GL_ARB_depth_clamp", "GL_EXT_depth_clamp" }, "depth clamp ausente (sombras/ceu podem cortar)" },
+				{ "depth_clamp", { "GL_ARB_depth_clamp", "GL_EXT_depth_clamp" }, "EMULADO no vertex shader (uf_depthClampEmu, limite por vertice: pequenas diferencas em sombras/ceu)" },
 				{ "anisotropic", { "GL_EXT_texture_filter_anisotropic" }, "filtro anisotropico ausente" },
 				{ "border_clamp", { "GL_EXT_texture_border_clamp", "GL_OES_texture_border_clamp" }, "wrap CLAMP_BORDER vira clamp_to_edge (implementado em OpenGLRendererCore.cpp)" },
 				{ "mirror_clamp", { "GL_EXT_texture_mirror_clamp_to_edge", "GL_ARB_texture_mirror_clamp_to_edge" }, "wrap MIRROR_CLAMP vira mirror" },
@@ -2861,15 +2862,18 @@ void OpenGLRenderer::renderstate_updateBlendingAndColorControl()
 	// todo: Mass Effect 3 uses precompiled display lists which seem to write values to PA_CL_CLIP_CNTL which aren't available via the traditional GX2 API
 	if (prevZClipEnable != zClipEnable)
 	{
-		if (zClipEnable)
+		if (HasDepthClamp()) // GLES sem GL_EXT_depth_clamp: a chamada gerava GL_INVALID_ENUM ("capability 34383") a cada troca
 		{
-			// disable depth clamping and enable clipping
-			glDisable(GL_DEPTH_CLAMP);
-		}
-		else
-		{
-			// enable depth clamping and disable clipping
-			glEnable(GL_DEPTH_CLAMP);
+			if (zClipEnable)
+			{
+				// disable depth clamping and enable clipping
+				glDisable(GL_DEPTH_CLAMP);
+			}
+			else
+			{
+				// enable depth clamping and disable clipping
+				glEnable(GL_DEPTH_CLAMP);
+			}
 		}
 		prevZClipEnable = zClipEnable;
 	}
@@ -2974,7 +2978,8 @@ void OpenGLRenderer::renderstate_resetDepthControl()
 	//	prevZClipEnable = 1;
 	//}
 
-	glDisable(GL_DEPTH_CLAMP);
+	if (HasDepthClamp())
+		glDisable(GL_DEPTH_CLAMP);
 	prevZClipEnable = 1;
 
 	if (prevPrimitiveRestartIndex != 0xFFFFFFFF)

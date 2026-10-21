@@ -389,30 +389,13 @@ private fun EmulationSideMenuContent(
     onTakeScreenshot: () -> Unit,
     onQuit: () -> Unit,
 ) {
-    CheckboxItem(
-        label = tr("Enable motion"),
-        checked = sideMenuState.isMotionEnabled,
-        onCheckedChange = { updateState(sideMenuState.copy(isMotionEnabled = it)) },
-    )
-
-    CheckboxItem(
-        label = tr("Replace TV with PAD"),
-        checked = sideMenuState.isTVReplacedWithPad,
-        onCheckedChange = { updateState(sideMenuState.copy(isTVReplacedWithPad = it)) },
-    )
-
-    CheckboxItem(
-        label = tr("Show PAD"),
-        checked = sideMenuState.isPadVisible,
-        onCheckedChange = { updateState(sideMenuState.copy(isPadVisible = it)) },
-    )
-
     TextButtonItem(
         label = tr("Emulated USB Devices"),
         onClick = onShowEmulatedUSBDevices,
     )
 
-    // Abre o painel lateral direito com tudo que da para mudar nos controles durante o jogo (inclui a troca de perfil).
+    // Abre o painel lateral direito "Controller": motion, TV/PAD, overlay de toques (mostrar/editar/resetar), controle emulado
+    // (GamePad/Pro/Classic/Wiimote) e perfis. Esses itens ficavam soltos aqui e foram movidos para la.
     TextButtonItem(
         label = tr("Controller"),
         onClick = onShowControllerPanel,
@@ -436,24 +419,6 @@ private fun EmulationSideMenuContent(
     TextButtonItem(
         label = tr("Show FPS / HUD"),
         onClick = onShowHudPanel,
-    )
-
-    CheckboxItem(
-        label = tr("Show input overlay"),
-        checked = sideMenuState.isInputOverlayVisible,
-        onCheckedChange = { updateState(sideMenuState.copy(isInputOverlayVisible = it)) },
-    )
-
-    TextButtonItem(
-        label = tr("Edit inputs"),
-        enabled = sideMenuState.isInputOverlayVisible,
-        onClick = onEditInputOverlay,
-    )
-
-    TextButtonItem(
-        label = tr("Reset input overlay"),
-        enabled = sideMenuState.isInputOverlayVisible,
-        onClick = onResetInputOverlay,
     )
 
     // Quality of Life (Experimental/Hackers), off by default: only shown once explicitly enabled

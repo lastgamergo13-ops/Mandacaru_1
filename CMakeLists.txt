@@ -92,6 +92,11 @@ add_definitions(-DEMULATOR_VERSION_PATCH=${EMULATOR_VERSION_PATCH})
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 # enable link time optimization for release builds
+# Android: uma build Debug (-O0) deixa o emulador inutilizavel de lento; forca otimizacao tambem no Debug.
+if (ANDROID)
+	set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g")
+	set(CMAKE_C_FLAGS_DEBUG "-O2 -g")
+endif()
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
 

@@ -527,8 +527,85 @@ void LatteDrawGL_prepareIndicesWithGPUCache(MPTR indexDataMPTR, _INDEX_TYPE inde
 	indexState.indexData = (uint8*)(size_t)cacheEntry->heapEntry->startOffset;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// GLES: GL_QUADS (e GL_QUAD_STRIP) NAO existem. O driver Adreno respondia "draw mode 7 is unknown" e DESCARTAVA o desenho
+// (geometria sumida / tela preta). Aqui o quad vira 2 triangulos (a,b,c,a,c,d - a mesma triangulacao do LatteIndices.cpp usada
+// pelo Vulkan) com um buffer de indices temporario gerado a cada draw.
+// ---------------------------------------------------------------------------------------------------------------------
+static MPTR s_glesQuadIndexDataMPTR = 0; // endereco dos indices do draw atual (preenchido antes do LatteDrawGL_doDraw)
+static GLuint s_glesQuadIndexBuffer = 0;
+
+static void LatteDrawGL_drawQuadsAsTrianglesGLES(_INDEX_TYPE indexType, uint32 baseVertex, uint32 baseInstance, uint32 instanceCount, uint32 count, bool isStrip)
+{
+	// QUADS: quad q usa os vertices 4q..4q+3 -> triangulos (0,1,2)(0,2,3). QUAD_STRIP: quad q usa 2q..2q+3 -> (0,1,2)(2,1,3)
+	// (as mesmas triangulacoes de LatteIndices.cpp, usadas pelo Vulkan).
+	const uint32 numQuads = isStrip ? (count >= 4 ? (count - 2) / 2 : 0) : (count / 4);
+	if (numQuads == 0)
+		return;
+	const uint32 outCount = numQuads * 6;
+	const bool use32 = (indexType == _INDEX_TYPE::U32_BE) || (indexType == _INDEX_TYPE::AUTO && count > 0xFFFF);
+	static std::vector<uint8> s_tmp;
+	s_tmp.resize((size_t)outCount * (use32 ? 4 : 2));
+	uint32 maxIndex = 0;
+	auto emit = [&](auto* dst, auto fetch)
+	{
+		for (uint32 q = 0; q < numQuads; q++)
+		{
+			uint32 p[6];
+			if (isStrip)
+			{
+				p[0] = q * 2 + 0; p[1] = q * 2 + 1; p[2] = q * 2 + 2; p[3] = q * 2 + 2; p[4] = q * 2 + 1; p[5] = q * 2 + 3;
+			}
+			else
+			{
+				p[0] = q * 4 + 0; p[1] = q * 4 + 1; p[2] = q * 4 + 2; p[3] = q * 4 + 0; p[4] = q * 4 + 2; p[5] = q * 4 + 3;
+			}
+			for (int k = 0; k < 6; k++)
+			{
+				auto idx = fetch(p[k]);
+				maxIndex = std::max<uint32>(maxIndex, (uint32)idx);
+				dst[k] = idx;
+			}
+			dst += 6;
+		}
+	};
+	if (indexType == _INDEX_TYPE::AUTO)
+	{
+		if (use32) emit((uint32*)s_tmp.data(), [](uint32 i) { return (uint32)i; });
+		else emit((uint16*)s_tmp.data(), [](uint32 i) { return (uint16)i; });
+	}
+	else if (indexType == _INDEX_TYPE::U16_BE)
+	{
+		const uint16* src = (const uint16*)memory_getPointerFromPhysicalOffset(s_glesQuadIndexDataMPTR);
+		emit((uint16*)s_tmp.data(), [src](uint32 i) { return (uint16)_swapEndianU16(src[i]); });
+	}
+	else if (indexType == _INDEX_TYPE::U32_BE)
+	{
+		const uint32* src = (const uint32*)memory_getPointerFromPhysicalOffset(s_glesQuadIndexDataMPTR);
+		emit((uint32*)s_tmp.data(), [src](uint32 i) { return (uint32)_swapEndianU32(src[i]); });
+	}
+	else
+		return;
+	if (s_glesQuadIndexBuffer == 0)
+		glGenBuffers(1, &s_glesQuadIndexBuffer);
+	OpenGLRenderer::SetArrayElementBuffer(s_glesQuadIndexBuffer);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)s_tmp.size(), s_tmp.data(), GL_STREAM_DRAW);
+	const GLenum glType = use32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
+	if ((instanceCount > 1 || baseInstance != 0) && glDrawElementsInstancedBaseVertexBaseInstance)
+		glDrawElementsInstancedBaseVertexBaseInstance(GL_TRIANGLES, outCount, glType, nullptr, instanceCount, baseVertex, baseInstance);
+	else if (baseVertex != 0 && glDrawRangeElementsBaseVertex)
+		glDrawRangeElementsBaseVertex(GL_TRIANGLES, 0, maxIndex, outCount, glType, nullptr, baseVertex);
+	else
+		glDrawRangeElements(GL_TRIANGLES, 0, maxIndex, outCount, glType, nullptr);
+}
+
 void LatteDrawGL_doDraw(_INDEX_TYPE indexType, uint32 baseVertex, uint32 baseInstance, uint32 instanceCount, uint32 count)
 {
+	if ((sGLActiveDrawMode == GL_QUADS || sGLActiveDrawMode == GL_QUAD_STRIP) && OpenGLRenderer::IsGLES())
+	{
+		LatteDrawGL_drawQuadsAsTrianglesGLES(indexType, baseVertex, baseInstance, instanceCount, count, sGLActiveDrawMode == GL_QUAD_STRIP);
+		return;
+	}
 	if (indexType == _INDEX_TYPE::U16_BE)
 	{
 		// 16bit index, big endian
@@ -1003,6 +1080,7 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 	// prepare index cache
 	beginPerfMonProfiling(performanceMonitor.gpuTime_dcStageIndexMgr);
 	LatteDrawGL_prepareIndicesWithGPUCache(indexDataMPTR, indexType, count, (sint32)primitiveMode);
+	s_glesQuadIndexDataMPTR = indexDataMPTR; // usado por LatteDrawGL_drawQuadsAsTrianglesGLES (GLES nao tem GL_QUADS)
 	endPerfMonProfiling(performanceMonitor.gpuTime_dcStageIndexMgr);
 
 	// synchronize vertex and uniform buffers
@@ -1065,6 +1143,15 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 				vertexShader->uniform.ufCurrentValueClipFlipY = flipY;
 			}
 		}
+		if (vertexShader->uniform.loc_depthClampEmu >= 0)
+		{
+			const float dc = GetDepthClampEmuValue();
+			if (vertexShader->uniform.ufCurrentValueDepthClampEmu != dc)
+			{
+				glProgramUniform1fv(vertexShaderGL->GetProgram(), vertexShader->uniform.loc_depthClampEmu, 1, &dc);
+				vertexShader->uniform.ufCurrentValueDepthClampEmu = dc;
+			}
+		}
 		// update uf_texRescaleFactors
 		for (auto& entry : vertexShader->uniform.list_ufTexRescale)
 		{
@@ -1095,6 +1182,15 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 			{
 				glProgramUniform1fv(geometryShaderGL->GetProgram(), geometryShader->uniform.loc_clipFlipY, 1, &flipY);
 				geometryShader->uniform.ufCurrentValueClipFlipY = flipY;
+			}
+		}
+		if (geometryShader->uniform.loc_depthClampEmu >= 0)
+		{
+			const float dc = GetDepthClampEmuValue();
+			if (geometryShader->uniform.ufCurrentValueDepthClampEmu != dc)
+			{
+				glProgramUniform1fv(geometryShaderGL->GetProgram(), geometryShader->uniform.loc_depthClampEmu, 1, &dc);
+				geometryShader->uniform.ufCurrentValueDepthClampEmu = dc;
 			}
 		}
 		// update uf_texRescaleFactors
@@ -1535,11 +1631,19 @@ void OpenGLRenderer::renderstate_updateTextureSettingsGL(LatteDecompilerShader* 
 			iLodBias = baseTexture->overwriteInfo.lodBias;
 		}
 
-		if (samplerState->minLod != iMinLOD)
+		// NOTA (emulacao TEMPORARIA, GLES): o GLES nao tem GL_TEXTURE_LOD_BIAS (nem em textura nem em sampler object). Aproximacao: um
+		// bias POSITIVO (textura mais borrada) e simulado subindo o GL_TEXTURE_MIN_LOD pelo mesmo valor - igual ao bias quando o LOD
+		// calculado e ~0 (textura em resolucao nativa), que e o caso comum. Bias NEGATIVO (mais nitido) nao tem equivalente e e
+		// ignorado. Para fazer certo: somar o bias no shader com texture(..., bias) e um uniform por unidade de textura.
+		// Quando o driver for desktop GL, o caminho original (GL_TEXTURE_LOD_BIAS) continua sendo usado.
+		uint32 iMinLODEffective = iMinLOD;
+		if (OpenGLRenderer::IsGLES() && iLodBias > 0)
+			iMinLODEffective = std::min<uint32>(iMinLOD + (uint32)iLodBias, std::max<uint32>(iMaxLOD, iMinLOD));
+		if (samplerState->minLod != iMinLODEffective)
 		{
 			quickBindTexture();
-			glTexParameterf(hostTextureView->glTexTarget, GL_TEXTURE_MIN_LOD, (float)iMinLOD / 64.0f);
-			samplerState->minLod = iMinLOD;
+			glTexParameterf(hostTextureView->glTexTarget, GL_TEXTURE_MIN_LOD, (float)iMinLODEffective / 64.0f);
+			samplerState->minLod = iMinLODEffective;
 		}
 		if (samplerState->maxLod != iMaxLOD)
 		{
@@ -1550,7 +1654,8 @@ void OpenGLRenderer::renderstate_updateTextureSettingsGL(LatteDecompilerShader* 
 		if (samplerState->lodBias != iLodBias)
 		{
 			quickBindTexture();
-			glTexParameterf(hostTextureView->glTexTarget, GL_TEXTURE_LOD_BIAS, (float)iLodBias / 64.0f);
+			if (!OpenGLRenderer::IsGLES()) // GLES nao tem GL_TEXTURE_LOD_BIAS (pname 34049 -> "not supported for this API call")
+				glTexParameterf(hostTextureView->glTexTarget, GL_TEXTURE_LOD_BIAS, (float)iLodBias / 64.0f);
 			samplerState->lodBias = iLodBias;
 		}
 		// depth compare

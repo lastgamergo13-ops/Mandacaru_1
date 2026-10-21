@@ -19,6 +19,7 @@ import info.cemu.cemu.common.settings.AppSettingsStore
 import info.cemu.cemu.common.ui.components.ActivityContent
 import info.cemu.cemu.common.ui.localization.TranslatableContent
 import info.cemu.cemu.emulation.input.ControllerCallbacks
+import info.cemu.cemu.nativeinterface.NativeSettings
 import info.cemu.cemu.emulation.input.ControllerMotionHandler
 import info.cemu.cemu.emulation.input.DeviceControllerCallbacks
 import info.cemu.cemu.emulation.input.DeviceMotionHandler
@@ -112,6 +113,26 @@ class EmulationActivity : AppCompatActivity() {
         return launchPath
     }
 
+    /**
+     * "Modo de desempenho sustentado" (Experimental > Performance). NAO e overclock: o Android nao deixa um app aumentar o clock
+     * alem do que o fabricante permite (so root faz isso). O que este modo faz e pedir ao sistema um nivel de CPU/GPU ESTAVEL
+     * que ele consegue manter por muito tempo, para o aparelho nao ficar subindo e caindo de frequencia (throttling) por
+     * causa do calor. Precisa de suporte do aparelho.
+     */
+    private fun applySustainedPerformanceMode() {
+        try {
+            val enabled = NativeSettings.getDiagFlag(NativeSettings.DiagFlag.SUSTAINED_PERFORMANCE)
+            if (!enabled)
+                return
+            val powerManager = getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+            if (powerManager?.isSustainedPerformanceModeSupported == true) {
+                window.setSustainedPerformanceMode(true)
+            }
+        } catch (_: Throwable) {
+            // recurso opcional: qualquer falha simplesmente deixa o modo desligado
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -120,6 +141,7 @@ class EmulationActivity : AppCompatActivity() {
         setupHotkeys()
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        applySustainedPerformanceMode()
 
         setFullscreen()
 

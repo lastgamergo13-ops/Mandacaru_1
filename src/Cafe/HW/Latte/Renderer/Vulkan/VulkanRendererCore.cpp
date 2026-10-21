@@ -878,8 +878,34 @@ VkDescriptorSetInfo* VulkanRenderer::draw_getOrCreateDescriptorSet(PipelineInfo*
 				}
 				else
 				{
-					// default to transparent black if custom border color is not supported
-					samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+					// Sem VK_EXT_custom_border_color (Adreno 610/Snapdragon 665 e outros drivers antigos) a cor de borda arbitraria nao
+					// existe. EMULACAO TEMPORARIA: usa a mais PROXIMA das 3 cores padrao do Vulkan (transparente preto, opaco preto,
+					// opaco branco) em vez de sempre transparente preto como antes. Para fazer exato seria preciso amostrar a borda no
+					// shader com uma cor por sampler (uniform) - fica como melhoria futura.
+					const _LatteRegisterSetSamplerBorderColor* borderColorReg;
+					if (shader->shaderType == LatteConst::ShaderType::Vertex)
+						borderColorReg = LatteGPUState.contextNew.TD_VS_SAMPLER_BORDER_COLOR + stageSamplerIndex;
+					else if (shader->shaderType == LatteConst::ShaderType::Pixel)
+						borderColorReg = LatteGPUState.contextNew.TD_PS_SAMPLER_BORDER_COLOR + stageSamplerIndex;
+					else // geometry
+						borderColorReg = LatteGPUState.contextNew.TD_GS_SAMPLER_BORDER_COLOR + stageSamplerIndex;
+					const float r = borderColorReg->red.get_channelValue();
+					const float g = borderColorReg->green.get_channelValue();
+					const float b = borderColorReg->blue.get_channelValue();
+					const float a = borderColorReg->alpha.get_channelValue();
+					auto dist2 = [&](float cr, float cg, float cb, float ca)
+					{
+						return (r - cr) * (r - cr) + (g - cg) * (g - cg) + (b - cb) * (b - cb) + (a - ca) * (a - ca);
+					};
+					const float dTransparentBlack = dist2(0, 0, 0, 0);
+					const float dOpaqueBlack = dist2(0, 0, 0, 1);
+					const float dOpaqueWhite = dist2(1, 1, 1, 1);
+					if (dOpaqueWhite < dTransparentBlack && dOpaqueWhite < dOpaqueBlack)
+						samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+					else if (dOpaqueBlack < dTransparentBlack)
+						samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+					else
+						samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 				}
 			}
 		}

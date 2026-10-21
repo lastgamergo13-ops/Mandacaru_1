@@ -100,6 +100,14 @@ android {
 
     buildTypes {
         debug {
+            // O Android Gradle Plugin compila o C++ da variante debug com CMAKE_BUILD_TYPE=Debug (-O0), o que deixa o emulador
+            // dezenas de vezes mais lento. A debug agora usa RelWithDebInfo (otimizada + simbolos), ainda depuravel o bastante.
+            @Suppress("UnstableApiUsage")
+            externalNativeBuild {
+                cmake {
+                    arguments("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
+                }
+            }
             applicationIdSuffix = ".debug"
             ndk {
                 debugSymbolLevel = "FULL"
