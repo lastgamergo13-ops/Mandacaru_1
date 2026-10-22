@@ -227,22 +227,22 @@ namespace
 				{
 					cemuLog_log(LogType::Force, "[Stall] thread da GPU (tid={}) sem avancar ha ~{}s ({}); pedindo backtrace", curTid, s_stallSame * 3, curStatus);
 					if (s_stallSame == 3)
-					{
 						Diag::DumpRecentTextures("travamento da GPU"); // so escreve se "Diagnostico de texturas" estiver ligado
-						// Preso ha ~27 s dentro do compilador de shader do driver GL (logs do Moto G54: libusc.so / glCompileShader)?
-						// Entao esse shader vai para a quarentena: nas proximas aberturas ele e pulado em vez de congelar de novo.
-						if (CrashCrumb::g_glCompileActiveGlobal.load() && CrashCrumb::g_glQuarantinePath[0] != 0)
-						{
-							const unsigned long long b = CrashCrumb::g_glCompileBaseGlobal, a = CrashCrumb::g_glCompileAuxGlobal, t = CrashCrumb::g_glCompileTypeGlobal;
-							if (FILE* qf = fopen(CrashCrumb::g_glQuarantinePath, "a"))
-							{
-								fprintf(qf, "%016llx %016llx %016llx\n", b, a, t);
-								fclose(qf);
-								CrashLog_WriteLine(fmt::format("[Quarentena] thread da GPU presa no compilador GLSL do driver: shader {:016x} aux={:016x} gravado em gl_shader_quarantine.txt (pulado na proxima abertura)", b, a));
-							}
-						}
-					}
 					syscall(SYS_tgkill, getpid(), curTid, SIGUSR2);
+				}
+				// Preso dentro do compilador de shader do driver GL (logs do Moto G54: libusc.so / glCompileShader)?
+				// ATENCAO: uma compilacao LENTA (~27 s no Adreno) termina sozinha e o shader e essencial; pular esse shader deixava o jogo
+				// branco/preto na abertura seguinte. Por isso so vai para a quarentena quem ficar preso ~2 minutos (s_stallSame conta de
+				// 3 em 3 s: 40 = 120 s), ou seja, um travamento de verdade.
+				if (curTid != 0 && s_stallSame == 40 && CrashCrumb::g_glCompileActiveGlobal.load() && CrashCrumb::g_glQuarantinePath[0] != 0)
+				{
+					const unsigned long long b = CrashCrumb::g_glCompileBaseGlobal, a = CrashCrumb::g_glCompileAuxGlobal, t = CrashCrumb::g_glCompileTypeGlobal;
+					if (FILE* qf = fopen(CrashCrumb::g_glQuarantinePath, "a"))
+					{
+						fprintf(qf, "%016llx %016llx %016llx\n", b, a, t);
+						fclose(qf);
+						CrashLog_WriteLine(fmt::format("[Quarentena] thread da GPU presa ha 2 min no compilador GLSL do driver: shader {:016x} aux={:016x} gravado em gl_shader_quarantine.txt (pulado na proxima abertura)", b, a));
+					}
 				}
 			}
 

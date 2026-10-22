@@ -705,7 +705,23 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 #endif
 	if (tex->overwriteInfo.hasFormatOverwrite == false && tex->overwriteInfo.hasResolutionOverwrite == false)
 	{
-		texDecoder->decode(&textureLoader, pixelData);
+		// CAUSA (medida pelo BENCH do diagnostico): calcular enderecos leva ~0,5 ms e ler a memoria do jogo ~0,1 ms, mas a decodificacao
+		// levava 146-1270 ms. O buffer de upload ('pixelData') e memoria MAPEADA da GPU (write-combined, sem cache): o decodificador
+		// escreve blocos de 4-8 bytes espalhados (ordem de blocos, 4 linhas intercaladas), e cada escrita dessas custa ~2 us ali.
+		// Solucao: decodificar numa memoria normal COM cache e entregar ao buffer da GPU com UMA copia sequencial (memcpy).
+		// Texturas pequenas continuam direto (a copia extra nao compensa).
+		static thread_local std::vector<uint8> s_decodeScratch;
+		if (imageSize >= 32 * 1024 && imageSize <= 64 * 1024 * 1024)
+		{
+			if (s_decodeScratch.size() < imageSize)
+				s_decodeScratch.resize(imageSize);
+			texDecoder->decode(&textureLoader, s_decodeScratch.data());
+			memcpy(pixelData, s_decodeScratch.data(), imageSize);
+			if (s_decodeScratch.capacity() > 8 * 1024 * 1024)
+				std::vector<uint8>().swap(s_decodeScratch); // nao segura >8 MB de RAM entre cargas (celulares de 4-6 GB)
+		}
+		else
+			texDecoder->decode(&textureLoader, pixelData);
 	}
 	Diag::TexDecoded(diagTexIdx); // marca o fim da DECODIFICACAO (o resto ate TexEnd e o envio para a GPU)
 	// Micro-benchmark do diagnostico: nos logs a decodificacao de BC4 levava ~9 us por bloco (30-50x mais que o esperado) mesmo em

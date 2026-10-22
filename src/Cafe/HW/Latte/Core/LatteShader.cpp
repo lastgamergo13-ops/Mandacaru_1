@@ -472,6 +472,17 @@ void LatteShader_DumpShader(uint64 baseHash, uint64 auxHash, LatteDecompilerShad
 	else if (shader->shaderType == LatteConst::ShaderType::Pixel)
 		suffix = "ps";
 
+	// A pasta dump/shaders nao existe no Android; createFile2 nao cria pastas, entao antes NADA era gravado ("Exportar shaders" vazio).
+	{
+		static bool s_dumpDirReady = false;
+		if (!s_dumpDirReady)
+		{
+			std::error_code ec;
+			std::filesystem::create_directories(ActiveSettings::GetUserDataPath("dump/shaders"), ec);
+			s_dumpDirReady = true;
+			cemuLog_log(LogType::Force, "[Diag] despejo de shaders ligado: gravando em dump/shaders (so shaders NOVOS desta sessao sao compilados; os que vem do cache so aparecem se o cache foi apagado)");
+		}
+	}
 	FileStream* fs = FileStream::createFile2(ActiveSettings::GetUserDataPath("dump/shaders/{:016x}_{:016x}_{}.txt", baseHash, auxHash, suffix));
 	if (fs)
 	{

@@ -139,15 +139,33 @@ static void MonitorThread() {
 
             // V11.28: sob pressao de RAM do sistema, descarta texturas nao usadas automaticamente (antes so
             // acontecia com o "teto de memoria" manual ligado). Repete enquanto a pressao continuar, com intervalo.
+            static auto lastAutoCleanup = std::chrono::steady_clock::now() - std::chrono::seconds(60);
+            static uint64_t availAtLastCleanup = 0;
+            static int fruitlessCleanups = 0; // limpezas seguidas que NAO aumentaram a RAM livre
             if (level != MemoryPressureLevel::Normal) {
-                static auto lastAutoCleanup = std::chrono::steady_clock::now() - std::chrono::seconds(60);
                 auto nowTp = std::chrono::steady_clock::now();
-                auto minGap = std::chrono::seconds(level == MemoryPressureLevel::Critical ? 2 : 6);
-                if (nowTp - lastAutoCleanup >= minGap) {
+                // Recuo exponencial. Nos logs (celular de 6 GB, ~730 MB livres = abaixo do limite de 14%) a limpeza disparava a cada
+                // 6 s para sempre sem nunca recuperar RAM: as texturas eram descartadas e recarregadas sem parar (a decodificacao de
+                // uma textura grande leva ate 2 s), o que causava FPS baixo e texturas faltando/brancas. Se duas limpezas seguidas nao
+                // trouxeram pelo menos 64 MB de volta, o intervalo dobra (ate 60 s); volta ao normal quando a pressao some.
+                const int baseGap = (level == MemoryPressureLevel::Critical ? 2 : 6);
+                const int backoff = std::min(60, baseGap << std::min(fruitlessCleanups, 4));
+                if (nowTp - lastAutoCleanup >= std::chrono::seconds(backoff)) {
+                    if (availAtLastCleanup != 0) {
+                        if (availMB > availAtLastCleanup + 64)
+                            fruitlessCleanups = 0;
+                        else
+                            fruitlessCleanups++;
+                    }
+                    availAtLastCleanup = availMB;
                     lastAutoCleanup = nowTp;
-                    cemuLog_log(LogType::Force, "AndroidMemoryManager: pouca RAM livre ({} MB de {} MB), liberando texturas nao usadas", availMB, totalMB);
+                    cemuLog_log(LogType::Force, "AndroidMemoryManager: pouca RAM livre ({} MB de {} MB), liberando texturas nao usadas (proxima em >= {} s)", availMB, totalMB, std::min(60, baseGap << std::min(fruitlessCleanups, 4)));
                     LatteTC_RequestAggressiveCleanup();
                 }
+            } else {
+                // pressao acabou: zera o recuo
+                fruitlessCleanups = 0;
+                availAtLastCleanup = 0;
             }
 
             // Notifica callback apenas quando o nível muda

@@ -178,6 +178,13 @@ void RendererShaderGL::storeBinary()
 		return;
 	if (!m_isGameShader || m_isGfxPackShader)
 		return;
+	{
+		// nunca grava no cache um programa que NAO linkou (shader com erro de compilacao): o binario invalido seria reutilizado
+		GLint linkStatus = GL_FALSE;
+		glGetProgramiv(m_program, GL_LINK_STATUS, &linkStatus);
+		if (linkStatus != GL_TRUE)
+			return;
+	}
 
 	GLint binaryLength = 0;
 	glGetProgramiv(m_program, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
@@ -432,7 +439,12 @@ void RendererShaderGL::ShaderCacheLoading_begin(uint64 cacheTitleId)
 	if (usePrecompiled)
 	{
 		// GLES: invalida binarios antigos (shaders ES mudaram na V11.19 e com clip control emulado o codigo do VS/GS e outro)
-		const uint32 cacheMagic = GeneratePrecompiledCacheId() ^ (OpenGLRenderer::IsGLES() ? 0x11190000u : 0u) ^ (OpenGLRenderer::IsClipControlEmulated() ? 0xC11B0001u : 0u);
+		// kGlslGenerationTag: AUMENTE este numero sempre que a geracao de GLSL mudar (preambulo, emulacoes, macros). O cache de binarios e
+		// indexado so pelo hash do shader do Wii U, nao pelo texto GLSL: sem isso, binarios compilados por uma versao antiga do emulador
+		// (inclusive versoes com bug, ex.: o helper de offset que quebrava todos os shaders) continuam sendo carregados na SEGUNDA
+		// abertura do jogo e deixam tudo branco/preto, mesmo depois de corrigir o gerador. Historico: 3 = textureGrad/depth clamp/LOD/quads.
+		constexpr uint32 kGlslGenerationTag = 0x5A1C0003u;
+		const uint32 cacheMagic = GeneratePrecompiledCacheId() ^ (OpenGLRenderer::IsGLES() ? 0x11190000u : 0u) ^ (OpenGLRenderer::IsClipControlEmulated() ? 0xC11B0001u : 0u) ^ kGlslGenerationTag;
 		const std::string cacheFilename = fmt::format("{:016x}_gl.bin", cacheTitleId);
         s_programBinaryCache = FileCache::Open(ActiveSettings::GetCachePath("shaderCache/precompiled/{}", cacheFilename), true, cacheMagic);
 		if (s_programBinaryCache == nullptr)
