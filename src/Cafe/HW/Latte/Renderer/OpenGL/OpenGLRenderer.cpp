@@ -310,6 +310,16 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 #if defined(__ANDROID__)
 static void _glDebugCallbackAndroid(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam);
 #endif
+
+// GLES: estas caps so existem no GL desktop. glEnable/glDisable com elas gera GL_INVALID_ENUM ("cap is not one of the values accepted by
+// this function" no log do PowerVR/Adreno). No GLES o sRGB do framebuffer e automatico (formato sRGB do anexo) e o tamanho do ponto vem
+// do shader, entao pular a chamada e o comportamento correto, nao uma perda.
+static inline bool IsDesktopOnlyCapGLES(GLenum cap)
+{
+	return OpenGLRenderer::IsGLES() && (cap == GL_FRAMEBUFFER_SRGB || cap == GL_PROGRAM_POINT_SIZE || cap == GL_POINT_SPRITE || cap == GL_ALPHA_TEST || cap == GL_COLOR_LOGIC_OP);
+}
+static inline void CapEnableGLES(GLenum cap) { if (!IsDesktopOnlyCapGLES(cap)) glEnable(cap); }
+static inline void CapDisableGLES(GLenum cap) { if (!IsDesktopOnlyCapGLES(cap)) glDisable(cap); }
 #include <unordered_set>
 #include <cstring>
 #include <string>
@@ -960,7 +970,7 @@ void OpenGLRenderer::Initialize()
 
 #if !defined(__ANDROID__)
 	// enable framebuffer SRGB support
-	glEnable(GL_FRAMEBUFFER_SRGB);
+	CapEnableGLES(GL_FRAMEBUFFER_SRGB);
 
 	if (this->m_vendor != GfxVendor::AMD)
 	{
@@ -968,10 +978,10 @@ void OpenGLRenderer::Initialize()
 		// it also seems like AMD ignores GL_POINT_SPRITE and gl_PointCoord is always 0.0/0.0
 
 		// point size is always defined via shader
-		glEnable(GL_PROGRAM_POINT_SIZE);
+		CapEnableGLES(GL_PROGRAM_POINT_SIZE);
 
 		// since we are using compatibility profile point sprites are disabled by default (e.g. gl_PointCoord wont work)
-		glEnable(GL_POINT_SPRITE);
+		CapEnableGLES(GL_POINT_SPRITE);
 	}
 #else
 	// GLES: GL_FRAMEBUFFER_SRGB / GL_PROGRAM_POINT_SIZE / GL_POINT_SPRITE nao existem (dariam GL_INVALID_ENUM);
@@ -1322,6 +1332,10 @@ static void _glDebugCallbackAndroid(GLenum source, GLenum type, GLuint id, GLenu
 	if (++perId[id] > (deepLog ? 6 : 2) || total >= (deepLog ? 3000 : 250))
 		return;
 	total++;
+	// Com o diagnostico de texturas ligado, um ERRO do driver (ex.: "pixel buffer format or pixel type is an invalid enum") despeja as
+	// ultimas texturas carregadas: a marcada "EM ANDAMENTO"/a mais recente e a que causou o erro (a mensagem e sincrona).
+	if (deepLog && type == 0x824C /*GL_DEBUG_TYPE_ERROR*/ && total <= 8)
+		Diag::DumpRecentTextures("erro do driver GL");
 	cemuLog_log(LogType::Force, "[GLDEBUG] tipo=0x{:x} sev=0x{:x} id={}: {}", (uint32)type, (uint32)severity, (uint32)id, message ? message : "");
 }
 #endif
@@ -1513,12 +1527,12 @@ void OpenGLRenderer::DrawBackbufferQuad(LatteTextureView* texView, RendererOutpu
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, useLinearTexFilter ? GL_LINEAR : GL_NEAREST);
 	texViewGL->samplerState.filterMag = 0xFFFFFFFF;
 
-	glDisable(GL_FRAMEBUFFER_SRGB);
+	CapDisableGLES(GL_FRAMEBUFFER_SRGB);
 
 	uint16 indexData[6] = { 0,1,2,3,4,5 };
 	glDrawRangeElements(GL_TRIANGLES, 0, 5, 6, GL_UNSIGNED_SHORT, indexData);
 
-	glEnable(GL_FRAMEBUFFER_SRGB);
+	CapEnableGLES(GL_FRAMEBUFFER_SRGB);
 
 	// unbind texture
 	texture_bindAndActivate(nullptr, 0);
@@ -1576,7 +1590,7 @@ void OpenGLRenderer::DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 ima
 	// --- pass 1: EASU, game texture (native res) -> intermediate texture (output res) ---
 	glBindFramebuffer(GL_FRAMEBUFFER, m_fsrIntermediateFBO);
 	glViewportIndexedf(0, 0, 0, (float)imageWidth, (float)imageHeight);
-	glDisable(GL_FRAMEBUFFER_SRGB); // EASU/RCAS both operate on raw values; sRGB encode (if any) is applied by RCAS's shared preamble, same as every other filter
+	CapDisableGLES(GL_FRAMEBUFFER_SRGB); // EASU/RCAS both operate on raw values; sRGB encode (if any) is applied by RCAS's shared preamble, same as every other filter
 	shader_unbind(RendererShader::ShaderType::kGeometry);
 	shader_bind(RendererOutputShader::s_fsr_easu_shader->GetVertexShader());
 	shader_bind(RendererOutputShader::s_fsr_easu_shader->GetFragmentShader());
@@ -1623,7 +1637,7 @@ void OpenGLRenderer::DrawBackbufferQuadFSR(LatteTextureView* texView, sint32 ima
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glDrawRangeElements(GL_TRIANGLES, 0, 5, 6, GL_UNSIGNED_SHORT, indexData);
 	glBindTexture(GL_TEXTURE_2D, 0);
-	glEnable(GL_FRAMEBUFFER_SRGB);
+	CapEnableGLES(GL_FRAMEBUFFER_SRGB);
 	catchOpenGLError();
 
 	// restore viewport
@@ -2283,6 +2297,8 @@ void OpenGLRenderer::texture_setActiveTextureUnit(sint32 index)
 void OpenGLRenderer::texture_bindAndActivate(LatteTextureView* textureView, uint32 textureUnit)
 {
 	const auto textureViewGL = (LatteTextureViewGL*)textureView;
+	if (textureViewGL)
+		textureViewGL->RefreshFakeViewIfNeeded(); // views falsas (sem glTextureView) precisam acompanhar a textura base
 	// don't call glBindTexture if the texture is already bound
 	if (m_latteBoundTextures[textureUnit] == textureViewGL)
 	{
@@ -2313,6 +2329,8 @@ void OpenGLRenderer::texture_setLatteTexture(LatteTextureView* textureView1, uin
 	auto textureView = ((LatteTextureViewGL*)textureView1);
 
 	cemu_assert_debug(textureUnit < Latte::GPU_LIMITS::NUM_TEXTURES_PER_STAGE * 3);
+	if (textureView)
+		textureView->RefreshFakeViewIfNeeded(); // views falsas (sem glTextureView) precisam acompanhar a textura base
 	if (m_latteBoundTextures[textureUnit] == textureView)
 		return;
 	if (textureView == nullptr)
@@ -2773,9 +2791,9 @@ void OpenGLRenderer::renderstate_updateBlendingAndColorControl()
 	if (prevLogicOp != logicOpGL)
 	{
 		if (logicOpGL != GL_COPY)
-			glEnable(GL_COLOR_LOGIC_OP);
+			CapEnableGLES(GL_COLOR_LOGIC_OP);
 		else
-			glDisable(GL_COLOR_LOGIC_OP);
+			CapDisableGLES(GL_COLOR_LOGIC_OP);
 		glLogicOp(logicOpGL);
 		prevLogicOp = logicOpGL;
 	}
@@ -2925,12 +2943,12 @@ void OpenGLRenderer::renderstate_resetColorControl()
 	// disable alpha test
 	if (prevAlphaTestEnable != 0)
 	{
-		glDisable(GL_ALPHA_TEST);
+		CapDisableGLES(GL_ALPHA_TEST);
 		prevAlphaTestEnable = 0;
 	}
 	if (prevLogicOp != GL_COPY)
 	{
-		glDisable(GL_COLOR_LOGIC_OP);
+		CapDisableGLES(GL_COLOR_LOGIC_OP);
 		glLogicOp(GL_COPY);
 		prevLogicOp = GL_COPY;
 	}

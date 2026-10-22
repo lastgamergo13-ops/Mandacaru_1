@@ -116,6 +116,53 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             },
         )
 
+        Toggle(
+            label = tr("Despejar shaders (dump/shaders)"),
+            description = tr(
+                "Salva o codigo de cada shader que o jogo compila, com o hash no nome do arquivo. Serve para analisar o " +
+                        "shader exato que derruba a GPU (os hashes aparecem no vk_trace.txt e na quarentena). Ligue ANTES de abrir " +
+                        "o jogo, reproduza o problema e use \"Exportar shaders\" abaixo. Gera muitos arquivos; desligue depois."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.DUMP_SHADERS) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.DUMP_SHADERS, it) },
+        )
+        Button(
+            label = tr("Exportar shaders despejados (.zip)"),
+            description = tr("Compacta a pasta dump/shaders em um .zip e abre o seletor para enviar."),
+            onClick = {
+                val zipName = "shaders_dump.zip"
+                val ok = try {
+                    val userData = File(NativeActiveSettings.getUserDataPath())
+                    val dir = userData.resolve("dump/shaders")
+                    val files = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+                    if (files.isEmpty()) false else {
+                        java.util.zip.ZipOutputStream(userData.resolve(zipName).outputStream().buffered()).use { zip ->
+                            files.forEach { f ->
+                                zip.putNextEntry(java.util.zip.ZipEntry(f.name))
+                                f.inputStream().use { it.copyTo(zip) }
+                                zip.closeEntry()
+                            }
+                        }
+                        tryShareUserDataFile(context, zipName)
+                    }
+                } catch (_: Throwable) {
+                    false
+                }
+                if (!ok)
+                    Toast.makeText(context, tr("Nenhum shader despejado ainda. Ligue \"Despejar shaders\" e abra o jogo."), Toast.LENGTH_LONG).show()
+            },
+        )
+        Button(
+            label = tr("Apagar shaders despejados"),
+            description = tr("Remove a pasta dump/shaders e o .zip para o proximo teste comecar limpo."),
+            onClick = {
+                val userData = File(NativeActiveSettings.getUserDataPath())
+                val removed = userData.resolve("dump/shaders").deleteRecursively()
+                userData.resolve("shaders_dump.zip").delete()
+                Toast.makeText(context, if (removed) tr("Shaders despejados apagados.") else tr("Nada para apagar."), Toast.LENGTH_LONG).show()
+            },
+        )
+
         // ---- Limpeza --------------------------------------------------------------------------------------------
         Toggle(
             label = tr("Limpar quarentena ao trocar de jogo"),

@@ -24,6 +24,7 @@ namespace Diag
 		TexLog = 1,
 		AutoCleanOff = 2,
 		SustainedPerformance = 3,
+		DumpShaders = 4,
 		Count
 	};
 
@@ -35,11 +36,12 @@ namespace Diag
 		case Flag::TexLog: return "diag_tex_log";
 		case Flag::AutoCleanOff: return "diag_autoclean_off";
 		case Flag::SustainedPerformance: return "diag_sustained_perf";
+		case Flag::DumpShaders: return "diag_dump_shaders";
 		default: return "diag_unknown";
 		}
 	}
 
-	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1 }; // -1 = ainda nao lido
+	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1, -1 }; // -1 = ainda nao lido
 
 	inline bool IsEnabled(Flag f)
 	{

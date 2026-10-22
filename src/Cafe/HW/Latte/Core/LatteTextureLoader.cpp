@@ -708,6 +708,38 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 		texDecoder->decode(&textureLoader, pixelData);
 	}
 	Diag::TexDecoded(diagTexIdx); // marca o fim da DECODIFICACAO (o resto ate TexEnd e o envio para a GPU)
+	// Micro-benchmark do diagnostico: nos logs a decodificacao de BC4 levava ~9 us por bloco (30-50x mais que o esperado) mesmo em
+	// build otimizada. Nas 3 primeiras cargas lentas, mede SEPARADAMENTE (1) so o calculo de enderecos por bloco, (2) so a leitura
+	// dos bytes de entrada da memoria do jogo e (3) a decodificacao completa de novo. Isso diz qual parte e o gargalo:
+	// enderecos (untile) / memoria (swap, page fault) / matematica do decodificador.
+	if (diagTexIdx >= 0 && texDecoder)
+	{
+		static int s_benchCount = 0;
+		if (s_benchCount < 3 && Diag::g_texRing[diagTexIdx].decodeUs.load() > 150000)
+		{
+			s_benchCount++;
+			const int64_t t0 = Diag::NowUs();
+			uintptr_t addrSink = 0;
+			uint32 numBlocks = 0;
+			for (sint32 by = 0; by < textureLoader.height; by += textureLoader.stepY)
+				for (sint32 bx = 0; bx < textureLoader.width; bx += textureLoader.stepX)
+				{
+					addrSink += (uintptr_t)LatteTextureLoader_GetInput(&textureLoader, bx, by);
+					numBlocks++;
+				}
+			const int64_t t1 = Diag::NowUs();
+			volatile uint64 readSink = 0;
+			const uint8* in = textureLoader.inputData;
+			const uint32 readBytes = std::min<uint32>(imageSize, 4 * 1024 * 1024);
+			for (uint32 i = 0; i + 8 <= readBytes; i += 8)
+				readSink = readSink + *(const uint64*)(in + i);
+			const int64_t t2 = Diag::NowUs();
+			texDecoder->decode(&textureLoader, pixelData);
+			const int64_t t3 = Diag::NowUs();
+			cemuLog_log(LogType::Force, "[TexDiag] BENCH {}x{} fmt=0x{:04x} tile={} blocos={}: so enderecos={} us | so leitura de {} bytes da memoria do jogo={} us | decodificacao completa={} us (enderecos sink={})",
+						textureLoader.width, textureLoader.height, (uint32)format, (uint32)tileMode, numBlocks, (long long)(t1 - t0), readBytes, (long long)(t2 - t1), (long long)(t3 - t2), (unsigned long long)(addrSink & 0xF));
+		}
+	}
 #ifdef BENCHMARK_TEXTURE_DECODING
 	QueryPerformanceCounter(&benchmark_end);
 	QueryPerformanceFrequency(&benchmark_freq);

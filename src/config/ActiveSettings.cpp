@@ -1,3 +1,4 @@
+#include "Common/DiagnosticsFlags.h"
 #include "Cafe/GameProfile/GameProfile.h"
 #include "Cafe/IOSU/legacy/iosu_crypto.h"
 #include "Cafe/HW/Latte/Core/Latte.h"
@@ -191,7 +192,8 @@ NetworkService ActiveSettings::GetNetworkService()
 
 bool ActiveSettings::DumpShadersEnabled()
 {
-	return s_dump_shaders;
+	// tambem ligado pela chave "Despejar shaders" da tela Experimental > Logs e Diagnostico (arquivos em dump/shaders)
+	return s_dump_shaders || Diag::IsEnabled(Diag::Flag::DumpShaders);
 }
 
 bool ActiveSettings::DumpTexturesEnabled()

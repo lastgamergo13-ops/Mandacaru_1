@@ -90,18 +90,9 @@ void LatteTextureViewGL::InitAliasView()
 		sint32 viewWidth = std::max(1, texture->width >> srcMinLevel);
 		sint32 viewHeight = std::max(1, texture->height >> srcMinLevel);
 		LatteTextureGL::AllocateStorage(glTexId, dim, glInternalFormat, viewWidth, viewHeight, numSlice, numMip);
-		for (sint32 i = 0; i < numMip; i++)
-		{
-			uint32 mipWidth = std::max(1, viewWidth >> i);
-			uint32 mipHeight = std::max(1, viewHeight >> i);
-			if (!glCopyImageSubDataWrapper(texture->glId_texture, texture->glTexTarget, srcMinLevel + i, 0, 0, firstSlice,
-					glTexId, glTexTarget, i, 0, 0, 0,
-					mipWidth, mipHeight, numSlice))
-			{
-				cemuLog_log(LogType::Force, "LatteTextureViewGL: no texture view mechanism (glTextureView/OES/EXT/glCopyImageSubData) available on this GPU driver - this view will be blank");
-				break;
-			}
-		}
+		m_isFakeCopyView = true;
+		m_fakeParams = { srcMinLevel, (sint32)numMip, (sint32)firstSlice, (sint32)numSlice };
+		CopyFakeViewContent();
 	}
 
 	catchOpenGLError();
@@ -140,4 +131,37 @@ LatteTextureViewGL* LatteTextureViewGL::GetAlternativeView()
 	if (!m_alternativeView)
 		m_alternativeView = new LatteTextureViewGL((LatteTextureGL*)baseTexture, dim, format, firstMip, numMip, firstSlice, numSlice, false, true);
 	return m_alternativeView;
+}
+
+// Copia (de novo) o conteudo da textura base para a view falsa. Ver o comentario em LatteTextureViewGL.h.
+void LatteTextureViewGL::CopyFakeViewContent()
+{
+	const auto texture = (LatteTextureGL*)baseTexture;
+	const sint32 viewWidth = std::max(1, texture->width >> m_fakeParams.srcMinLevel);
+	const sint32 viewHeight = std::max(1, texture->height >> m_fakeParams.srcMinLevel);
+	for (sint32 i = 0; i < m_fakeParams.numMip; i++)
+	{
+		uint32 mipWidth = std::max(1, viewWidth >> i);
+		uint32 mipHeight = std::max(1, viewHeight >> i);
+		if (!glCopyImageSubDataWrapper(texture->glId_texture, texture->glTexTarget, m_fakeParams.srcMinLevel + i, 0, 0, m_fakeParams.firstSlice,
+				glTexId, glTexTarget, i, 0, 0, 0,
+				mipWidth, mipHeight, m_fakeParams.numSlice))
+		{
+			cemuLog_log(LogType::Force, "LatteTextureViewGL: no texture view mechanism (glTextureView/OES/EXT/glCopyImageSubData) available on this GPU driver - this view will be blank");
+			break;
+		}
+	}
+	m_fakeStampWrite = texture->lastWriteEventCounter;
+	m_fakeStampUpdate = texture->lastUpdateEventCounter;
+	m_fakeStampData = texture->lastDataUpdateFrameCounter;
+}
+
+void LatteTextureViewGL::RefreshFakeViewIfNeeded()
+{
+	if (!m_isFakeCopyView)
+		return;
+	const auto texture = (LatteTextureGL*)baseTexture;
+	if (m_fakeStampWrite == texture->lastWriteEventCounter && m_fakeStampUpdate == texture->lastUpdateEventCounter && m_fakeStampData == texture->lastDataUpdateFrameCounter)
+		return; // a textura base nao mudou desde a ultima copia
+	CopyFakeViewContent();
 }
