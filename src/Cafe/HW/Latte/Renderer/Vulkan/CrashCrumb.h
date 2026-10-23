@@ -17,6 +17,10 @@ namespace CrashCrumb
 	inline thread_local unsigned long long g_pipeVs = 0, g_pipePs = 0, g_pipeGs = 0;
 	// caminho completo de vk_quarantine.txt (preenchido uma vez, em DrawTraceVk::LoadQuarantine)
 	inline char g_quarantinePath[1024] = {0};
+	// Gancho chamado pelo tratador de sinais para gravar o vk_trace.txt (ultimos pipelines enviados a GPU) quando o app crasha por
+	// SIGSEGV/SIGABRT dentro do driver (ex.: Turnip no vkQueueSubmit). Registrado por DrawTraceVk. Antes o vk_trace so era gravado no
+	// DEVICE_LOST e so com o "Vulkan diagnostic log" ligado, entao muitos crashes ficavam sem o arquivo.
+	inline void (*g_vkCrashDumpHook)() = nullptr;
 	// identifica GPU+driver (vendorID/driverVersion), preenchido em VulkanRenderer ao detectar o dispositivo. A quarentena e
 	// gravada POR DRIVER: um pipeline que travou o driver da Qualcomm nao deve ser pulado ao trocar para o Turnip (nos logs, com o
 	// Turnip o jogo rodava com 4 draws/frame porque herdava a quarentena do driver do sistema).

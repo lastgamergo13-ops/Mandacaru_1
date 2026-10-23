@@ -31,11 +31,47 @@ namespace DrawTraceVk
 	constexpr uint32_t kRing = 4096;
 	inline Rec g_ring[kRing];
 	inline uint32_t g_pos = 0;
+	inline std::atomic<uint64_t> g_lastSubmit{0};
+
+	// grava o vk_trace.txt SEM depender do "Vulkan diagnostic log" (o arquivo e a prova do crash, entao e sempre gravado)
+	inline void AppendTraceAlways(const std::string& m)
+	{
+		std::lock_guard<std::mutex> lk(g_fileMutex);
+		std::ofstream f(ActiveSettings::GetUserDataPath("vk_trace.txt"), std::ios::app);
+		if (f)
+			f << m << "\n";
+	}
+
+	// Chamado pelo tratador de sinais: despeja os pipelines dos ultimos submits. Sem mutex (o crash pode ter ocorrido segurando o lock).
+	inline void DumpOnCrash()
+	{
+		const uint32_t pos = g_pos;
+		const uint32_t total = pos < kRing ? pos : kRing;
+		if (total == 0)
+			return;
+		std::ofstream f(ActiveSettings::GetUserDataPath("vk_trace.txt"), std::ios::app);
+		if (!f)
+			return;
+		const uint64_t cur = g_lastSubmit.load();
+		f << fmt::format("[VkTrace] CRASH por sinal (driver) no submit ~{}; pipelines dos ultimos submits:\n", (unsigned long long)cur);
+		int lines = 0;
+		for (uint32_t i = 0; i < total && lines < 200; i++)
+		{
+			const Rec& r = g_ring[(pos - total + i) % kRing];
+			if (cur > 12 && r.submit + 12 < cur)
+				continue;
+			f << fmt::format("[VkTrace] submit={} VS={:016x} PS={:016x} GS={:016x} prim={} rects={}\n", (unsigned long long)r.submit, (unsigned long long)r.vs, (unsigned long long)r.ps, (unsigned long long)r.gs, r.prim, (int)r.rect);
+			lines++;
+		}
+	}
 
 	inline void Add(uint64_t submit, const PipelineInfo* p)
 	{
 		if (!p)
 			return;
+		g_lastSubmit.store(submit, std::memory_order_relaxed);
+		if (!CrashCrumb::g_vkCrashDumpHook)
+			CrashCrumb::g_vkCrashDumpHook = &DumpOnCrash;
 		Rec& r = g_ring[g_pos++ % kRing];
 		r.submit = submit;
 		r.vs = p->vertexShader ? p->vertexShader->baseHash : 0;
@@ -82,10 +118,16 @@ namespace DrawTraceVk
 				counts.push_back(1);
 			}
 		}
-		Log("[VkTrace] pipelines dos submits {}..{} ({} unicos):", fromSubmit, toSubmit, (uint32_t)keys.size());
+		// DEVICE_LOST/timeout: SEMPRE grava no vk_trace.txt (antes so com o "Vulkan diagnostic log" ligado)
+		auto emit = [](const std::string& m)
+		{
+			cemuLog_log(LogType::Force, "{}", m);
+			AppendTraceAlways(m);
+		};
+		emit(fmt::format("[VkTrace] pipelines dos submits {}..{} ({} unicos):", (unsigned long long)fromSubmit, (unsigned long long)toSubmit, (uint32_t)keys.size()));
 		int lines = 0;
 		for (size_t k = 0; k < keys.size() && lines < 120; k++, lines++)
-			Log("[VkTrace] submit={} VS={:016x} PS={:016x} GS={:016x} prim={} rects={} x{}", keys[k].s, keys[k].vs, keys[k].ps, keys[k].gs, keys[k].prim, (int)keys[k].rect, counts[k]);
+			emit(fmt::format("[VkTrace] submit={} VS={:016x} PS={:016x} GS={:016x} prim={} rects={} x{}", (unsigned long long)keys[k].s, (unsigned long long)keys[k].vs, (unsigned long long)keys[k].ps, (unsigned long long)keys[k].gs, keys[k].prim, (int)keys[k].rect, counts[k]));
 	}
 
 	// ---- Quarentena automatica (V11.32) ----

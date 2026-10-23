@@ -377,7 +377,9 @@ void LatteTextureGL::GetOpenGLFormatInfo(bool isDepth, Latte::E_GX2SURFFMT forma
 		glInternalFormat = GL_RGB565;
 		// supplied format
 		glSuppliedFormat = GL_RGB;
-		glSuppliedFormatType = GL_UNSIGNED_SHORT_5_6_5_REV;
+		// GLES so tem GL_UNSIGNED_SHORT_5_6_5 (o _REV da GL_INVALID_ENUM no glTexSubImage2D: confirmado pelo [TexDiag] fmt=0x0008 no
+		// PowerVR e Adreno). Nesse caso o decodificador troca R<->B (TextureDecoder_R5_G6_B5_swappedRB, ver OpenGLRenderer.cpp).
+		glSuppliedFormatType = OpenGLRenderer::IsGLES() ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_SHORT_5_6_5_REV;
 		glIsCompressed = false;
 	}
 	else if (format == Latte::E_GX2SURFFMT::R5_G5_B5_A1_UNORM)

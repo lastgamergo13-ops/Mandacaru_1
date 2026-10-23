@@ -508,6 +508,10 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 	else
 		CrashLog_WriteLine("Ultima operacao Vulkan/FrameGen desta thread: (nenhuma registrada - a thread nao estava em chamada Vulkan rastreada)");
 
+	// vk_trace.txt tambem em crash por sinal (ex.: SIGSEGV do Turnip no vkQueueSubmit): ultimos pipelines enviados a GPU.
+	if (CrashCrumb::g_vkCrashDumpHook)
+		CrashCrumb::g_vkCrashDumpHook();
+
 	// Quarentena automatica: se esta thread estava DENTRO de vkCreateGraphicsPipelines quando o driver crashou, grava os
 	// hashes VS/PS/GS desse pipeline em vk_quarantine.txt. Na proxima abertura ele e pulado (o jogo pode perder um efeito,
 	// mas nao derruba mais o app). So usa open/write/close com buffer na pilha (seguro dentro de tratador de sinal).

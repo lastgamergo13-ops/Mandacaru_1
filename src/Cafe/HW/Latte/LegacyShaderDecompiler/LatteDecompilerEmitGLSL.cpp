@@ -2312,6 +2312,12 @@ void _emitTEXSampleTextureCode(LatteDecompilerShaderContext* shaderContext, Latt
 		if (texOpcode == GPU7_TEX_INST_SAMPLE_C_LZ)
 			texOpcode = GPU7_TEX_INST_SAMPLE_C;
 	}
+	// PowerVR: amostra de LOD implicito dentro de bloco condicional (modifiesPixelActiveState embrulha o clause TEX num "if") tem
+	// derivadas indefinidas e devolvia lixo/preto (personagens pretos no Mario Kart 8 / Mario 3D World no Moto G54). Usa LOD
+	// explicito 0: perde o mipmap automatico so nesses casos, mas o resultado fica definido. Texturas de sombra ficam como estao.
+	if (shaderContext->shaderType == LatteConst::ShaderType::Pixel && OpenGLRenderer::UsesSafeConditionalSampling() &&
+		shaderContext->analyzer.modifiesPixelActiveState && texOpcode == GPU7_TEX_INST_SAMPLE)
+		texOpcode = GPU7_TEX_INST_SAMPLE_LZ;
 	// check if offset is used
 	bool hasOffset = false;
 	if( texInstruction->textureFetch.offsetX != 0 || texInstruction->textureFetch.offsetY != 0 || texInstruction->textureFetch.offsetZ != 0 )

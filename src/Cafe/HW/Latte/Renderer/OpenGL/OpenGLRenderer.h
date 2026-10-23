@@ -88,6 +88,10 @@ public:
 	static bool HasBorderClamp() { return s_hasBorderClamp; }
 	// GL_DEPTH_CLAMP: core no GL desktop; no GLES so com GL_EXT_depth_clamp (sem ela glEnable/glDisable(GL_DEPTH_CLAMP) = GL_INVALID_ENUM)
 	static bool HasDepthClamp() { return s_hasDepthClamp; }
+	// PowerVR (GLES): o compilador avisa "Calls to any function that may require a gradient calculation inside a conditional block may
+	// return undefined results" em ~750 shaders do Mario Kart 8. Amostras com LOD implicito dentro de blocos condicionais
+	// (predicacao do Wii U) usam derivadas indefinidas; o gerador de GLSL troca por LOD explicito 0 nesses casos.
+	static bool UsesSafeConditionalSampling() { return s_isGLES && s_isPowerVR; }
 	// true = GLES sem GL_EXT_depth_clamp: o depth clamp e emulado no vertex/geometry shader (uf_depthClampEmu)
 	static bool NeedsDepthClampEmulation() { return s_isGLES && !s_hasDepthClamp; }
 	float GetDepthClampEmuValue() const { return (NeedsDepthClampEmulation() && prevZClipEnable == 0) ? 1.0f : 0.0f; }
@@ -105,6 +109,7 @@ public:
 	static inline bool s_hasTextureShadowLod = true;
 	static inline bool s_hasBorderClamp = true;
 	static inline bool s_hasDepthClamp = true;
+	static inline bool s_isPowerVR = false;
 	static inline bool s_clipControlEmulated = false;
 
   public:

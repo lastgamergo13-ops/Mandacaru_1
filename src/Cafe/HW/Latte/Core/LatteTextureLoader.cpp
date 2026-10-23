@@ -752,8 +752,15 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 			const int64_t t2 = Diag::NowUs();
 			texDecoder->decode(&textureLoader, pixelData);
 			const int64_t t3 = Diag::NowUs();
-			cemuLog_log(LogType::Force, "[TexDiag] BENCH {}x{} fmt=0x{:04x} tile={} blocos={}: so enderecos={} us | so leitura de {} bytes da memoria do jogo={} us | decodificacao completa={} us (enderecos sink={})",
-						textureLoader.width, textureLoader.height, (uint32)format, (uint32)tileMode, numBlocks, (long long)(t1 - t0), readBytes, (long long)(t2 - t1), (long long)(t3 - t2), (unsigned long long)(addrSink & 0xF));
+			// mesma decodificacao, mas para uma memoria NORMAL com cache. Se for muito mais rapida que a anterior, o gargalo e a
+			// escrita espalhada no buffer de upload da GPU (write-combined) e a correcao do scratch funciona; se for igual, o gargalo
+			// e a matematica do decodificador.
+			std::vector<uint8> benchScratch(imageSize);
+			texDecoder->decode(&textureLoader, benchScratch.data());
+			const int64_t t4 = Diag::NowUs();
+			cemuLog_log(LogType::Force, "[TexDiag] BENCH {}x{} fmt=0x{:04x} tile={} blocos={}: so enderecos={} us | so leitura de {} bytes da memoria do jogo={} us | decodificacao direto no buffer da GPU={} us | decodificacao em memoria comum={} us (enderecos sink={})",
+						textureLoader.width, textureLoader.height, (uint32)format, (uint32)tileMode, numBlocks, (long long)(t1 - t0), readBytes, (long long)(t2 - t1), (long long)(t3 - t2), (long long)(t4 - t3), (unsigned long long)(addrSink & 0xF));
+			Diag::g_texRing[diagTexIdx].startUs += (t4 - t0); // o benchmark nao conta como "envio p/ GPU" nas linhas "carga LENTA"
 		}
 	}
 #ifdef BENCHMARK_TEXTURE_DECODING

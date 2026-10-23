@@ -1,4 +1,5 @@
 #include "Common/DiagnosticsFlags.h"
+#include <cstring>
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "WindowSystem.h"
 
@@ -1150,6 +1151,10 @@ void OpenGLRenderer::QuerySupportedFormats()
 	s_isGLES = isGLES;
 	s_hasTextureShadowLod = !isGLES || IsGLExtensionSupported("GL_EXT_texture_shadow_lod");
 	s_hasDepthClamp = !isGLES || IsGLExtensionSupported("GL_EXT_depth_clamp");
+	{
+		const char* rendererName = (const char*)glGetString(GL_RENDERER);
+		s_isPowerVR = isGLES && rendererName && strstr(rendererName, "PowerVR") != nullptr;
+	}
 	s_hasBorderClamp = !isGLES || IsGLExtensionSupported("GL_EXT_texture_border_clamp") || IsGLExtensionSupported("GL_OES_texture_border_clamp");
 	int versionMajor = 0, versionMinor = 0;
 	if (glVersionString)
@@ -2042,7 +2047,7 @@ TextureDecoder* OpenGLRenderer::texture_chooseDecodedFormat(Latte::E_GX2SURFFMT 
 	else if (format == Latte::E_GX2SURFFMT::R16_G16_UNORM)
 		texDecoder = TextureDecoder_R16_G16::getInstance();
 	else if (format == Latte::E_GX2SURFFMT::R5_G6_B5_UNORM)
-		texDecoder = TextureDecoder_R5_G6_B5::getInstance();
+		texDecoder = IsGLES() ? (TextureDecoder*)TextureDecoder_R5_G6_B5_swappedRB::getInstance() : (TextureDecoder*)TextureDecoder_R5_G6_B5::getInstance();
 	else if (format == Latte::E_GX2SURFFMT::R5_G5_B5_A1_UNORM)
 		texDecoder = TextureDecoder_R5_G5_B5_A1_UNORM_swappedOpenGL::getInstance();
 	else if (format == Latte::E_GX2SURFFMT::A1_B5_G5_R5_UNORM)
