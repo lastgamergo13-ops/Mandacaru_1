@@ -510,6 +510,8 @@ private:
 		struct
 		{
 			bool shaderRoundingModeRTEFloat32{ false };
+			bool shaderRoundingModeRTEFloat16{ false }; // V11.30: so declaramos o modo RTE nas larguras que o driver diz suportar
+			bool shaderRoundingModeRTEFloat64{ false };
 		}shaderFloatControls; // from VK_KHR_shader_float_controls
 
 		struct
@@ -1002,6 +1004,8 @@ private:
 public:
 	bool GetDisableMultithreadedCompilation() const { return m_featureControl.disableMultithreadedCompilation; }
 	bool HasSPRIVRoundingModeRTE32() const { return m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat32; }
+	bool HasSPRIVRoundingModeRTE16() const { return m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat16; }
+	bool HasSPRIVRoundingModeRTE64() const { return m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat64; }
 	bool IsDebugMarkersEnabled() const { return m_featureControl.usingDebugMarkerTool; }
 	bool IsTracingToolEnabled() const { return m_featureControl.usingTracingTool; }
 	bool UseAttachmentFeedbackLoop() const { return m_featureControl.deviceExtensions.attachment_feedback_loop_dynamic_state; }

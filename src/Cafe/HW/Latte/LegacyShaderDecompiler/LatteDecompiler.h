@@ -263,6 +263,8 @@ struct LatteDecompilerOptions
 	struct
 	{
 		bool hasRoundingModeRTEFloat32{ false };
+		bool hasRoundingModeRTEFloat16{ false };
+		bool hasRoundingModeRTEFloat64{ false };
 	}spirvInstrinsics;
 };
 

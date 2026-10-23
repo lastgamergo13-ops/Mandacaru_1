@@ -1,4 +1,5 @@
 #include "Common/DiagnosticsFlags.h"
+#include <time.h>
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/LatteAddrLib/LatteAddrLib.h"
 #include "config/ActiveSettings.h"
@@ -750,16 +751,24 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 			for (uint32 i = 0; i + 8 <= readBytes; i += 8)
 				readSink = readSink + *(const uint64*)(in + i);
 			const int64_t t2 = Diag::NowUs();
+			// V11.29: alem do tempo de relogio, mede o tempo de CPU REAL gasto pela thread e pelo processo inteiro durante a
+			// decodificacao. cpu_thread ~ relogio => a conta e lenta de verdade; cpu_thread << relogio => a thread ficou esperando
+			// CPU (competindo com os nucleos do PPC / frequencia baixa), e o problema nao e o decodificador.
+			auto cpuNowUs = [](clockid_t id) -> int64_t { timespec ts; clock_gettime(id, &ts); return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000; };
+			const int64_t cpuThr0 = cpuNowUs(CLOCK_THREAD_CPUTIME_ID);
+			const int64_t cpuProc0 = cpuNowUs(CLOCK_PROCESS_CPUTIME_ID);
 			texDecoder->decode(&textureLoader, pixelData);
 			const int64_t t3 = Diag::NowUs();
+			const int64_t cpuThrUs = cpuNowUs(CLOCK_THREAD_CPUTIME_ID) - cpuThr0;
+			const int64_t cpuProcUs = cpuNowUs(CLOCK_PROCESS_CPUTIME_ID) - cpuProc0;
 			// mesma decodificacao, mas para uma memoria NORMAL com cache. Se for muito mais rapida que a anterior, o gargalo e a
 			// escrita espalhada no buffer de upload da GPU (write-combined) e a correcao do scratch funciona; se for igual, o gargalo
 			// e a matematica do decodificador.
 			std::vector<uint8> benchScratch(imageSize);
 			texDecoder->decode(&textureLoader, benchScratch.data());
 			const int64_t t4 = Diag::NowUs();
-			cemuLog_log(LogType::Force, "[TexDiag] BENCH {}x{} fmt=0x{:04x} tile={} blocos={}: so enderecos={} us | so leitura de {} bytes da memoria do jogo={} us | decodificacao direto no buffer da GPU={} us | decodificacao em memoria comum={} us (enderecos sink={})",
-						textureLoader.width, textureLoader.height, (uint32)format, (uint32)tileMode, numBlocks, (long long)(t1 - t0), readBytes, (long long)(t2 - t1), (long long)(t3 - t2), (long long)(t4 - t3), (unsigned long long)(addrSink & 0xF));
+			cemuLog_log(LogType::Force, "[TexDiag] BENCH {}x{} fmt=0x{:04x} tile={} blocos={}: so enderecos={} us | so leitura de {} bytes da memoria do jogo={} us | decodificacao direto no buffer da GPU={} us | decodificacao em memoria comum={} us (enderecos sink={}) | CPU da thread={} us, CPU do processo={} us (durante a 1a decodificacao)",
+						textureLoader.width, textureLoader.height, (uint32)format, (uint32)tileMode, numBlocks, (long long)(t1 - t0), readBytes, (long long)(t2 - t1), (long long)(t3 - t2), (long long)(t4 - t3), (unsigned long long)(addrSink & 0xF), (long long)cpuThrUs, (long long)cpuProcUs);
 			Diag::g_texRing[diagTexIdx].startUs += (t4 - t0); // o benchmark nao conta como "envio p/ GPU" nas linhas "carga LENTA"
 		}
 	}

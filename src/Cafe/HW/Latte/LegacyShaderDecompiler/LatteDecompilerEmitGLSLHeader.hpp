@@ -331,12 +331,16 @@ namespace LatteDecompiler
 		{
 			src->add("#define GET_FRAGCOORD() vec4(gl_FragCoord.xy*uf_fragCoordScale.xy,gl_FragCoord.z, 1.0/gl_FragCoord.w)" _CRLF);
 		}
-		if (decompilerContext->options->spirvInstrinsics.hasRoundingModeRTEFloat32)
+		if (decompilerContext->options->spirvInstrinsics.hasRoundingModeRTEFloat32 || decompilerContext->options->spirvInstrinsics.hasRoundingModeRTEFloat16 || decompilerContext->options->spirvInstrinsics.hasRoundingModeRTEFloat64)
 		{
+			// V11.30: cada largura so e declarada se o driver reportou suporte (antes: 16/32/64 sempre que o de 32 existia)
 			src->add("#extension GL_EXT_spirv_intrinsics: enable" _CRLF);
-			src->add("spirv_execution_mode(capabilities = [4467], extensions = [\"SPV_KHR_float_controls\"], 4462, 16);" _CRLF);
-			src->add("spirv_execution_mode(capabilities = [4467], extensions = [\"SPV_KHR_float_controls\"], 4462, 32);" _CRLF);
-			src->add("spirv_execution_mode(capabilities = [4467], extensions = [\"SPV_KHR_float_controls\"], 4462, 64);" _CRLF);
+			if (decompilerContext->options->spirvInstrinsics.hasRoundingModeRTEFloat16)
+				src->add("spirv_execution_mode(capabilities = [4467], extensions = [\"SPV_KHR_float_controls\"], 4462, 16);" _CRLF);
+			if (decompilerContext->options->spirvInstrinsics.hasRoundingModeRTEFloat32)
+				src->add("spirv_execution_mode(capabilities = [4467], extensions = [\"SPV_KHR_float_controls\"], 4462, 32);" _CRLF);
+			if (decompilerContext->options->spirvInstrinsics.hasRoundingModeRTEFloat64)
+				src->add("spirv_execution_mode(capabilities = [4467], extensions = [\"SPV_KHR_float_controls\"], 4462, 64);" _CRLF);
 		}
 		src->add("#else" _CRLF);
 		// OpenGL defines

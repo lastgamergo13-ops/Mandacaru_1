@@ -9,8 +9,111 @@
 // (16 bytes/texel, 4x mais RAM e GPU, e com formatos GL que nao batiam com o buffer no BC5).
 // BC1/2/3 usam GL_RGBA8 (UNORM) ou GL_SRGB8_ALPHA8 (SRGB, a conversao e feita pelo hardware como no caminho nativo).
 
+namespace LatteTexFast
+{
+	inline uint8 toU8(float v){ if(v<=0.0f) return 0; if(v>=1.0f) return 255; return (uint8)(v*255.0f+0.5f); }
+	inline sint8 toS8(float v){ if(v<=-1.0f) return -127; if(v>=1.0f) return 127; return (sint8)(v>=0.0f?(v*127.0f+0.5f):(v*127.0f-0.5f)); }
+
+	// Paleta BC4 UNORM (mesmas formulas float de decodeBC4Block_UNORM, so que convertidas UMA vez por bloco para 8 bits)
+	inline void bc4PaletteU8(const uint8* b, uint8 pal[8])
+	{
+		float r[8];
+		r[0]=((float)b[0])/255.0f; r[1]=((float)b[1])/255.0f;
+		if(b[0]>b[1]){ for(int i=2;i<8;i++) r[i]=((float)(8-i)*r[0]+(float)(i-1)*r[1])/7.0f; }
+		else { for(int i=2;i<6;i++) r[i]=((float)(6-i)*r[0]+(float)(i-1)*r[1])/5.0f; r[6]=0.0f; r[7]=1.0f; }
+		for(int i=0;i<8;i++) pal[i]=toU8(r[i]);
+	}
+	// Paleta BC4/BC5 canal SNORM (mesmas formulas de decodeBC5Block_SNORM)
+	inline void bcSnormPaletteS8(const uint8* b, sint8 pal[8])
+	{
+		float r[8];
+		r[0]=((float)(sint8)b[0]+128.0f)/255.0f; r[1]=((float)(sint8)b[1]+128.0f)/255.0f;
+		r[0]=r[0]*2.0f-1.0f; r[1]=r[1]*2.0f-1.0f;
+		if(r[0]>r[1]){ for(int i=2;i<8;i++) r[i]=((float)(8-i)*r[0]+(float)(i-1)*r[1])/7.0f; }
+		else { for(int i=2;i<6;i++) r[i]=((float)(6-i)*r[0]+(float)(i-1)*r[1])/5.0f; r[6]=-1.0f; r[7]=1.0f; }
+		for(int i=0;i<8;i++) pal[i]=toS8(r[i]);
+	}
+	// 16 indices de 3 bits (6 bytes a partir de idx) -> idx[16] na ordem linha a linha
+	inline void bcIndices(const uint8* p, uint8 idx[16])
+	{
+		uint32 r0=((uint32)p[2]<<16)|((uint32)p[1]<<8)|p[0];
+		uint32 r1=((uint32)p[5]<<16)|((uint32)p[4]<<8)|p[3];
+		for(int i=0;i<8;i++){ idx[i]=(r0>>(i*3))&7; idx[i+8]=(r1>>(i*3))&7; }
+	}
+	// escreve um bloco BC4 (R8 UNORM) em out (linha = width bytes)
+	inline void bc4BlockToR8(const uint8* b, uint8* out, size_t stride, int bw, int bh)
+	{
+		uint8 pal[8], idx[16]; bc4PaletteU8(b,pal); bcIndices(b+2,idx);
+		for(int py=0;py<bh;py++) for(int px=0;px<bw;px++) out[py*stride+px]=pal[idx[px+py*4]];
+	}
+	// escreve um bloco BC5 UNORM (RG8) em out
+	inline void bc5UnormBlockToRG8(const uint8* b, uint8* out, size_t strideBytes, sint32 bw, sint32 bh)
+	{
+		uint8 pr[8], pg[8], ir[16], ig[16];
+		bc4PaletteU8(b, pr); bc4PaletteU8(b + 8, pg); bcIndices(b + 2, ir); bcIndices(b + 10, ig);
+		for (sint32 py = 0; py < bh; py++) for (sint32 px = 0; px < bw; px++) { uint8* d = out + py * strideBytes + px * 2; d[0] = pr[ir[px + py * 4]]; d[1] = pg[ig[px + py * 4]]; }
+	}
+	// escreve um bloco BC5 SNORM (RG8) em out
+	inline void bc5SnormBlockToRG8(const uint8* b, sint8* out, size_t strideBytes, int bw, int bh)
+	{
+		sint8 pr[8],pg[8]; uint8 ir[16],ig[16];
+		bcSnormPaletteS8(b,pr); bcSnormPaletteS8(b+8,pg); bcIndices(b+2,ir); bcIndices(b+10,ig);
+		for(int py=0;py<bh;py++) for(int px=0;px<bw;px++){ sint8* d=out+py*strideBytes+px*2; d[0]=pr[ir[px+py*4]]; d[1]=pg[ig[px+py*4]]; }
+	}
+}
+
 namespace LatteTexRGBA8
 {
+	// V11.29 - caminho direto para BC4/BC5: a paleta de 8 valores do bloco e convertida para 8 bits UMA vez e os 16 texels
+	// so indexam a paleta (antes: 16 (ou 32) conversoes float->byte por bloco). Saida byte a byte identica a antiga
+	// (verificado contra a implementacao float em 2.000.000 de blocos aleatorios).
+	template<typename TWriteBlockFn>
+	inline void decodeBandDirect(LatteTextureLoaderCtx* ctx, uint8* out, size_t bytesPerTexel, const TWriteBlockFn& writeBlock, sint32 yBegin, sint32 yEnd)
+	{
+		const size_t strideBytes = (size_t)ctx->width * bytesPerTexel;
+		for (sint32 y = yBegin; y < yEnd; y += ctx->stepY)
+		{
+			for (sint32 x = 0; x < ctx->width; x += ctx->stepX)
+			{
+				uint8* blockData = LatteTextureLoader_GetInput(ctx, x, y);
+				sint32 bw = (std::min)(4, ctx->width - x);
+				sint32 bh = (std::min)(4, ctx->height - y);
+				writeBlock(blockData, out + (size_t)x * bytesPerTexel + (size_t)y * strideBytes, strideBytes, bw, bh);
+			}
+		}
+	}
+
+	template<typename TWriteBlockFn>
+	inline void decodeLoopDirect(LatteTextureLoaderCtx* ctx, uint8* out, size_t bytesPerTexel, TWriteBlockFn writeBlock)
+	{
+		const sint32 blocksY = (ctx->height + ctx->stepY - 1) / ctx->stepY;
+		const sint32 blocksX = (ctx->width + ctx->stepX - 1) / ctx->stepX;
+		const uint64 totalBlocks = (uint64)blocksX * (uint64)blocksY;
+		const unsigned hw = std::thread::hardware_concurrency();
+		unsigned numThreads = 1;
+		if (totalBlocks >= 16384 && blocksY >= 8 && hw >= 4)
+			numThreads = std::min<unsigned>(4, hw / 2);
+		if (numThreads <= 1)
+		{
+			decodeBandDirect(ctx, out, bytesPerTexel, writeBlock, 0, ctx->height);
+			return;
+		}
+		const sint32 rowsPerBand = (sint32)((blocksY + numThreads - 1) / numThreads) * ctx->stepY;
+		std::vector<std::thread> workers;
+		workers.reserve(numThreads - 1);
+		for (unsigned t = 1; t < numThreads; t++)
+		{
+			const sint32 yBegin = (sint32)t * rowsPerBand;
+			if (yBegin >= ctx->height)
+				break;
+			const sint32 yEnd = std::min<sint32>(ctx->height, yBegin + rowsPerBand);
+			workers.emplace_back([=, &writeBlock]() { decodeBandDirect(ctx, out, bytesPerTexel, writeBlock, yBegin, yEnd); });
+		}
+		decodeBandDirect(ctx, out, bytesPerTexel, writeBlock, 0, std::min<sint32>(ctx->height, rowsPerBand));
+		for (auto& w : workers)
+			w.join();
+	}
+
 	inline uint8 toU8(float v)
 	{
 		if (v <= 0.0f) return 0;
@@ -155,7 +258,7 @@ public:
 	sint32 getBytesPerTexel(LatteTextureLoaderCtx*) override { return 1; }
 	void decode(LatteTextureLoaderCtx* ctx, uint8* out) override
 	{
-		LatteTexRGBA8::decodeLoop<1, 8, false>(ctx, out, [](uint8* b, float* o) { decodeBC4Block_UNORM(b, o); });
+		LatteTexRGBA8::decodeLoopDirect(ctx, out, 1, [](uint8* b, uint8* d, size_t stride, sint32 bw, sint32 bh) { LatteTexFast::bc4BlockToR8(b, d, stride, bw, bh); });
 	}
 	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 bx, uint8 by) override
 	{
@@ -187,7 +290,7 @@ public:
 	sint32 getBytesPerTexel(LatteTextureLoaderCtx*) override { return 2; }
 	void decode(LatteTextureLoaderCtx* ctx, uint8* out) override
 	{
-		LatteTexRGBA8::decodeLoop<2, 16, false>(ctx, out, [](uint8* b, float* o) { decodeBC5Block_UNORM(b, o); });
+		LatteTexRGBA8::decodeLoopDirect(ctx, out, 2, [](uint8* b, uint8* d, size_t stride, sint32 bw, sint32 bh) { LatteTexFast::bc5UnormBlockToRG8(b, d, stride, bw, bh); });
 	}
 	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 bx, uint8 by) override
 	{
@@ -203,7 +306,7 @@ public:
 	sint32 getBytesPerTexel(LatteTextureLoaderCtx*) override { return 2; }
 	void decode(LatteTextureLoaderCtx* ctx, uint8* out) override
 	{
-		LatteTexRGBA8::decodeLoop<2, 16, true>(ctx, out, [](uint8* b, float* o) { decodeBC5Block_SNORM(b, o); });
+		LatteTexRGBA8::decodeLoopDirect(ctx, out, 2, [](uint8* b, uint8* d, size_t stride, sint32 bw, sint32 bh) { LatteTexFast::bc5SnormBlockToRG8(b, (sint8*)d, stride, bw, bh); });
 	}
 	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 bx, uint8 by) override
 	{

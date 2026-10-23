@@ -388,6 +388,16 @@ void VulkanRenderer::GetDeviceFeatures()
 	m_featureControl.deviceExtensions.pipeline_creation_cache_control = pcc.pipelineCreationCacheControl;
 	m_featureControl.deviceExtensions.custom_border_color_without_format = m_featureControl.deviceExtensions.custom_border_color && bcf.customBorderColorWithoutFormat;
 	m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat32 = m_featureControl.deviceExtensions.shader_float_controls && pfcp.shaderRoundingModeRTEFloat32;
+	// V11.30: o shader emitia o modo de execucao RoundingModeRTE para float de 16, 32 e 64 bits, mas so se checava o de 32. Declarar um
+	// modo que o driver NAO suporta e uso invalido da API; no driver proprietario do Adreno (driverID=8) os logs mostram SIGSEGV dentro do
+	// driver em pipelines triviais (ate um quad texturizado). Agora cada largura so e declarada se a propriedade correspondente for true.
+	m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat16 = m_featureControl.deviceExtensions.shader_float_controls && pfcp.shaderRoundingModeRTEFloat16;
+	m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat64 = m_featureControl.deviceExtensions.shader_float_controls && pfcp.shaderRoundingModeRTEFloat64;
+	cemuLog_log(LogType::Force, "[VkCaps] float controls do driver: RTE16={} RTE32={} RTE64={} | RTZ16={} RTZ32={} RTZ64={} | denormPreserve16/32/64={}/{}/{} | denormFlushToZero16/32/64={}/{}/{}",
+		m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat16, m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat32, m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat64,
+		(bool)pfcp.shaderRoundingModeRTZFloat16, (bool)pfcp.shaderRoundingModeRTZFloat32, (bool)pfcp.shaderRoundingModeRTZFloat64,
+		(bool)pfcp.shaderDenormPreserveFloat16, (bool)pfcp.shaderDenormPreserveFloat32, (bool)pfcp.shaderDenormPreserveFloat64,
+		(bool)pfcp.shaderDenormFlushToZeroFloat16, (bool)pfcp.shaderDenormFlushToZeroFloat32, (bool)pfcp.shaderDenormFlushToZeroFloat64);
 	if(!m_featureControl.shaderFloatControls.shaderRoundingModeRTEFloat32)
 		cemuLog_log(LogType::Force, "Shader round mode control not available on this device or driver. Some rendering issues might occur.");
 
