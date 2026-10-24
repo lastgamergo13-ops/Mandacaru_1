@@ -2560,6 +2560,116 @@ void VulkanRenderer::WaitCommandBufferFinished(uint64 commandBufferId)
 		WaitForNextFinishedCommandBuffer();
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------
+// V11.54 - cache de pipelines do DRIVER (shaderCache/driver/vk): gravacao atomica + validacao + identidade do driver.
+// Problema nos logs: o Turnip crashou DENTRO de vkCreateGraphicsPipelines com ponteiro corrompido (0x0012...). O cache era gravado com
+// ofstream direto (trunca o arquivo antes de escrever, a cada 15 s - e o app morre com frequencia, entao arquivos truncados eram
+// provaveis), carregado SEM nenhuma validacao e o nome do arquivo era so o TitleId, entao Turnip e o driver do sistema compartilhavam
+// o mesmo arquivo. Agora: (1) grava em .tmp + fsync + rename (atomico); (2) cabecalho proprio com identidade do driver, tamanho e
+// hash; blob que nao confere e descartado e o driver comeca com cache vazio; (3) o nome do arquivo inclui a identidade do driver.
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+static uint64 g_vkPlCacheIdentity = 0;
+
+static uint64 VkPlCacheHash(const uint8* data, size_t size)
+{
+	uint64 h = 0x9E3779B97F4A7C15ull ^ (uint64)size;
+	size_t i = 0;
+	for (; i + 8 <= size; i += 8)
+	{
+		uint64 w;
+		memcpy(&w, data + i, 8);
+		h ^= w;
+		h *= 0xFF51AFD7ED558CCDull;
+		h ^= h >> 32;
+	}
+	for (; i < size; i++)
+	{
+		h ^= data[i];
+		h *= 0x100000001B3ull;
+	}
+	h ^= h >> 29;
+	return h;
+}
+
+struct VkPlCacheHeader
+{
+	uint32 magic; // 'MDVK'
+	uint32 version;
+	uint64 identity;
+	uint64 payloadSize;
+	uint64 payloadHash;
+};
+static_assert(sizeof(VkPlCacheHeader) == 32);
+
+static fs::path VkPlCacheFilePath(const fs::path& dir)
+{
+	return dir / fmt::format("{:016x}_{:016x}.bin", CafeSystem::GetForegroundTitleId(), g_vkPlCacheIdentity);
+}
+
+static bool VkPlCacheWriteAtomic(const fs::path& finalPath, const std::vector<uint8_t>& payload)
+{
+	VkPlCacheHeader hdr{ 0x4B56444Du, 1u, g_vkPlCacheIdentity, (uint64)payload.size(), VkPlCacheHash(payload.data(), payload.size()) };
+	fs::path tmp = finalPath;
+	tmp += ".tmp";
+	FILE* f = fopen(tmp.string().c_str(), "wb");
+	if (!f)
+		return false;
+	bool ok = fwrite(&hdr, sizeof(hdr), 1, f) == 1 && fwrite(payload.data(), 1, payload.size(), f) == payload.size();
+	ok = (fflush(f) == 0) && ok;
+#ifndef _WIN32
+	if (ok)
+		fsync(fileno(f));
+#endif
+	ok = (fclose(f) == 0) && ok;
+	std::error_code ec;
+	if (!ok)
+	{
+		fs::remove(tmp, ec);
+		return false;
+	}
+	fs::rename(tmp, finalPath, ec);
+	if (ec)
+	{
+		fs::remove(tmp, ec);
+		return false;
+	}
+	return true;
+}
+
+// true = blob valido em 'out' (sem o cabecalho). false = ausente/invalido (out vazio).
+static bool VkPlCacheReadValidated(const fs::path& path, std::vector<uint8_t>& out)
+{
+	out.clear();
+	std::ifstream file(path, std::ios::in | std::ios::binary | std::ios::ate);
+	if (!file.is_open())
+		return false;
+	const size_t fileSize = (size_t)file.tellg();
+	if (fileSize < sizeof(VkPlCacheHeader))
+	{
+		cemuLog_log(LogType::Force, "[PipelineCache] arquivo de cache curto demais ({} bytes): descartado", fileSize);
+		return false;
+	}
+	file.seekg(0, std::ifstream::beg);
+	VkPlCacheHeader hdr{};
+	file.read((char*)&hdr, sizeof(hdr));
+	if (!file || hdr.magic != 0x4B56444Du || hdr.version != 1u || hdr.identity != g_vkPlCacheIdentity || hdr.payloadSize != fileSize - sizeof(hdr))
+	{
+		cemuLog_log(LogType::Force, "[PipelineCache] cabecalho do cache nao confere com este driver/arquivo: descartado");
+		return false;
+	}
+	std::vector<uint8_t> payload((size_t)hdr.payloadSize);
+	file.read((char*)payload.data(), payload.size());
+	if (!file || VkPlCacheHash(payload.data(), payload.size()) != hdr.payloadHash)
+	{
+		cemuLog_log(LogType::Force, "[PipelineCache] hash do cache NAO confere (arquivo truncado/corrompido): descartado, driver comeca com cache vazio");
+		return false;
+	}
+	out = std::move(payload);
+	return true;
+}
+
 void VulkanRenderer::PipelineCacheSaveThread(size_t cache_size)
 {
 	SetThreadName("vkDriverPlCache");
@@ -2577,7 +2687,7 @@ void VulkanRenderer::PipelineCacheSaveThread(size_t cache_size)
 		}
 	}
 
-	const auto filename = dir / fmt::format(L"{:016x}.bin", CafeSystem::GetForegroundTitleId());
+	const auto filename = VkPlCacheFilePath(dir);
 
 	while (true)
 	{
@@ -2610,12 +2720,8 @@ void VulkanRenderer::PipelineCacheSaveThread(size_t cache_size)
 			if (res == VK_SUCCESS)
 			{
 
-				auto file = std::ofstream(filename, std::ios::out | std::ios::binary);
-				if (file.is_open())
+				if (VkPlCacheWriteAtomic(filename, cacheData))
 				{
-					file.write((char*)cacheData.data(), cacheData.size());
-					file.close();
-
 					cache_size = size;
 					cemuLog_logDebug(LogType::Force, "pipeline cache saved");
 				}
@@ -2640,19 +2746,41 @@ void VulkanRenderer::PipelineCacheSaveThread(size_t cache_size)
 void VulkanRenderer::CreatePipelineCache()
 {
 	std::vector<uint8_t> cacheData;
+	// V11.54: identidade do driver (GPU + driver + versao + UUID do cache) para nao misturar Turnip com o driver do sistema.
+	{
+		VkPhysicalDeviceProperties2 p2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+		VkPhysicalDeviceDriverProperties dp{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
+		if (m_featureControl.deviceExtensions.driver_properties)
+			p2.pNext = &dp;
+		vkGetPhysicalDeviceProperties2(m_physicalDevice, &p2);
+		uint64 h = 1469598103934665603ull;
+		auto mix = [&h](const void* d, size_t n) { for (size_t i = 0; i < n; i++) { h ^= ((const uint8*)d)[i]; h *= 1099511628211ull; } };
+		const auto& pr = p2.properties;
+		mix(&pr.vendorID, sizeof(pr.vendorID));
+		mix(&pr.deviceID, sizeof(pr.deviceID));
+		mix(&pr.driverVersion, sizeof(pr.driverVersion));
+		mix(&pr.apiVersion, sizeof(pr.apiVersion));
+		mix(pr.pipelineCacheUUID, sizeof(pr.pipelineCacheUUID));
+		if (m_featureControl.deviceExtensions.driver_properties)
+		{
+			mix(&dp.driverID, sizeof(dp.driverID));
+			mix(dp.driverName, strnlen(dp.driverName, sizeof(dp.driverName)));
+			mix(dp.driverInfo, strnlen(dp.driverInfo, sizeof(dp.driverInfo)));
+		}
+		g_vkPlCacheIdentity = h;
+	}
 	const auto dir = ActiveSettings::GetCachePath("shaderCache/driver/vk");
+	{
+		// caminho para o tratador de sinais apagar o cache se o driver crashar DENTRO de vkCreateGraphicsPipelines
+		const std::string cachePathUtf8 = _pathToUtf8(VkPlCacheFilePath(dir));
+		std::strncpy(CrashCrumb::g_pipelineCachePath, cachePathUtf8.c_str(), sizeof(CrashCrumb::g_pipelineCachePath) - 1);
+	}
 	if (fs::exists(dir))
 	{
-		const auto filename = dir / fmt::format("{:016x}.bin", CafeSystem::GetForegroundTitleId());
-		auto file = std::ifstream(filename, std::ios::in | std::ios::binary | std::ios::ate);
-		if (file.is_open())
-		{
-			const size_t fileSize = file.tellg();
-			file.seekg(0, std::ifstream::beg);
-			cacheData.resize(fileSize);
-			file.read((char*)cacheData.data(), cacheData.size());
-			file.close();
-		}
+		if (!VkPlCacheReadValidated(VkPlCacheFilePath(dir), cacheData))
+			cacheData.clear();
+		else
+			cemuLog_log(LogType::Force, "[PipelineCache] cache do driver validado e carregado ({} bytes)", cacheData.size());
 	}
 
 	VkPipelineCacheCreateInfo createInfo{};

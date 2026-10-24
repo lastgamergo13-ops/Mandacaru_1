@@ -1,5 +1,7 @@
 #include "Common/DiagnosticsFlags.h"
 #include <time.h>
+#include <sched.h>
+#include <stdio.h>
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/LatteAddrLib/LatteAddrLib.h"
 #include "config/ActiveSettings.h"
@@ -769,6 +771,27 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 			const int64_t t4 = Diag::NowUs();
 			cemuLog_log(LogType::Force, "[TexDiag] BENCH {}x{} fmt=0x{:04x} tile={} blocos={}: so enderecos={} us | so leitura de {} bytes da memoria do jogo={} us | decodificacao direto no buffer da GPU={} us | decodificacao em memoria comum={} us (enderecos sink={}) | CPU da thread={} us, CPU do processo={} us (durante a 1a decodificacao)",
 						textureLoader.width, textureLoader.height, (uint32)format, (uint32)tileMode, numBlocks, (long long)(t1 - t0), readBytes, (long long)(t2 - t1), (long long)(t3 - t2), (long long)(t4 - t3), (unsigned long long)(addrSink & 0xF), (long long)cpuThrUs, (long long)cpuProcUs);
+			// V11.53: calibracao da CPU NA MESMA THREAD, logo depois do benchmark. O BENCH mostrou CPU da thread ~= relogio (a thread esta
+			// mesmo calculando), mas ~5-30 us por bloco BC4 e muito mais do que a conta explica. Estes laços de tamanho fixo mostram se a
+			// thread esta num nucleo LITTLE / frequencia baixa (laço de inteiros lento) ou se a divisao float e que e lenta.
+			{
+				const int cpuBefore = sched_getcpu();
+				long curKhz = -1;
+				{
+					char path[96];
+					snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", cpuBefore);
+					if (FILE* ff = fopen(path, "r")) { if (fscanf(ff, "%ld", &curKhz) != 1) curKhz = -1; fclose(ff); }
+				}
+				volatile uint32 sinkI = 1;
+				const int64_t c0 = Diag::NowUs();
+				{ uint32 a = 1; for (uint32 i = 0; i < 50000000u; i++) a = a * 1664525u + i; sinkI = a; }
+				const int64_t c1 = Diag::NowUs();
+				volatile float sinkF = 0;
+				{ float acc = 0.0f; for (uint32 i = 1; i <= 4000000u; i++) acc += ((float)(i & 255)) / 7.0f; sinkF = acc; }
+				const int64_t c2 = Diag::NowUs();
+				cemuLog_log(LogType::Force, "[TexDiag] CALIBRACAO nucleo={} freq_atual={} kHz | 50M iteracoes inteiras={} us | 4M divisoes float={} us (sinks {} {})",
+					cpuBefore, curKhz, (long long)(c1 - c0), (long long)(c2 - c1), (unsigned)sinkI, (float)sinkF);
+			}
 			Diag::g_texRing[diagTexIdx].startUs += (t4 - t0); // o benchmark nao conta como "envio p/ GPU" nas linhas "carga LENTA"
 		}
 	}

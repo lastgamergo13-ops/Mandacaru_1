@@ -515,6 +515,13 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 	// Quarentena automatica: se esta thread estava DENTRO de vkCreateGraphicsPipelines quando o driver crashou, grava os
 	// hashes VS/PS/GS desse pipeline em vk_quarantine.txt. Na proxima abertura ele e pulado (o jogo pode perder um efeito,
 	// mas nao derruba mais o app). So usa open/write/close com buffer na pilha (seguro dentro de tratador de sinal).
+	// V11.54: o crash foi dentro do driver compilando pipeline: o cache de pipelines em disco pode estar envenenado/corrompido -> apaga
+	// (unlink e seguro em tratador de sinal). Na proxima abertura o driver recompila com cache limpo.
+	if (CrashCrumb::g_pipeActive && CrashCrumb::g_pipelineCachePath[0] != 0)
+	{
+		if (unlink(CrashCrumb::g_pipelineCachePath) == 0)
+			CrashLog_WriteLine("[PipelineCache] crash dentro de vkCreateGraphicsPipelines: cache de pipelines do driver APAGADO (sera recriado limpo)");
+	}
 	if (CrashCrumb::g_pipeActive && CrashCrumb::g_quarantinePath[0] != 0)
 	{
 		char line[64];
