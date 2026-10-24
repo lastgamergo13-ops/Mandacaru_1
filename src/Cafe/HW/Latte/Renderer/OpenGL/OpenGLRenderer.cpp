@@ -2590,7 +2590,31 @@ void OpenGLRenderer::renderstate_updateBlendingAndColorControl()
 	const auto& colorControlReg = LatteGPUState.contextNew.CB_COLOR_CONTROL;
 
 	const auto specialOp = colorControlReg.get_SPECIAL_OP();
-	const uint32 blendEnableMask = colorControlReg.get_BLEND_MASK();
+	uint32 blendEnableMask = colorControlReg.get_BLEND_MASK();
+	// V11.51: no GLES sem GL_EXT_float_blend, ligar o blend num alvo float de 32 bits e erro de GL (INVALID_OPERATION) e o draw some
+	// (manchas pretas / efeitos faltando). Emulacao: nesses alvos o draw sai sem blend (sobrescreve em vez de misturar).
+	// Se o driver tem a extensao (ou e GL desktop), nada muda e o blend e feito pelo driver.
+	{
+		static const bool s_blendOnFloat32Unsupported = [this]() {
+			const char* ver = (const char*)glGetString(GL_VERSION);
+			const bool es = ver && strncmp(ver, "OpenGL ES", 9) == 0;
+			const bool unsupported = es && !IsGLExtensionSupported("GL_EXT_float_blend") && !IsGLExtensionSupported("GL_NV_float_blend");
+			if (unsupported)
+				cemuLog_log(LogType::Force, "[GL] sem GL_EXT_float_blend: blend sera DESLIGADO em alvos float de 32 bits (R32/RG32/RGBA32 float)");
+			return unsupported;
+		}();
+		if (s_blendOnFloat32Unsupported && blendEnableMask != 0)
+		{
+			for (uint32 i = 0; i < 8; i++)
+			{
+				if ((blendEnableMask & (1u << i)) == 0)
+					continue;
+				const Latte::E_GX2SURFFMT fmt = LatteMRT::GetColorBufferFormat(i, LatteGPUState.contextNew);
+				if (fmt == Latte::E_GX2SURFFMT::R32_FLOAT || fmt == Latte::E_GX2SURFFMT::R32_G32_FLOAT || fmt == Latte::E_GX2SURFFMT::R32_G32_B32_A32_FLOAT)
+					blendEnableMask &= ~(1u << i);
+			}
+		}
+	}
 	const auto logicOp = colorControlReg.get_ROP();
 
 	cemu_assert_debug(!colorControlReg.get_MULTIWRITE_ENABLE()); // not supported

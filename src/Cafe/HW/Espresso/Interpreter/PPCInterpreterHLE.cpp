@@ -10,7 +10,9 @@ void PPCInterpreter_handleUnsupportedHLECall(PPCInterpreter_t* hCPU)
 	std::string tempString = fmt::format("Unsupported lib call: {}", libFuncName);
 	if (s_unsupportedHLECalls.find(tempString) == s_unsupportedHLECalls.end())
 	{
-		cemuLog_log(LogType::UnsupportedAPI, "{}", tempString);
+		// V11.52: no Android a categoria UnsupportedAPI nao pode ser ligada, entao o log nunca mostrava QUAL funcao de biblioteca o jogo
+		// chama e o Cemu nao implementa (ex.: Super Mario Galaxy / frisbiiu fica parado). A linha sai uma unica vez por funcao.
+		cemuLog_log(LogType::Force, "[APInaoImplementada] {} (chamada ignorada, retorna 0)", tempString);
 		s_unsupportedHLECalls.emplace(tempString);
 	}
 	hCPU->gpr[3] = 0;

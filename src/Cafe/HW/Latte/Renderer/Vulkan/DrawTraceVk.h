@@ -267,14 +267,12 @@ namespace DrawTraceVk
 			cemuLog_log(LogType::Force, "[Quarentena] nenhum pipeline registrado nos ultimos submits; nada gravado");
 			return;
 		}
-		std::lock_guard<std::mutex> lk(g_fileMutex);
-		std::ofstream f(QuarantineFilePath(), std::ios::app);
+		// V11.51: NAO grava mais na quarentena por palpite. Nos logs do Adreno (Zelda, Mario Kart 8) os "suspeitos" eram shaders
+		// simples e comuns (sem arrays, sem loops, menores que a media; 996 outros shaders compilaram normalmente) que so estavam em voo
+		// quando a GPU caiu; a cada DEVICE_LOST a queda vinha em OUTROS pipelines, e pular os inocentes fazia a geometria sumir (tela
+		// preta/manchas). Pipelines cuja criacao derrubou o driver (crash DENTRO de vkCreateGraphicsPipelines) continuam sendo gravados
+		// pelo tratador de sinais, porque ali a culpa e certa. Os suspeitos so aparecem no log/vk_trace.txt para diagnostico.
 		for (const Rec& r : sus)
-		{
-			if (g_quarantine.count(PipelineKey(r.vs, r.ps, r.gs)))
-				continue;
-			f << fmt::format("{:016x} {:016x} {:016x}\n", r.vs, r.ps, r.gs);
-			cemuLog_log(LogType::Force, "[Quarentena] suspeito gravado: VS={:016x} PS={:016x} GS={:016x} prim={} (sera pulado na proxima abertura)", r.vs, r.ps, r.gs, r.prim);
-		}
+			cemuLog_log(LogType::Force, "[Quarentena] candidato (NAO gravado, culpa incerta): VS={:016x} PS={:016x} GS={:016x} prim={}", r.vs, r.ps, r.gs, r.prim);
 	}
 }

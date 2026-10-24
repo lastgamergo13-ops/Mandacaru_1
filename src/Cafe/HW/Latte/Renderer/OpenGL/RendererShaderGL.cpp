@@ -164,6 +164,23 @@ bool RendererShaderGL::loadBinary()
 		m_program = 0;
 		return false;
 	}
+	// V11.51: alguns drivers (ex.: Adreno) nao restauram GL_PROGRAM_SEPARABLE ao carregar o binario. Sem esse flag o programa nao pode
+	// entrar no program pipeline ("program N was linked without the GL_PROGRAM_SEPARABLE parameter set" / "unable to validate active
+	// pipeline") e o draw nao desenha. Nesse caso descarta o binario: o shader e recompilado do codigo-fonte, com o flag ligado.
+	{
+		int separable = 0;
+		glGetProgramiv(m_program, GL_PROGRAM_SEPARABLE, &separable);
+		while (glGetError() != GL_NO_ERROR) {}
+		if (separable != GL_TRUE)
+		{
+			static std::atomic<bool> s_logged{ false };
+			if (!s_logged.exchange(true))
+				cemuLog_log(LogType::Force, "[GL] binario de shader em cache voltou SEM GL_PROGRAM_SEPARABLE (driver nao restaura o flag): descartando binarios e recompilando do codigo-fonte");
+			glDeleteProgram(m_program);
+			m_program = 0;
+			return false;
+		}
+	}
 	m_isCompiled = true;
 	return true;
 }
