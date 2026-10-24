@@ -7,6 +7,11 @@
 #include "util/helpers/Serializer.h"
 #include "Cafe/HW/MMU/MMU.h"
 
+#if defined(__linux__) || defined(__ANDROID__)
+#include <link.h>
+#include <elf.h>
+#include <cstring>
+#endif
 #if defined(ARCH_X86_64)
 #include "BackendX64/BackendX64.h"
 #elif defined(__aarch64__)
@@ -35,6 +40,77 @@ namespace
 		return GetConfig().enable_recompiler_aot_cache.GetValue();
 	}
 
+	// V11.55: identidade do BUILD que gerou o codigo nativo. O codigo JIT em cache embute offsets de structs do interpretador,
+	// convencoes de registradores/frame do backend e enderecos relativos a tabelas; se o app for recompilado (ou o backend
+	// AArch64 mudar) e o cache antigo for reaproveitado, o app executa codigo velho e corrompe memoria (crashes "aleatorios" ate
+	// dentro do driver da GPU). A constante kCacheFormatVersion e manual e nao cobre isso. Aqui usamos o GNU build-id do .so que
+	// contem este codigo (muda a cada link); sem build-id, cai para data/hora de compilacao deste arquivo.
+	uint32 GetBuildIdentityHash()
+	{
+		uint64 h = 1469598103934665603ull;
+		auto mix = [&h](const void* d, size_t n) { for (size_t i = 0; i < n; i++) { h ^= ((const uint8*)d)[i]; h *= 1099511628211ull; } };
+		bool found = false;
+#if defined(__linux__) || defined(__ANDROID__)
+		struct Ctx { uintptr_t addr; uint64* h; bool found; } ctx{ (uintptr_t)&GetBuildIdentityHash, &h, false };
+		dl_iterate_phdr([](dl_phdr_info* info, size_t, void* user) -> int
+		{
+			Ctx* cx = (Ctx*)user;
+			bool contains = false;
+			for (int i = 0; i < info->dlpi_phnum && !contains; i++)
+			{
+				const auto& ph = info->dlpi_phdr[i];
+				if (ph.p_type != PT_LOAD)
+					continue;
+				const uintptr_t base = info->dlpi_addr + ph.p_vaddr;
+				contains = cx->addr >= base && cx->addr < base + ph.p_memsz;
+			}
+			if (!contains)
+				return 0;
+			for (int i = 0; i < info->dlpi_phnum; i++)
+			{
+				const auto& ph = info->dlpi_phdr[i];
+				if (ph.p_type != PT_NOTE)
+					continue;
+				const uint8* p = (const uint8*)(info->dlpi_addr + ph.p_vaddr);
+				const uint8* end = p + ph.p_memsz;
+				while (p + sizeof(ElfW(Nhdr)) <= end)
+				{
+					const ElfW(Nhdr)* nh = (const ElfW(Nhdr)*)p;
+					const uint8* name = p + sizeof(ElfW(Nhdr));
+					const uint8* desc = name + ((nh->n_namesz + 3u) & ~3u);
+					if (desc > end || desc + nh->n_descsz > end)
+						break;
+					if (nh->n_type == NT_GNU_BUILD_ID && nh->n_namesz == 4 && memcmp(name, "GNU", 4) == 0 && nh->n_descsz > 0)
+					{
+						for (uint32 k = 0; k < nh->n_descsz; k++)
+						{
+							*cx->h ^= desc[k];
+							*cx->h *= 1099511628211ull;
+						}
+						cx->found = true;
+						return 1;
+					}
+					p = desc + ((nh->n_descsz + 3u) & ~3u);
+				}
+			}
+			return 1;
+		}, &ctx);
+		found = ctx.found;
+#endif
+		if (!found)
+		{
+			static const char kBuildStamp[] = __DATE__ " " __TIME__;
+			mix(kBuildStamp, sizeof(kBuildStamp));
+		}
+		static bool s_logged = false;
+		if (!s_logged)
+		{
+			s_logged = true;
+			cemuLog_log(LogType::Force, "[AOT] identidade do build para o cache do recompilador: {:08x} ({})", (uint32)(h ^ (h >> 32)), found ? "GNU build-id" : "data/hora de compilacao");
+		}
+		return (uint32)(h ^ (h >> 32));
+	}
+
 	uint32 GetCacheExtraVersion()
 	{
 #if defined(ARCH_X86_64)
@@ -46,7 +122,8 @@ namespace
 #endif
 		// the cache file itself is already per-title (see PPCRecompilerCache_Load), so this only
 		// needs to guard against format changes and mixing code between architectures/builds
-		return (kCacheFormatVersion * 0x100) + archTag + 0x50436baa;
+		static const uint32 s_buildIdentity = GetBuildIdentityHash();
+		return ((kCacheFormatVersion * 0x100) + archTag + 0x50436baa) ^ s_buildIdentity;
 	}
 }
 

@@ -8,6 +8,7 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/DrawTraceVk.h"
 #include "Cafe/HW/Latte/Core/RendererInfo.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
+#include "Cafe/HW/Latte/Core/LatteTextureLoaderRGBA8.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanCapsReport.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
@@ -3211,8 +3212,20 @@ void VulkanRenderer::GetTextureFormatInfoVK(Latte::E_GX2SURFFMT format, bool isD
 			}
 			else
 			{
-				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
-				formatInfoOut->decoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+				// V11.56: sem BC nativo (ex.: Adreno 6xx com driver do sistema) o fallback era R32G32_SFLOAT (8 bytes/texel; uma textura
+				// 5120x720 virava 29 MB e levava >1 s para decodificar). O OpenGL deste fork ja usa 8 bits (R8/RG8); aqui o Vulkan passa a
+				// usar o mesmo para 2D/2D array. Cubemap/3D mantem o fallback float antigo. BC4 SNORM tambem deixa de ser decodificado como
+				// UNORM (os valores negativos eram corrompidos).
+				if (dim == Latte::E_DIM::DIM_2D || dim == Latte::E_DIM::DIM_2D_ARRAY)
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R8_UNORM;
+					formatInfoOut->decoder = TextureDecoder_BC4_R8::getInstance();
+				}
+				else
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+					formatInfoOut->decoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+				}
 			}
 			break;
 		case Latte::E_GX2SURFFMT::BC4_SNORM:
@@ -3230,8 +3243,16 @@ void VulkanRenderer::GetTextureFormatInfoVK(Latte::E_GX2SURFFMT format, bool isD
 			}
 			else
 			{
-				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
-				formatInfoOut->decoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+				if (dim == Latte::E_DIM::DIM_2D || dim == Latte::E_DIM::DIM_2D_ARRAY)
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R8_SNORM;
+					formatInfoOut->decoder = TextureDecoder_BC4_R8_SNORM::getInstance();
+				}
+				else
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+					formatInfoOut->decoder = TextureDecoder_BC4_UNORM_uncompress::getInstance();
+				}
 			}
 			break;
 		case Latte::E_GX2SURFFMT::BC5_UNORM:
@@ -3249,8 +3270,16 @@ void VulkanRenderer::GetTextureFormatInfoVK(Latte::E_GX2SURFFMT format, bool isD
 			}
 			else
 			{
-				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
-				formatInfoOut->decoder = TextureDecoder_BC5_UNORM_uncompress::getInstance();
+				if (dim == Latte::E_DIM::DIM_2D || dim == Latte::E_DIM::DIM_2D_ARRAY)
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R8G8_UNORM;
+					formatInfoOut->decoder = TextureDecoder_BC5_RG8::getInstance();
+				}
+				else
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+					formatInfoOut->decoder = TextureDecoder_BC5_UNORM_uncompress::getInstance();
+				}
 			}
 			break;
 		case Latte::E_GX2SURFFMT::BC5_SNORM:
@@ -3268,8 +3297,16 @@ void VulkanRenderer::GetTextureFormatInfoVK(Latte::E_GX2SURFFMT format, bool isD
 			}
 			else
 			{
-				formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
-				formatInfoOut->decoder = TextureDecoder_BC5_SNORM_uncompress::getInstance();
+				if (dim == Latte::E_DIM::DIM_2D || dim == Latte::E_DIM::DIM_2D_ARRAY)
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R8G8_SNORM;
+					formatInfoOut->decoder = TextureDecoder_BC5_RG8_SNORM::getInstance();
+				}
+				else
+				{
+					formatInfoOut->vkImageFormat = VK_FORMAT_R32G32_SFLOAT;
+					formatInfoOut->decoder = TextureDecoder_BC5_SNORM_uncompress::getInstance();
+				}
 			}
 			break;
 		case Latte::E_GX2SURFFMT::R24_X8_UNORM:

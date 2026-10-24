@@ -83,6 +83,23 @@ namespace coreinit
 
 	thread_local uint32 t_assignedCoreIndex;
 	thread_local Fiber* t_schedulerFiber;
+#if defined(__ANDROID__)
+	// V11.56: no Android cada fiber e uma pthread propria, entao um thread_local preenchido so na thread ORIGINAL de cada core
+	// (OSSchedulerCoreEmulationThread) fica nulo dentro dos fibers (idle e threads PPC). O caminho de desligamento chama
+	// Fiber::Switch(*t_schedulerFiber) de dentro desses fibers -> desreferencia nula (crash/trava ao parar o jogo; o app morre ou
+	// fica preso e a proxima abertura falha). Guardamos o fiber do scheduler por core em um array global e escolhemos pelo core
+	// atual (t_assignedCoreIndex e mantido corretamente em cada fiber). No modo de 1 core so existe o indice 0.
+	Fiber* g_schedulerFiberPerCore[3]{};
+	inline Fiber* GetSchedulerFiber()
+	{
+		Fiber* f = g_schedulerFiberPerCore[g_isMulticoreMode ? (t_assignedCoreIndex % 3) : 0];
+		if (!f)
+			f = t_schedulerFiber; // thread original do core: o TLS e valido
+		return f;
+	}
+#else
+	inline Fiber* GetSchedulerFiber() { return t_schedulerFiber; }
+#endif
 
 	struct OSHostThread
 	{
@@ -1371,14 +1388,14 @@ namespace coreinit
 				// the core go idle), that join() would never complete and the whole shutdown -
 				// including returning to the game list - would hang indefinitely.
 				if (!sSchedulerActive.load(std::memory_order::relaxed))
-					Fiber::Switch(*t_schedulerFiber); // switch back to original thread to exit
+					Fiber::Switch(*GetSchedulerFiber()); // switch back to original thread to exit
 			}
 			else
 			{
 				// wait for semaphore (only in multicore mode)
 				g_coreRunQueueThreadCount[t_assignedCoreIndex].waitUntilNonZero();
 				if (!sSchedulerActive.load(std::memory_order::relaxed))
-					Fiber::Switch(*t_schedulerFiber); // switch back to original thread to exit
+					Fiber::Switch(*GetSchedulerFiber()); // switch back to original thread to exit
 			}
 		}
 	}
@@ -1412,7 +1429,7 @@ namespace coreinit
 		if (!sSchedulerActive.load(std::memory_order::relaxed))
 		{
 			__OSUnlockScheduler();
-			Fiber::Switch(*t_schedulerFiber); // switch back to original thread entry for it to exit
+			Fiber::Switch(*GetSchedulerFiber()); // switch back to original thread entry for it to exit
 		}
 		// choose core
 		static uint32 _coreCounter = 0;
@@ -1559,6 +1576,9 @@ namespace coreinit
 #endif
 
 		t_schedulerFiber = Fiber::PrepareCurrentThread();
+#if defined(__ANDROID__)
+		g_schedulerFiberPerCore[g_isMulticoreMode ? (t_assignedCoreIndex % 3) : 0] = t_schedulerFiber;
+#endif
 
 		// create scheduler idle fiber and switch to it
 #if defined(__ANDROID__)
@@ -1625,6 +1645,10 @@ namespace coreinit
 			threadItr.join();
 		sSchedulerThreads.clear();
 		g_schedulerThreadHandles.clear();
+#if defined(__ANDROID__)
+		for (auto& f : g_schedulerFiberPerCore)
+			f = nullptr; // V11.56: as threads originais ja terminaram; evita ponteiro velho na proxima abertura
+#endif
 #if BOOST_OS_LINUX
 		{
 			std::lock_guard schedulerThreadIdsLockGuard(g_schedulerThreadIdsLock);

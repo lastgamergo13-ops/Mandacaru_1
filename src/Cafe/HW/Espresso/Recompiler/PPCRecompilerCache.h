@@ -27,6 +27,10 @@
 // means a patched/updated version of a game (or a different version of Cemu that changed how
 // code is generated) will simply be treated as a cache miss and recompiled normally, rather
 // than risking execution of stale or incompatible code.
+//
+// V11.55: the guest-code CRC only protects against GUEST changes. The native code itself depends on the exact build
+// (struct offsets, backend conventions), so the file's extra-version now also includes the GNU build-id of the shared
+// library: every rebuild of the app starts with an empty AOT cache instead of running machine code from an older build.
 
 // Loads (or lazily creates) the on-disk AOT cache file for the given title.
 // Must be called after PPCRecompiler_init() has set up the recompiler for the currently
