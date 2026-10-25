@@ -2,6 +2,14 @@
 
 namespace LatteDecompiler
 {
+	// V11.59 (EXPERIMENTAL): depth clamp por fragmento usa uma interpolante extra emuClipZW (vec2 = z,w do clip space) na proxima
+	// location livre da tabela de entradas do pixel shader. So existe sem geometry shader e com menos de 15 entradas (o GLES garante
+	// pelo menos 15 vec4 de varyings). Vertex shader e pixel shader decidem pela mesma regra, entao a interface sempre casa.
+	inline bool _emuClipZWAvailable(LatteDecompilerShaderContext* ctx)
+	{
+		return OpenGLRenderer::UsesFragmentDepthClamp() && !ctx->options->usesGeometryShader && LatteSHRC_GetPSInputTable()->count < 15;
+	}
+
 	void _emitUniformVariables(LatteDecompilerShaderContext* decompilerContext, RendererAPI rendererType, LatteDecompilerOutputUniformOffsets& uniformOffsets)
 	{
 		LatteDecompilerShaderResourceMapping& resourceMapping = (rendererType == RendererAPI::Vulkan) ? decompilerContext->output->resourceMappingVK : decompilerContext->output->resourceMappingGL;
@@ -83,6 +91,12 @@ namespace LatteDecompiler
 		{
 			uniformCurrentOffset = (uniformCurrentOffset + 3)&~3;
 			shaderSrc->add("uniform float uf_depthClampEmu;" _CRLF);
+			uniformCurrentOffset += 4;
+		}
+		if (rendererType == RendererAPI::OpenGL && decompilerContext->shaderType == LatteConst::ShaderType::Pixel && _emuClipZWAvailable(decompilerContext))
+		{
+			uniformCurrentOffset = (uniformCurrentOffset + 3)&~3;
+			shaderSrc->add("uniform float uf_depthClampFrag;" _CRLF);
 			uniformCurrentOffset += 4;
 		}
 		bool alphaTestEnable = decompilerContext->contextRegistersNew->SX_ALPHA_TEST_CONTROL.get_ALPHA_TEST_ENABLE();
@@ -354,8 +368,15 @@ namespace LatteDecompiler
 
 			// emulacao de depth clamp (ver uf_depthClampEmu acima): vazio quando nao e necessaria
 			const bool lastStage = !(decompilerContext->shaderType == LatteConst::ShaderType::Vertex && decompilerContext->options->usesGeometryShader);
-			const char* depthClampEmu = (OpenGLRenderer::NeedsDepthClampEmulation() && lastStage) ?
-				"; gl_Position.z = mix(gl_Position.z, clamp(gl_Position.z, -gl_Position.w, gl_Position.w), uf_depthClampEmu)" : "";
+			std::string depthClampEmuOwned;
+			if (OpenGLRenderer::NeedsDepthClampEmulation() && lastStage)
+			{
+				// V11.59: antes do clamp por vertice, guarda z/w ORIGINAIS para o pixel shader refazer o clamp por fragmento
+				if (decompilerContext->shaderType == LatteConst::ShaderType::Vertex && _emuClipZWAvailable(decompilerContext))
+					depthClampEmuOwned += "; emuClipZW = vec2((uf_depthClampEmu > 1.5 ? gl_Position.z : (gl_Position.z + gl_Position.w) * 0.5), gl_Position.w)";
+				depthClampEmuOwned += "; gl_Position.z = mix(gl_Position.z, clamp(gl_Position.z, (uf_depthClampEmu > 1.5 ? 0.0 : -gl_Position.w), gl_Position.w), step(0.5, uf_depthClampEmu))";
+			}
+			const char* depthClampEmu = depthClampEmuOwned.c_str();
 			if (OpenGLRenderer::IsClipControlEmulated())
 			{
 				// sem glClipControl: Y invertido (UPPER_LEFT) e Z 0..w -> -w..w feitos aqui
@@ -458,6 +479,8 @@ namespace LatteDecompiler
 			src->add("out");
 			src->addFmt(" vec4 passParameterSem{};" _CRLF, psInputTable->import[psInputIndex].semanticId);
 		}
+		if (_emuClipZWAvailable(shaderContext))
+			src->addFmt("layout(location = {}) out vec2 emuClipZW;" _CRLF, psInputTable->count);
 	}
 
 	void _emitPSImports(LatteDecompilerShaderContext* shaderContext)
@@ -476,6 +499,8 @@ namespace LatteDecompiler
 			src->add("in");
 			src->addFmt(" vec4 passParameterSem{};" _CRLF, psInputTable->import[i].semanticId);
 		}
+		if (_emuClipZWAvailable(shaderContext))
+			src->addFmt("layout(location = {}) in vec2 emuClipZW;" _CRLF, psInputTable->count);
 	}
 
 	void _emitMisc(LatteDecompilerShaderContext* decompilerContext)

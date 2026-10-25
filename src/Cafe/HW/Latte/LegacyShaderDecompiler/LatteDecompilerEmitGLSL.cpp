@@ -2849,8 +2849,18 @@ void _emitTEXGetCompTexLodCode(LatteDecompilerShaderContext* shaderContext, Latt
 
 	if (OpenGLRenderer::IsGLES())
 	{
-		// GLSL ES has no textureQueryLod() - report LOD 0
-		src->add("vec4(0.0)");
+		// GLSL ES has no textureQueryLod(): em pixel shader com textura 2D / 2D array usa a emulacao por derivadas
+		// (emuQueryLod2D, ver cabecalho); nos demais casos (cubemap, 3D, MSAA, vertex/geometry) continua reportando LOD 0.
+		const auto lodTexDim = shaderContext->shader->textureUnitDim[texInstruction->textureFetch.textureIndex];
+		if (shaderContext->shader->shaderType == LatteConst::ShaderType::Pixel && (lodTexDim == Latte::E_DIM::DIM_2D || lodTexDim == Latte::E_DIM::DIM_2D_ARRAY))
+		{
+			if (shaderContext->typeTracker.defaultDataType == LATTE_DECOMPILER_DTYPE_FLOAT)
+				src->addFmt("vec4(emuQueryLod2D(vec2(textureSize({}{}, 0).xy), {}.{}{}),0.0,0.0)", _getTextureUnitVariablePrefixName(shaderContext->shader->shaderType), texInstruction->textureFetch.textureIndex, _getRegisterVarName(shaderContext, texInstruction->srcGpr), resultElemTable[texInstruction->textureFetch.srcSel[0]], resultElemTable[texInstruction->textureFetch.srcSel[1]]);
+			else
+				src->addFmt("vec4(emuQueryLod2D(vec2(textureSize({}{}, 0).xy), intBitsToFloat({}.{}{})),0.0,0.0)", _getTextureUnitVariablePrefixName(shaderContext->shader->shaderType), texInstruction->textureFetch.textureIndex, _getRegisterVarName(shaderContext, texInstruction->srcGpr), resultElemTable[texInstruction->textureFetch.srcSel[0]], resultElemTable[texInstruction->textureFetch.srcSel[1]]);
+		}
+		else
+			src->add("vec4(0.0)");
 	}
 	else if( shaderContext->shader->textureUnitDim[texInstruction->textureFetch.textureIndex] == Latte::E_DIM::DIM_CUBEMAP )
 	{
@@ -3401,6 +3411,7 @@ void _emitExportCode(LatteDecompilerShaderContext* shaderContext, LatteDecompile
 				cemu_assert_unimplemented(); // ukn
 			}
 
+			shaderContext->psWroteFragDepth = true; // V11.59: o shader ja exporta profundidade; o depth clamp por fragmento nao se aplica
 			src->add("gl_FragDepth = ");
 			_emitExportGPRReadCode(shaderContext, cfInstruction, LATTE_DECOMPILER_DTYPE_FLOAT, 0);
 			src->add(".x");
@@ -4047,6 +4058,20 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 			// (Adreno: "'textureGradOffset' : offset must be constant" - isso derrubou TODOS os shaders na versao anterior).
 			src->add("#define emuTextureLodOffsetShadowArray(s, p, lod, o) textureGradOffset(s, p, vec2(exp2(lod) / float(textureSize(s, 0).x), 0.0), vec2(0.0, exp2(lod) / float(textureSize(s, 0).y)), o)" _CRLF);
 		}
+		if (shader->shaderType == LatteConst::ShaderType::Pixel)
+		{
+			// V11.57: GLSL ES nao tem textureQueryLod(). Emulacao pela formula da especificacao: LOD = log2(rho), com rho o maior
+			// comprimento das derivadas das coordenadas em texels. Devolve (LOD limitado em >=0, LOD sem limite) como o desktop.
+			// So existe em pixel shader (dFdx/dFdy nao existem em vertex/geometry no GLSL ES) e so e usada para 2D / 2D array.
+			src->add("vec2 emuQueryLod2D(vec2 texSize, vec2 uv)" _CRLF);
+			src->add("{" _CRLF);
+			src->add("\tvec2 dx = dFdx(uv * texSize);" _CRLF);
+			src->add("\tvec2 dy = dFdy(uv * texSize);" _CRLF);
+			src->add("\tfloat rho = max(dot(dx, dx), dot(dy, dy));" _CRLF);
+			src->add("\tfloat l = 0.5 * log2(max(rho, 1.0e-30));" _CRLF);
+			src->add("\treturn vec2(max(l, 0.0), l);" _CRLF);
+			src->add("}" _CRLF);
+		}
 		// Streamout/geometry-shader output on GLES does NOT go through GL_ARB_enhanced_layouts
 		// (desktop-only, no GLES equivalent) - it uses the same SSBO-based manual streamout
 		// path Vulkan and Metal already rely on instead of native transform feedback (see
@@ -4324,6 +4349,19 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 	{
 		if (shader->shaderType == LatteConst::ShaderType::Vertex && shaderContext->options->usesGeometryShader == false)
 			src->add("gl_PointSize = uf_pointSize;" _CRLF);
+	}
+	// V11.59 (EXPERIMENTAL): depth clamp por fragmento. z e w do clip space chegam interpolados (perspectiva correta) em emuClipZW, entao
+	// z/w por fragmento e exato; o resultado e limitado ao intervalo de profundidade e escrito em gl_FragDepth. Sem o draw ter o clamp
+	// ativo (uf_depthClampFrag = 0) escreve gl_FragCoord.z, pois um shader que escreve gl_FragDepth precisa escrever em todos os caminhos.
+	if (shader->shaderType == LatteConst::ShaderType::Pixel && !shaderContext->psWroteFragDepth && LatteDecompiler::_emuClipZWAvailable(shaderContext))
+	{
+		src->add("if (uf_depthClampFrag > 0.5)" _CRLF);
+		src->add("{" _CRLF);
+		src->add("\tfloat emuDepth01 = emuClipZW.x / emuClipZW.y;" _CRLF); // z de clip ja normalizado para 0..w pelo vertex shader
+		src->add("\tgl_FragDepth = gl_DepthRange.near + gl_DepthRange.diff * clamp(emuDepth01, 0.0, 1.0);" _CRLF);
+		src->add("}" _CRLF);
+		src->add("else" _CRLF);
+		src->add("\tgl_FragDepth = gl_FragCoord.z;" _CRLF);
 	}
 	// end of shader main
 	src->add("}" _CRLF);

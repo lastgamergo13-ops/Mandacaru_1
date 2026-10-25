@@ -1155,6 +1155,12 @@ void OpenGLRenderer::QuerySupportedFormats()
 		const char* rendererName = (const char*)glGetString(GL_RENDERER);
 		s_isPowerVR = isGLES && rendererName && strstr(rendererName, "PowerVR") != nullptr;
 	}
+	{
+		std::error_code fragClampEc;
+		s_fragDepthClampSwitch = isGLES && fs::exists(ActiveSettings::GetUserDataPath("gl_depth_clamp_fragment.txt"), fragClampEc);
+		if (s_fragDepthClampSwitch)
+			cemuLog_log(LogType::Force, "[GL] EXPERIMENTAL: chave gl_depth_clamp_fragment.txt encontrada: depth clamp por FRAGMENTO sera usado se o driver nao tiver GL_EXT_depth_clamp e o clip control for emulado");
+	}
 	s_hasBorderClamp = !isGLES || IsGLExtensionSupported("GL_EXT_texture_border_clamp") || IsGLExtensionSupported("GL_OES_texture_border_clamp");
 	int versionMajor = 0, versionMinor = 0;
 	if (glVersionString)
@@ -1275,13 +1281,28 @@ void OpenGLRenderer::QuerySupportedFormats()
 				{ "sample_shading", { "GL_ARB_sample_shading", "GL_OES_sample_shading" }, "MSAA por amostra ausente" },
 				{ "robustness", { "GL_KHR_robustness", "GL_EXT_robustness" }, "leitura fora do limite de buffer nao e zerada pelo driver" },
 			};
+			// V11.58: no OpenGL ES 3.2 estes recursos sao do NUCLEO da API (sem string de extensao): nao sao "FALTA"
+			bool es32 = false;
+			{
+				int esMajor = 0, esMinor = 0;
+				const char* verStr = (const char*)glGetString(GL_VERSION);
+				if (verStr && sscanf(verStr, "OpenGL ES %d.%d", &esMajor, &esMinor) == 2)
+					es32 = (esMajor > 3) || (esMajor == 3 && esMinor >= 2);
+			}
+			auto coreInEs32 = [](const char* what) {
+				static const char* names[] = { "copy_image", "draw_buffers_indexed", "base_vertex", "geometry_shader", "border_clamp", "sample_shading" };
+				for (const char* n : names)
+					if (strcmp(what, n) == 0)
+						return true;
+				return false;
+			};
 			std::string missing;
 			for (const Need& nd : needs)
 			{
 				bool any = false;
 				for (const char* e : nd.exts)
 					any = any || IsGLExtensionSupported(e);
-				if (!any)
+				if (!any && !(es32 && coreInEs32(nd.what)))
 					missing += fmt::format("\n[GLCaps]   FALTA {}: {}", nd.what, nd.consequence);
 			}
 			cemuLog_log(LogType::Force, "[GLCaps] resumo do que FALTA no driver (e o efeito/emulacao):{}", missing.empty() ? std::string(" nada") : missing);

@@ -1226,6 +1226,17 @@ void OpenGLRenderer::draw_genericDrawHandler(uint32 baseVertex, uint32 baseInsta
 				pixelShader->uniform.ufCurrentValueAlphaTestRef = t[0];
 			}
 		}
+		// V11.59: depth clamp por fragmento (experimental): so ativo quando o jogo desliga o clipping Z e NAO ha geometry shader
+		// (o varying emuClipZW so e escrito pelo vertex shader quando ele e o ultimo estagio)
+		if (pixelShader->uniform.loc_depthClampFrag >= 0)
+		{
+			const float dcf = (UsesFragmentDepthClamp() && GetDepthClampEmuValue() > 0.5f && geometryShader == nullptr) ? 1.0f : 0.0f;
+			if (pixelShader->uniform.ufCurrentValueDepthClampFrag != dcf)
+			{
+				glProgramUniform1fv(pixelShaderGL->GetProgram(), pixelShader->uniform.loc_depthClampFrag, 1, &dcf);
+				pixelShader->uniform.ufCurrentValueDepthClampFrag = dcf;
+			}
+		}
 		// update uf_fragCoordScale
 		if (pixelShader->uniform.loc_fragCoordScale >= 0)
 		{

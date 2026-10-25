@@ -202,6 +202,7 @@ struct LatteDecompilerShaderContext
 	LatteParsedGSCopyShader* parsedGSCopyShader;
 	// state
 	bool hasError;
+	bool psWroteFragDepth{ false }; // V11.59: o pixel shader exporta profundidade por conta propria (gl_FragDepth)
 	// type tracker
 	struct
 	{

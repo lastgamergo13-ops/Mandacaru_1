@@ -55,6 +55,8 @@ void LatteShader_prepareSeparableUniforms(LatteDecompilerShader* shader)
 	shader->uniform.ufCurrentValueClipFlipY = 0.0f;
 	shader->uniform.loc_depthClampEmu = glGetUniformLocation(shaderGL->GetProgram(), "uf_depthClampEmu");
 	shader->uniform.ufCurrentValueDepthClampEmu = -1.0f; // valor desconhecido: forca o primeiro envio
+	shader->uniform.loc_depthClampFrag = glGetUniformLocation(shaderGL->GetProgram(), "uf_depthClampFrag");
+	shader->uniform.ufCurrentValueDepthClampFrag = -1.0f;
 	// alternative (SSBO-based) transform feedback path - see OpenGLRenderer::UseTFViaSSBO()
 	// and OpenGLRendererStreamout.cpp. Harmless no-op query (-1) for shaders that don't
 	// declare these, i.e. every shader when streamout isn't used or the native GL_TRANSFORM_FEEDBACK

@@ -94,7 +94,20 @@ public:
 	static bool UsesSafeConditionalSampling() { return s_isGLES && s_isPowerVR; }
 	// true = GLES sem GL_EXT_depth_clamp: o depth clamp e emulado no vertex/geometry shader (uf_depthClampEmu)
 	static bool NeedsDepthClampEmulation() { return s_isGLES && !s_hasDepthClamp; }
-	float GetDepthClampEmuValue() const { return (NeedsDepthClampEmulation() && prevZClipEnable == 0) ? 1.0f : 0.0f; }
+	// V11.59 (EXPERIMENTAL, desligado por padrao): depth clamp POR FRAGMENTO no GLES sem GL_EXT_depth_clamp. Ligado pela existencia do
+	// arquivo "gl_depth_clamp_fragment.txt" na pasta de dados do usuario (ver OpenGLRenderer.cpp). So vale com clip control emulado (o
+	// calculo assume z de clip em [-w, w], que e o que a emulacao produz). Custo: todo pixel shader passa a escrever gl_FragDepth, o que
+	// desliga o early-Z, e o polygon offset pode nao ser aplicado. Serve para testar se a sombra quadrada vem do clamp por vertice.
+	static bool UsesFragmentDepthClamp() { return s_fragDepthClampSwitch && NeedsDepthClampEmulation(); }
+	// Valor de uf_depthClampEmu: 0 = clamp desligado; 1 = clamp ligado e z de clip em [-w, w]; 2 = clamp ligado com glClipControl REAL em
+	// GL_ZERO_TO_ONE (jogos com DX_CLIP_SPACE_DEF), onde o volume de clip e z em [0, w]. Antes o shader limitava sempre a [-w, w], o que
+	// nao impedia o recorte pelo plano near no modo ZERO_TO_ONE.
+	float GetDepthClampEmuValue() const
+	{
+		if (!(NeedsDepthClampEmulation() && prevZClipEnable == 0))
+			return 0.0f;
+		return (!IsClipControlEmulated() && _prevHalfZ) ? 2.0f : 1.0f;
+	}
 
 	// True quando o driver GLES nao tem clip control (nem GL_EXT_clip_control): origem Y (UPPER_LEFT) e
 	// faixa Z (0..1) sao emuladas nos vertex/geometry shaders (uf_clipFlipY + SET_POSITION) e no front face.
@@ -109,6 +122,7 @@ public:
 	static inline bool s_hasTextureShadowLod = true;
 	static inline bool s_hasBorderClamp = true;
 	static inline bool s_hasDepthClamp = true;
+	static inline bool s_fragDepthClampSwitch = false;
 	static inline bool s_isPowerVR = false;
 	static inline bool s_clipControlEmulated = false;
 

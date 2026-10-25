@@ -203,6 +203,8 @@ struct LatteDecompilerShader
 		float ufCurrentValueClipFlipY;
 		sint32 loc_depthClampEmu; // uf_depthClampEmu (emulacao de GL_DEPTH_CLAMP no GLES sem GL_EXT_depth_clamp)
 		float ufCurrentValueDepthClampEmu;
+		sint32 loc_depthClampFrag; // uf_depthClampFrag (pixel shader; depth clamp por fragmento, experimental)
+		float ufCurrentValueDepthClampFrag;
 		std::vector<LatteUniformTextureScaleEntry_t> list_ufTexRescale; // list of mappings for uf_tex*Scale <-> uniform location
 		float ufCurrentValueAlphaTestRef;
 		float ufCurrentValueFragCoordScale[2];
