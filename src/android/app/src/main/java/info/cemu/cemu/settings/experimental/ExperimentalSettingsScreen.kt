@@ -238,22 +238,26 @@ fun ExperimentalSettingsScreen(navigateBack: () -> Unit, goToQualityOfLifeSettin
             explanation = tr(
                 "Wii U games guardam muitas texturas nos formatos comprimidos BC1 a BC5 (cor, " +
                         "transparencia, mascaras e mapas de normal). A maioria das GPUs de celular nao " +
-                        "le esses formatos direto. Este botao liga ou desliga os cinco de uma vez " +
+                        "le esses formatos direto. Esta chave liga ou desliga os cinco de uma vez " +
                         "(BC1, BC2, BC3, BC4 e BC5).\n\n" +
-                        "Ligado: o emulador converte as texturas BC para o formato que a sua GPU aceita " +
-                        "(ETC2/EAC), quando ela aceita. Isso usa de 4 a 8 vezes menos memoria que decodificar " +
-                        "para pixels normais. Desligado: as texturas BC sao decodificadas para pixels " +
-                        "normais, que e o comportamento padrao e o mais seguro.\n\n" +
-                        "Aviso: e experimental. No OpenGL ES esta opcao ficava sempre desativada (nos testes " +
-                        "antigos ficou mais lenta e com pior qualidade) e o botao nao mudava nada. Agora ela " +
-                        "funciona tambem no OpenGL ES, so para texturas 2D e 2D array (as demais continuam " +
-                        "decodificadas). Se as texturas ficarem borradas, quadriculadas ou erradas depois de " +
-                        "ligar, desligue de novo: o problema e esta opcao, nao o jogo."
+                        "LIGADA: Transcode BC1-BC5 para ETC2/EAC. O emulador converte as texturas BC " +
+                        "para o formato que a sua GPU aceita (ETC2/EAC). Usa de 4 a 8 vezes menos " +
+                        "memoria de textura, mas e experimental: o BC1 perde a transparencia de 1 bit " +
+                        "(cabelo, grades e folhagem podem ficar pretos), BC4/BC5 podem demorar varios " +
+                        "segundos para carregar e a conversao e fraca em bordas duras e cores saturadas " +
+                        "(pode aparecer granulado).\n\n" +
+                        "DESLIGADA (padrao): BC1-BC5 viram RGBA8/R8/RG8 com alfa preservado. Textura e " +
+                        "decodificador usam a mesma regra, entao nao divergem. E o modo mais seguro e o " +
+                        "que carrega mais rapido, mas usa mais memoria.\n\n" +
+                        "Se com a chave ligada as texturas ficarem pretas, borradas ou quadriculadas, " +
+                        "desligue de novo: o problema e o transcode, nao o jogo. Vale para OpenGL ES e " +
+                        "Vulkan; so texturas 2D e 2D array sao transcodificadas (as demais continuam " +
+                        "decodificadas)."
             ),
         )
         Toggle(
             label = tr("Texture compression (BC1-BC5)"),
-            description = tr("Liga/desliga BC1, BC2, BC3, BC4 e BC5 juntos. Veja a nota acima."),
+            description = tr("LIGADA: transcode para ETC2/EAC (menos memoria, experimental; o BC1 perde a transparencia). DESLIGADA: RGBA8/R8/RG8 com alfa preservado (padrao, mais seguro). Veja a nota acima."),
             initialCheckedState = {
                 NativeSettings.getTextureCompressionBC1() || NativeSettings.getTextureCompressionBC2() ||
                     NativeSettings.getTextureCompressionBC3() || NativeSettings.getTextureCompressionBC4() ||

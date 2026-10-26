@@ -926,6 +926,36 @@ bool PipelineCompiler::InitFromCurrentGPUState(PipelineInfo* pipelineInfo, const
 	return true;
 }
 
+// V11.60: serializacao da CRIACAO de pipelines no Turnip. Os dois crashes do Turnip (Zelda) ocorreram na LatteThread, dentro de
+// vkCreateGraphicsPipelines (um com ponteiro corrompido, outro com salto para ponteiro nulo), sempre com threads "async" criando
+// pipelines no mesmo instante; as ~1000 criacoes feitas so pelas threads async nunca falharam. Hipotese: corrida dentro do driver
+// entre a thread do jogo e as threads de compilacao. Por isso, no Turnip, so uma thread por vez entra em vkCreateGraphicsPipelines.
+// Custo: a compilacao em segundo plano fica mais lenta e a LatteThread pode esperar uma criacao em andamento.
+// Chaves por arquivo (pasta de dados do app): vk_parallel_compile.txt = nunca serializar; vk_serialize_compile.txt = sempre serializar.
+static std::mutex g_pipelineCreateSerialMutex;
+static bool ShouldSerializePipelineCreation(VulkanRenderer* vkRenderer)
+{
+	static const bool s_value = [vkRenderer]() {
+		bool turnip = false;
+		if (vkRenderer->m_featureControl.deviceExtensions.driver_properties)
+		{
+			VkPhysicalDeviceProperties2 p2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+			VkPhysicalDeviceDriverProperties dp{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
+			p2.pNext = &dp;
+			vkGetPhysicalDeviceProperties2(vkRenderer->GetPhysicalDevice(), &p2);
+			auto hasTurnip = [](const char* s) { std::string t(s); for (auto& ch : t) ch = (char)tolower((unsigned char)ch); return t.find("turnip") != std::string::npos; };
+			turnip = ((uint32)dp.driverID == 18u /* VK_DRIVER_ID_MESA_TURNIP */) || hasTurnip(dp.driverName) || hasTurnip(dp.driverInfo);
+		}
+		std::error_code ec;
+		const bool forceParallel = fs::exists(ActiveSettings::GetUserDataPath("vk_parallel_compile.txt"), ec);
+		const bool forceSerial = fs::exists(ActiveSettings::GetUserDataPath("vk_serialize_compile.txt"), ec);
+		const bool serialize = forceSerial || (turnip && !forceParallel);
+		cemuLog_log(LogType::Force, "[Pipeline] criacao de pipelines {} (Turnip={}, vk_parallel_compile.txt={}, vk_serialize_compile.txt={})", serialize ? "SERIALIZADA" : "em paralelo", turnip, forceParallel, forceSerial);
+		return serialize;
+	}();
+	return s_value;
+}
+
 bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool showInOverlay)
 {
 	VulkanRenderer* vkRenderer = VulkanRenderer::GetInstance();
@@ -1041,7 +1071,12 @@ bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool show
 		const auto pcT0 = std::chrono::steady_clock::now();
 		if (pcHaveHashes)
 			PIPE_CREATE_BEGIN(pcHashes[0], pcHashes[1], pcHashes[2]);
+		std::unique_lock<std::mutex> serialLock(g_pipelineCreateSerialMutex, std::defer_lock);
+		if (ShouldSerializePipelineCreation(vkRenderer))
+			serialLock.lock();
 		result = vkCreateGraphicsPipelines(vkRenderer->m_logicalDevice, vkRenderer->m_pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
+		if (serialLock.owns_lock())
+			serialLock.unlock();
 		PIPE_CREATE_END();
 		const auto pcMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - pcT0).count();
 		// V11.37: a hora desta linha (fim da criacao) deve bater com "AdrenoVK ... Shader compilation failed" no logcat

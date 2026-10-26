@@ -1223,7 +1223,7 @@ void OpenGLRenderer::QuerySupportedFormats()
 	m_supportedFormatInfo.fmt_etc2 = etc2CoreVersion || IsGLExtensionSupported("GL_ARB_ES3_compatibility");
 
 	{
-		auto pick = [&](bool native, bool optEtc2) -> const char* { return native ? "nativo" : ((optEtc2 && !isGLES && m_supportedFormatInfo.fmt_etc2) ? "transcodificado para ETC2 (opcao experimental ligada)" : "decodificado em software para 8 bits (RGBA8/R8/RG8)"); };
+		auto pick = [&](bool native, bool optEtc2) -> const char* { return native ? "nativo" : ((optEtc2 && m_supportedFormatInfo.fmt_etc2) ? "transcodificado para ETC2/EAC (opcao ligada)" : "decodificado em software para 8 bits (RGBA8/R8/RG8)"); };
 		cemuLog_log(LogType::Force, "[GL] BC1 -> {} | BC2 -> {} | BC3 -> {} | BC4 -> {} | BC5 -> {}", pick(m_supportedFormatInfo.fmt_bc1, GetConfig().texture_compression_bc1), pick(m_supportedFormatInfo.fmt_bc2, GetConfig().texture_compression_bc2), pick(m_supportedFormatInfo.fmt_bc3, GetConfig().texture_compression_bc3), pick(m_supportedFormatInfo.fmt_bc4, GetConfig().texture_compression_bc4), pick(m_supportedFormatInfo.fmt_bc5, GetConfig().texture_compression_bc5));
 	}
 	cemuLog_log(LogType::Force, "OpenGL texture compression support: BC1/S3TC={} BC2/DXT3={} BC3/DXT5={} BC4-5/RGTC={} ETC2={}", m_supportedFormatInfo.fmt_bc1, m_supportedFormatInfo.fmt_bc2, m_supportedFormatInfo.fmt_bc3, m_supportedFormatInfo.fmt_bc4, m_supportedFormatInfo.fmt_etc2);

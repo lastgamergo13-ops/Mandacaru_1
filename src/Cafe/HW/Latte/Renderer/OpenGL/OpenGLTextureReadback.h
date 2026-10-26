@@ -27,5 +27,8 @@ private:
 	// glGetTexImage, which does not exist on GLES - see StartTransfer() in the .cpp.
 	// Created lazily on first use, destroyed in the destructor.
 	GLuint m_readbackFBO = 0;
+	// V11.60: tamanho de seguranca do buffer zerado usado quando glMapBufferRange falha. Calculado em StartTransfer(), porque
+	// la m_textureView e zerado e GetData() nao pode mais usa-lo.
+	size_t m_fallbackBytes = 0;
 };
 

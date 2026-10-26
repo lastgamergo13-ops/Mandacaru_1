@@ -1,4 +1,7 @@
 #pragma once
+#include <thread>
+#include <vector>
+#include <algorithm>
 #include "util/helpers/ClassWrapper.h"
 #include "Cafe/HW/Latte/LatteAddrLib/LatteAddrLib.h"
 #include "util/ImageWriter/tga.h"
@@ -2208,6 +2211,40 @@ public:
 // Transcodes BC4_UNORM (single channel, e.g. height maps/masks) to R11_EAC. Same block
 // "shell" as the EAC alpha encoder above but with 11-bit precision - see
 // LatteTextureETC1Encoder.h's EncodeR11BlockUNORM for the formula.
+// V11.60: divide o laco de decodificacao em faixas de linhas de blocos executadas em ate 4 threads. Os blocos sao independentes
+// (so leitura da entrada e escrita em posicoes distintas da saida). Usado pelos decodificadores BC4/BC5 -> ETC2/EAC, cujo codificador
+// custa varios microssegundos por bloco. bandFn(yBegin, yEnd) processa as linhas [yBegin, yEnd) em passos de stepY.
+template<typename TBandFn>
+inline void LatteTextureLoader_ParallelBands(LatteTextureLoaderCtx* ctx, TBandFn bandFn)
+{
+	const sint32 blocksY = (ctx->height + ctx->stepY - 1) / ctx->stepY;
+	const sint32 blocksX = (ctx->width + ctx->stepX - 1) / ctx->stepX;
+	const uint64 totalBlocks = (uint64)blocksX * (uint64)blocksY;
+	const unsigned hw = std::thread::hardware_concurrency();
+	unsigned numThreads = 1;
+	if (totalBlocks >= 2048 && blocksY >= 8 && hw >= 4)
+		numThreads = std::min<unsigned>(4, hw / 2);
+	if (numThreads <= 1)
+	{
+		bandFn((sint32)0, (sint32)ctx->height);
+		return;
+	}
+	const sint32 rowsPerBand = (sint32)((blocksY + numThreads - 1) / numThreads) * ctx->stepY;
+	std::vector<std::thread> workers;
+	workers.reserve(numThreads - 1);
+	for (unsigned t = 1; t < numThreads; t++)
+	{
+		const sint32 yBegin = (sint32)t * rowsPerBand;
+		if (yBegin >= ctx->height)
+			break;
+		const sint32 yEnd = std::min<sint32>(ctx->height, yBegin + rowsPerBand);
+		workers.emplace_back([&bandFn, yBegin, yEnd]() { bandFn(yBegin, yEnd); });
+	}
+	bandFn((sint32)0, std::min<sint32>(ctx->height, rowsPerBand));
+	for (auto& w : workers)
+		w.join();
+}
+
 class TextureDecoder_BC4_To_ETC2_R11EAC : public TextureDecoder, public SingletonClass<TextureDecoder_BC4_To_ETC2_R11EAC>
 {
 public:
@@ -2229,22 +2266,25 @@ public:
 	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
 	{
 		const sint32 blockCountX = getTexelCountX(textureLoader);
-		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		LatteTextureLoader_ParallelBands(textureLoader, [&](sint32 yBegin, sint32 yEnd)
 		{
-			const sint32 by = y / 4;
-			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			for (sint32 y = yBegin; y < yEnd; y += textureLoader->stepY)
 			{
-				const sint32 bx = x / 4;
-				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
-				float rBlockFloat[4 * 4 * 1];
-				decodeBC4Block_UNORM(blockData, rBlockFloat);
-				uint8 rBlock8[16];
-				for (sint32 i = 0; i < 16; i++)
-					rBlock8[i] = (uint8)(rBlockFloat[i] * 255.0f);
-				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 8;
-				LatteEACEncoder::EncodeR11BlockUNORM(rBlock8, outBlock);
+				const sint32 by = y / 4;
+				for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+				{
+					const sint32 bx = x / 4;
+					uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+					float rBlockFloat[4 * 4 * 1];
+					decodeBC4Block_UNORM(blockData, rBlockFloat);
+					uint8 rBlock8[16];
+					for (sint32 i = 0; i < 16; i++)
+						rBlock8[i] = (uint8)(rBlockFloat[i] * 255.0f);
+					uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 8;
+					LatteEACEncoder::EncodeR11BlockUNORM(rBlock8, outBlock);
+				}
 			}
-		}
+		});
 	}
 
 	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
@@ -2280,22 +2320,25 @@ public:
 	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
 	{
 		const sint32 blockCountX = getTexelCountX(textureLoader);
-		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		LatteTextureLoader_ParallelBands(textureLoader, [&](sint32 yBegin, sint32 yEnd)
 		{
-			const sint32 by = y / 4;
-			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			for (sint32 y = yBegin; y < yEnd; y += textureLoader->stepY)
 			{
-				const sint32 bx = x / 4;
-				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
-				float rBlockFloat[4 * 4 * 1]; // -1.0 .. 1.0 range
-				decodeBC4Block_SNORM(blockData, rBlockFloat);
-				sint8 rBlock8[16];
-				for (sint32 i = 0; i < 16; i++)
-					rBlock8[i] = (sint8)std::clamp((int)(rBlockFloat[i] * 127.0f + (rBlockFloat[i] >= 0.0f ? 0.5f : -0.5f)), -127, 127);
-				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 8;
-				LatteEACEncoder::EncodeR11BlockSNORM(rBlock8, outBlock);
+				const sint32 by = y / 4;
+				for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+				{
+					const sint32 bx = x / 4;
+					uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+					float rBlockFloat[4 * 4 * 1]; // -1.0 .. 1.0 range
+					decodeBC4Block_SNORM(blockData, rBlockFloat);
+					sint8 rBlock8[16];
+					for (sint32 i = 0; i < 16; i++)
+						rBlock8[i] = (sint8)std::clamp((int)(rBlockFloat[i] * 127.0f + (rBlockFloat[i] >= 0.0f ? 0.5f : -0.5f)), -127, 127);
+					uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 8;
+					LatteEACEncoder::EncodeR11BlockSNORM(rBlock8, outBlock);
+				}
 			}
-		}
+		});
 	}
 
 	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
@@ -2467,27 +2510,30 @@ public:
 	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
 	{
 		const sint32 blockCountX = getTexelCountX(textureLoader);
-		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		LatteTextureLoader_ParallelBands(textureLoader, [&](sint32 yBegin, sint32 yEnd)
 		{
-			const sint32 by = y / 4;
-			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			for (sint32 y = yBegin; y < yEnd; y += textureLoader->stepY)
 			{
-				const sint32 bx = x / 4;
-				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
-				float rgBlockFloat[4 * 4 * 2];
-				decodeBC5Block_UNORM(blockData, rgBlockFloat);
-				uint8 rBlock8[16];
-				uint8 gBlock8[16];
-				for (sint32 i = 0; i < 16; i++)
+				const sint32 by = y / 4;
+				for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
 				{
-					rBlock8[i] = (uint8)(rgBlockFloat[i * 2 + 0] * 255.0f);
-					gBlock8[i] = (uint8)(rgBlockFloat[i * 2 + 1] * 255.0f);
+					const sint32 bx = x / 4;
+					uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+					float rgBlockFloat[4 * 4 * 2];
+					decodeBC5Block_UNORM(blockData, rgBlockFloat);
+					uint8 rBlock8[16];
+					uint8 gBlock8[16];
+					for (sint32 i = 0; i < 16; i++)
+					{
+						rBlock8[i] = (uint8)(rgBlockFloat[i * 2 + 0] * 255.0f);
+						gBlock8[i] = (uint8)(rgBlockFloat[i * 2 + 1] * 255.0f);
+					}
+					uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
+					LatteEACEncoder::EncodeR11BlockUNORM(rBlock8, outBlock);
+					LatteEACEncoder::EncodeR11BlockUNORM(gBlock8, outBlock + 8);
 				}
-				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
-				LatteEACEncoder::EncodeR11BlockUNORM(rBlock8, outBlock);
-				LatteEACEncoder::EncodeR11BlockUNORM(gBlock8, outBlock + 8);
 			}
-		}
+		});
 	}
 
 	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override
@@ -2519,29 +2565,32 @@ public:
 	void decode(LatteTextureLoaderCtx* textureLoader, uint8* outputData) override
 	{
 		const sint32 blockCountX = getTexelCountX(textureLoader);
-		for (sint32 y = 0; y < textureLoader->height; y += textureLoader->stepY)
+		LatteTextureLoader_ParallelBands(textureLoader, [&](sint32 yBegin, sint32 yEnd)
 		{
-			const sint32 by = y / 4;
-			for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
+			for (sint32 y = yBegin; y < yEnd; y += textureLoader->stepY)
 			{
-				const sint32 bx = x / 4;
-				uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
-				float rgBlockFloat[4 * 4 * 2]; // -1.0 .. 1.0 range per channel
-				decodeBC5Block_SNORM(blockData, rgBlockFloat);
-				sint8 rBlock8[16];
-				sint8 gBlock8[16];
-				for (sint32 i = 0; i < 16; i++)
+				const sint32 by = y / 4;
+				for (sint32 x = 0; x < textureLoader->width; x += textureLoader->stepX)
 				{
-					float rf = rgBlockFloat[i * 2 + 0];
-					float gf = rgBlockFloat[i * 2 + 1];
-					rBlock8[i] = (sint8)std::clamp((int)(rf * 127.0f + (rf >= 0.0f ? 0.5f : -0.5f)), -127, 127);
-					gBlock8[i] = (sint8)std::clamp((int)(gf * 127.0f + (gf >= 0.0f ? 0.5f : -0.5f)), -127, 127);
+					const sint32 bx = x / 4;
+					uint8* blockData = LatteTextureLoader_GetInput(textureLoader, x, y);
+					float rgBlockFloat[4 * 4 * 2]; // -1.0 .. 1.0 range per channel
+					decodeBC5Block_SNORM(blockData, rgBlockFloat);
+					sint8 rBlock8[16];
+					sint8 gBlock8[16];
+					for (sint32 i = 0; i < 16; i++)
+					{
+						float rf = rgBlockFloat[i * 2 + 0];
+						float gf = rgBlockFloat[i * 2 + 1];
+						rBlock8[i] = (sint8)std::clamp((int)(rf * 127.0f + (rf >= 0.0f ? 0.5f : -0.5f)), -127, 127);
+						gBlock8[i] = (sint8)std::clamp((int)(gf * 127.0f + (gf >= 0.0f ? 0.5f : -0.5f)), -127, 127);
+					}
+					uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
+					LatteEACEncoder::EncodeR11BlockSNORM(rBlock8, outBlock);
+					LatteEACEncoder::EncodeR11BlockSNORM(gBlock8, outBlock + 8);
 				}
-				uint8* outBlock = outputData + (size_t)(by * blockCountX + bx) * 16;
-				LatteEACEncoder::EncodeR11BlockSNORM(rBlock8, outBlock);
-				LatteEACEncoder::EncodeR11BlockSNORM(gBlock8, outBlock + 8);
 			}
-		}
+		});
 	}
 
 	void decodePixelToRGBA(uint8* blockData, uint8* outputPixel, uint8 blockOffsetX, uint8 blockOffsetY) override

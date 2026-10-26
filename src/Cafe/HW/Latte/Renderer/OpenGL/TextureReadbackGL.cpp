@@ -113,6 +113,12 @@ void LatteTextureReadbackInfoGL::StartTransfer()
 	cemu_assert(m_textureView);
 	auto textureViewGL = (LatteTextureViewGL*)m_textureView;
 	LatteTexture* baseTexture = m_textureView->baseTexture;
+	// V11.60: guarda aqui o tamanho do buffer zerado de emergencia (m_textureView vira nullptr no fim desta funcao)
+	m_fallbackBytes = (size_t)baseTexture->width * (size_t)baseTexture->height * 16;
+	if (m_fallbackBytes < (size_t)m_image_size)
+		m_fallbackBytes = (size_t)m_image_size;
+	if (m_fallbackBytes < 4096)
+		m_fallbackBytes = 4096;
 
 	if (!m_readbackFBO)
 		glGenFramebuffers(1, &m_readbackFBO);
@@ -189,12 +195,11 @@ uint8* LatteTextureReadbackInfoGL::GetData()
 			if (!s_warned)
 			{
 				s_warned = true;
-				cemuLog_log(LogType::Force, "[GL] glMapBufferRange do readback devolveu nulo (tamanho={}); usando buffer zerado", (uint32)m_image_size);
+				const GLenum glErr = glGetError();
+				cemuLog_log(LogType::Force, "[GL] glMapBufferRange do readback devolveu nulo (tamanho={}, buffer={}, glGetError=0x{:x}); usando buffer zerado", (uint32)m_image_size, (uint32)texImageBufferGL, (uint32)glErr);
 			}
-			LatteTexture* baseTexture = m_textureView->baseTexture;
-			size_t need = (size_t)baseTexture->width * (size_t)baseTexture->height * 16;
-			if (need < (size_t)m_image_size)
-				need = (size_t)m_image_size;
+			// V11.60: NAO usar m_textureView aqui: StartTransfer() ja o zerou (acesso em nulo+8 = signal 11 no Zelda, GetData()+0xc0)
+			size_t need = m_fallbackBytes ? m_fallbackBytes : (size_t)((m_image_size > 4096) ? m_image_size : 4096);
 			s_zeroFallback.assign(need, 0);
 			s_usingZeroFallback = true;
 			return s_zeroFallback.data();
