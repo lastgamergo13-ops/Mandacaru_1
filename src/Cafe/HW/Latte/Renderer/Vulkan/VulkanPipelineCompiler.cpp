@@ -933,16 +933,17 @@ bool PipelineCompiler::InitFromCurrentGPUState(PipelineInfo* pipelineInfo, const
 // Custo: a compilacao em segundo plano fica mais lenta e a LatteThread pode esperar uma criacao em andamento.
 // Chaves por arquivo (pasta de dados do app): vk_parallel_compile.txt = nunca serializar; vk_serialize_compile.txt = sempre serializar.
 static std::mutex g_pipelineCreateSerialMutex;
-static bool ShouldSerializePipelineCreation(VulkanRenderer* vkRenderer)
+// Recebe os valores por parametro: m_featureControl e privado e so PipelineCompiler (friend) pode le-lo, nao uma funcao livre.
+static bool ShouldSerializePipelineCreation(VkPhysicalDevice physicalDevice, bool hasDriverPropertiesExt)
 {
-	static const bool s_value = [vkRenderer]() {
+	static const bool s_value = [physicalDevice, hasDriverPropertiesExt]() {
 		bool turnip = false;
-		if (vkRenderer->m_featureControl.deviceExtensions.driver_properties)
+		if (hasDriverPropertiesExt)
 		{
 			VkPhysicalDeviceProperties2 p2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
 			VkPhysicalDeviceDriverProperties dp{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
 			p2.pNext = &dp;
-			vkGetPhysicalDeviceProperties2(vkRenderer->GetPhysicalDevice(), &p2);
+			vkGetPhysicalDeviceProperties2(physicalDevice, &p2);
 			auto hasTurnip = [](const char* s) { std::string t(s); for (auto& ch : t) ch = (char)tolower((unsigned char)ch); return t.find("turnip") != std::string::npos; };
 			turnip = ((uint32)dp.driverID == 18u /* VK_DRIVER_ID_MESA_TURNIP */) || hasTurnip(dp.driverName) || hasTurnip(dp.driverInfo);
 		}
@@ -1072,7 +1073,7 @@ bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool show
 		if (pcHaveHashes)
 			PIPE_CREATE_BEGIN(pcHashes[0], pcHashes[1], pcHashes[2]);
 		std::unique_lock<std::mutex> serialLock(g_pipelineCreateSerialMutex, std::defer_lock);
-		if (ShouldSerializePipelineCreation(vkRenderer))
+		if (ShouldSerializePipelineCreation(vkRenderer->GetPhysicalDevice(), vkRenderer->m_featureControl.deviceExtensions.driver_properties))
 			serialLock.lock();
 		result = vkCreateGraphicsPipelines(vkRenderer->m_logicalDevice, vkRenderer->m_pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
 		if (serialLock.owns_lock())
