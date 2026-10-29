@@ -101,6 +101,16 @@ namespace coreinit
 	inline Fiber* GetSchedulerFiber() { return t_schedulerFiber; }
 #endif
 
+#if defined(__ANDROID__)
+	// CORRECAO (crash do Watch Dogs, modo 1 core): no modo de 1 core existe UMA so thread de scheduler e UM so fiber idle (indice 0).
+	// A thread PPC pode ter selectedCore 1 ou 2 (o rodizio _coreCounter), mas g_idleLoopFiber[1]/[2] e g_schedulerFiberPerCore[1]/[2]
+	// sao nulos -> Fiber::Switch(*nullptr) -> SIGSEGV no endereco 0. Por isso o indice "de host" usado pelo scheduler e sempre 0 em 1 core.
+	inline uint32 AndroidHostCoreIndex(uint32 selectedCore)
+	{
+		return g_isMulticoreMode ? selectedCore : 0;
+	}
+#endif
+
 	struct OSHostThread
 	{
 		OSHostThread(OSThread_t* thread) : m_thread(thread), m_fiber((void(*)(void*))__OSFiberThreadEntry, this, this)
@@ -1417,7 +1427,7 @@ namespace coreinit
 		// para um fiber idle que ja esta ativo em outra pthread, dessincronizando o handoff por
 		// semaforo e deixando a thread presa segurando o scheduler lock para sempre. Em
 		// ucontext/Windows isso nao ocorre porque a thread real do core e a mesma (TLS correto).
-		t_assignedCoreIndex = hostThread->selectedCore;
+		t_assignedCoreIndex = AndroidHostCoreIndex(hostThread->selectedCore);
 #endif
 
 		//if (ppcInterpreterCurrentInstance)
@@ -1464,7 +1474,7 @@ namespace coreinit
 		cemu_assert_debug(__OSHasSchedulerLock());	
 #if defined(__ANDROID__)
 		// fomos retomados possivelmente em outro core (ver comentario no inicio da funcao)
-		t_assignedCoreIndex = hostThread->selectedCore;
+		t_assignedCoreIndex = AndroidHostCoreIndex(hostThread->selectedCore);
 #endif
 		cemu_assert_debug(g_isMulticoreMode == false || hostThread->selectedCore == t_assignedCoreIndex);
 
@@ -1493,7 +1503,7 @@ namespace coreinit
 		// before switching into us, so that's the correct value to adopt here -
 		// everything downstream in this thread's own __OSThreadSwitchToNext()
 		// calls (run queue lookups, idle fiber selection, etc.) depends on it.
-		t_assignedCoreIndex = hostThread->selectedCore;
+		t_assignedCoreIndex = AndroidHostCoreIndex(hostThread->selectedCore);
 #endif
 
 		enableFlushDenormalsToZero();

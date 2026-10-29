@@ -23,6 +23,11 @@
 namespace
 {
 	std::mutex g_pcHashMutex;
+#if defined(__ANDROID__)
+	// Os drivers Vulkan do Android (Turnip/Adreno, PowerVR/Mali) corrompem memoria/crasham quando varias threads (render + async)
+	// chamam vkCreateGraphicsPipelines ao mesmo tempo. Serializamos a criacao de pipelines.
+	std::mutex g_vkCreatePipelineMutex;
+#endif
 	std::unordered_map<const void*, std::array<uint64, 3>> g_pcHashes;
 }
 
@@ -1041,7 +1046,14 @@ bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool show
 		const auto pcT0 = std::chrono::steady_clock::now();
 		if (pcHaveHashes)
 			PIPE_CREATE_BEGIN(pcHashes[0], pcHashes[1], pcHashes[2]);
+#if defined(__ANDROID__)
+		{
+			std::lock_guard<std::mutex> createLock(g_vkCreatePipelineMutex);
+			result = vkCreateGraphicsPipelines(vkRenderer->m_logicalDevice, vkRenderer->m_pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
+		}
+#else
 		result = vkCreateGraphicsPipelines(vkRenderer->m_logicalDevice, vkRenderer->m_pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
+#endif
 		PIPE_CREATE_END();
 		const auto pcMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - pcT0).count();
 		// V11.37: a hora desta linha (fim da criacao) deve bater com "AdrenoVK ... Shader compilation failed" no logcat

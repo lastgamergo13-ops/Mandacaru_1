@@ -721,8 +721,22 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
 	}
 #endif
 
+#if defined(__ANDROID__)
+	// Backstop: se escrever o relatorio travar, o processo morre sozinho em 8 s (SIGALRM padrao) em vez de ficar congelado com som.
+	signal(SIGALRM, SIG_DFL);
+	alarm(8);
+#endif
     if(!CrashLog_Create())
+    {
+#if defined(__ANDROID__)
+		// Outra thread ja esta gravando o relatorio. Dar "return" aqui re-executa a instrucao que falhou (loop infinito, app
+		// congelado com o audio ainda tocando). Esperamos a primeira thread terminar e chamar _Exit().
+		for (;;)
+			sleep(1);
+#else
         return; // give up if crashlog was already created
+#endif
+    }
 
     char* sigName = strsignal(sig);
 	if (sigName)

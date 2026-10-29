@@ -1279,6 +1279,7 @@ void OpenGLRenderer::QuerySupportedFormats()
 				{ "border_clamp", { "GL_EXT_texture_border_clamp", "GL_OES_texture_border_clamp" }, "wrap CLAMP_BORDER vira clamp_to_edge (implementado em OpenGLRendererCore.cpp)" },
 				{ "mirror_clamp", { "GL_EXT_texture_mirror_clamp_to_edge", "GL_ARB_texture_mirror_clamp_to_edge" }, "wrap MIRROR_CLAMP vira mirror" },
 				{ "sample_shading", { "GL_ARB_sample_shading", "GL_OES_sample_shading" }, "MSAA por amostra ausente" },
+				{ "blend_func_extended", { "GL_ARB_blend_func_extended", "GL_EXT_blend_func_extended" }, "dual-source blending (fatores SRC1) NAO e emulado: o fator vira GL_ZERO (o log avisa quando um jogo usa)" },
 				{ "robustness", { "GL_KHR_robustness", "GL_EXT_robustness" }, "leitura fora do limite de buffer nao e zerada pelo driver" },
 			};
 			// V11.58: no OpenGL ES 3.2 estes recursos sao do NUCLEO da API (sem string de extensao): nao sao "FALTA"
@@ -1852,6 +1853,14 @@ static GLuint GetGLBlendFactor(Latte::LATTE_CB_BLENDN_CONTROL::E_BLENDFACTOR ble
 	if (blendFactorU >= 0xF && blendFactorU <= 0x12)
 	{
 		debug_printf("Unsupported dual-source blending used\n");
+		{
+			static bool s_loggedDualSource = false;
+			if (!s_loggedDualSource)
+			{
+				s_loggedDualSource = true;
+				cemuLog_log(LogType::Force, "[GL] o jogo usa dual-source blending (fator de blend 0x{:X}); isso NAO e emulado no OpenGL e vira GL_ZERO (pode escurecer/apagar efeitos)", blendFactorU);
+			}
+		}
 		cemu_assert_debug(false); // dual-source blending
 		return GL_ZERO;
 	}
