@@ -111,6 +111,7 @@ LatteTextureReadbackInfoGL::~LatteTextureReadbackInfoGL()
 void LatteTextureReadbackInfoGL::StartTransfer()
 {
 	cemu_assert(m_textureView);
+	LatteTextureViewGL::FlushPendingFakeWritebacks(m_textureView->baseTexture); // V11.64: devolve a base o que views falsas desenharam antes de ler
 	auto textureViewGL = (LatteTextureViewGL*)m_textureView;
 	LatteTexture* baseTexture = m_textureView->baseTexture;
 	// V11.60: guarda aqui o tamanho do buffer zerado de emergencia (m_textureView vira nullptr no fim desta funcao)

@@ -262,6 +262,11 @@ bool PPCRecompilerX64Gen_imlInstruction_macro(PPCRecFunction_t* PPCRecFunction, 
 		x64Gen_writeU32(x64GenContext, (uint32)lookupOffset);
 		return true;
 	}
+	else if( imlInstruction->operation == PPCREC_IML_MACRO_MEMORY_BARRIER )
+	{
+		// x86 ja garante a ordem de escritas (TSO): sync/lwsync do PowerPC nao precisam de instrucao no host
+		return true;
+	}
 	else if( imlInstruction->operation == PPCREC_IML_MACRO_DEBUGBREAK )
 	{
 		x64Gen_mov_reg64Low32_imm32(x64GenContext, REG_RESV_TEMP, imlInstruction->op_macro.param2);

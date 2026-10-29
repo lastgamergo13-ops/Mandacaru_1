@@ -406,6 +406,10 @@ void IMLDebug_DisassembleInstruction(const IMLInstruction& inst, std::string& di
 		{
 			strOutput.addFmt("MACRO COUNT_CYCLES cycles: {}", inst.op_macro.param);
 		}
+		else if (inst.operation == PPCREC_IML_MACRO_MEMORY_BARRIER)
+		{
+			strOutput.add("MACRO MEMORY_BARRIER");
+		}
 		else
 		{
 			strOutput.addFmt("MACRO ukn operation {}", inst.operation);

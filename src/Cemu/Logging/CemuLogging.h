@@ -124,6 +124,9 @@ uint64 cemuLog_getFlag(LogType type);
 
 fs::path cemuLog_GetLogFilePath();
 void cemuLog_createLogFile(bool triggeredByCrash);
+// V11.63: bloqueia (ate timeoutMs) ate TUDO que foi enfileirado chegar ao arquivo e o faz fsync. Usado pelo tratador de crash antes de
+// encerrar o processo: o log e escrito por uma thread em segundo plano, e _Exit() matava o processo antes de ela gravar o relatorio.
+void cemuLog_flushPendingBlocking(int timeoutMs);
 [[nodiscard]] std::unique_lock<std::recursive_mutex> cemuLog_acquire(); // used for logging multiple lines at once
 
 class LoggingCallbacks

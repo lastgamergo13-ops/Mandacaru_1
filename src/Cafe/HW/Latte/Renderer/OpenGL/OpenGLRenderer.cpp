@@ -1761,6 +1761,22 @@ void OpenGLRenderer::rendertarget_deleteCachedFBO(LatteCachedFBO* cfbo)
 // set active FBO
 void OpenGLRenderer::rendertarget_bindFramebufferObject(LatteCachedFBO* cfbo)
 {
+	// V11.64: views falsas (driver sem glTextureView) ligadas como alvo de renderizacao: antes de desenhar, devolve a base o que outras views falsas
+	// desenharam e atualiza a copia a partir da base. A view que JA e a versao mais nova (suja) nao e tocada.
+	if (cfbo)
+	{
+		auto prepareTarget = [](LatteTextureView* tv) {
+			if (!tv)
+				return;
+			auto* v = (LatteTextureViewGL*)tv;
+			if (v->m_isFakeCopyView && v->IsFakeDirty())
+				return;
+			v->RefreshFakeViewIfNeeded();
+		};
+		for (sint32 i = 0; i < 8; i++)
+			prepareTarget(cfbo->colorBuffer[i].texture);
+		prepareTarget(cfbo->depthBuffer.texture);
+	}
 	GLuint fboid;
 	if (cfbo)
 	{
@@ -2190,6 +2206,7 @@ void OpenGLRenderer_texture_loadSlice_viaBuffers(LatteTexture* hostTexture, sint
 
 void OpenGLRenderer::texture_loadSlice(LatteTexture* hostTexture, sint32 width, sint32 height, sint32 depth, void* pixelData, sint32 sliceIndex, sint32 mipIndex, uint32 imageSize)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(hostTexture); // V11.64
 	if (glRendererState.useTextureUploadBuffer)
 		OpenGLRenderer_texture_loadSlice_viaBuffers(hostTexture, width, height, depth, pixelData, sliceIndex, mipIndex, imageSize);
 	else
@@ -2198,6 +2215,7 @@ void OpenGLRenderer::texture_loadSlice(LatteTexture* hostTexture, sint32 width, 
 
 void OpenGLRenderer::texture_clearColorSlice(LatteTexture* hostTexture, sint32 sliceIndex, sint32 mipIndex, float r, float g, float b, float a)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(hostTexture); // V11.64
 	LatteTextureGL* texGL = (LatteTextureGL*)hostTexture;
 	cemu_assert_debug(!texGL->isDepth);
 
@@ -2212,6 +2230,7 @@ void OpenGLRenderer::texture_clearColorSlice(LatteTexture* hostTexture, sint32 s
 
 void OpenGLRenderer::texture_clearDepthSlice(LatteTexture* hostTexture, uint32 sliceIndex, sint32 mipIndex, bool clearDepth, bool clearStencil, float depthValue, uint32 stencilValue)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(hostTexture); // V11.64
 	LatteTextureGL* texGL = (LatteTextureGL*)hostTexture;
 	cemu_assert_debug(texGL->isDepth);
 
@@ -2239,6 +2258,7 @@ void OpenGLRenderer::texture_clearDepthSlice(LatteTexture* hostTexture, uint32 s
 
 void OpenGLRenderer::texture_clearSlice(LatteTexture* hostTextureGeneric, sint32 sliceIndex, sint32 mipIndex)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(hostTextureGeneric); // V11.64
 	auto hostTexture = (LatteTextureGL*)hostTextureGeneric;
 	// get OpenGL format info
 	LatteTextureGL::FormatInfoGL formatInfoGL;
@@ -2379,6 +2399,8 @@ void OpenGLRenderer::texture_setLatteTexture(LatteTextureView* textureView1, uin
 void OpenGLRenderer::texture_copyImageSubData(LatteTexture* src, sint32 srcMip, sint32 effectiveSrcX, sint32 effectiveSrcY, sint32 srcSlice, LatteTexture* dst, sint32 dstMip, sint32 effectiveDstX, sint32 effectiveDstY,
 	sint32 dstSlice, sint32 effectiveCopyWidth, sint32 effectiveCopyHeight, sint32 srcDepth)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(src); // V11.64
+	LatteTextureViewGL::FlushPendingFakeWritebacks(dst);
 	auto srcGL = (LatteTextureGL*)src;
 	auto dstGL = (LatteTextureGL*)dst;
 	if ((srcGL->isAlternativeFormat || dstGL->isAlternativeFormat) && (srcGL->glInternalFormat != dstGL->glInternalFormat))
@@ -2413,6 +2435,7 @@ void OpenGLRenderer::texture_copyImageSubData(LatteTexture* src, sint32 srcMip, 
 
 LatteTextureReadbackInfo* OpenGLRenderer::texture_createReadback(LatteTextureView* textureView)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(textureView->baseTexture); // V11.64
 	return new LatteTextureReadbackInfoGL(textureView);
 }
 
@@ -2518,6 +2541,8 @@ void decodeBC4Block_UNORM(uint8* blockStorage, float* rOutput);
 
 void OpenGLRenderer::texture_syncSliceSpecialBC4(LatteTexture* srcTexture, sint32 srcSliceIndex, sint32 srcMipIndex, LatteTexture* dstTexture, sint32 dstSliceIndex, sint32 dstMipIndex)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(srcTexture); // V11.64
+	LatteTextureViewGL::FlushPendingFakeWritebacks(dstTexture);
 	auto srcTextureGL = (LatteTextureGL*)srcTexture;
 	auto dstTextureGL = (LatteTextureGL*)dstTexture;
 
@@ -2561,6 +2586,8 @@ void OpenGLRenderer::texture_syncSliceSpecialBC4(LatteTexture* srcTexture, sint3
 
 void OpenGLRenderer::texture_syncSliceSpecialIntegerToBC3(LatteTexture* srcTexture, sint32 srcSliceIndex, sint32 srcMipIndex, LatteTexture* dstTexture, sint32 dstSliceIndex, sint32 dstMipIndex)
 {
+	LatteTextureViewGL::FlushPendingFakeWritebacks(srcTexture); // V11.64
+	LatteTextureViewGL::FlushPendingFakeWritebacks(dstTexture);
 	auto srcTextureGL = (LatteTextureGL*)srcTexture;
 	auto dstTextureGL = (LatteTextureGL*)dstTexture;
 

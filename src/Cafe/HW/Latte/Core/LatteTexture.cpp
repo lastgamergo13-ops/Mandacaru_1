@@ -429,6 +429,7 @@ void LatteTexture_MarkDynamicTextureAsChanged(LatteTextureView* textureView, sin
 	baseSliceMipInfo->lastDynamicUpdate = eventCounter;
 
 	LatteTexture_MarkConnectedTexturesForReloadFromDynamicTextures(textureView->baseTexture);
+	textureView->NotifyContentWrittenByGPU(sliceIndex, mipIndex);
 }
 
 void LatteTexture_SyncSlice(LatteTexture* srcTexture, sint32 srcSliceIndex, sint32 srcMipIndex, LatteTexture* dstTexture, sint32 dstSliceIndex, sint32 dstMipIndex)

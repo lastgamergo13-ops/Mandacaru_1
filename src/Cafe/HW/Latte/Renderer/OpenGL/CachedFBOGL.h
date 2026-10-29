@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include "Cafe/HW/Latte/Renderer/OpenGL/LatteTextureViewGL.h"
 #include "Cafe/HW/Latte/Core/LatteCachedFBO.h"
 #include "Common/GLInclude/GLInclude.h"
@@ -16,10 +17,23 @@ public:
 			glGenFramebuffers(1, &glId_fbo);
 		// bind framebuffer
 		((OpenGLRenderer*)g_renderer.get())->rendertarget_bindFramebufferObject(this);
+		// V11.64 (informativo): sem glTextureView (ex.: PowerVR) as views de alias sao COPIAS. O desenho feito numa copia e devolvido a textura base pela
+		// emulacao bidirecional (LatteTextureViewGL::NotifyContentWrittenByGPU / FlushPendingFakeWritebacks). Registra, no maximo 12 vezes, quando isso acontece.
+		auto logFakeViewTarget = [](LatteTextureViewGL* v, const char* kind, sint32 index)
+		{
+			static std::atomic<int> s_logged{ 0 };
+			if (!v || !v->m_isFakeCopyView || s_logged.load() >= 12)
+				return;
+			if (s_logged.fetch_add(1) >= 12)
+				return;
+			cemuLog_log(LogType::Force, "[GL] view FALSA (copia, driver sem texture_view) usada como alvo de renderizacao ({} {}): fmt=0x{:04x} dim={} {}x{} mip={} slice={} - emulacao bidirecional ativa: o desenho e devolvido a textura base antes de ela ser lida",
+				kind, index, (uint32)v->baseTexture->format, (uint32)v->dim, v->baseTexture->width, v->baseTexture->height, (uint32)v->firstMip, (uint32)v->firstSlice);
+		};
 		// setup framebuffer
 		for (sint32 i = 0; i < 8; i++)
 		{
 			LatteTextureViewGL* colorTexViewGL = (LatteTextureViewGL*)colorBuffer[i].texture;
+			logFakeViewTarget(colorTexViewGL, "cor", i);
 			if (!colorTexViewGL)
 				glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT + i, GL_TEXTURE_2D, 0, 0);
 			else if (colorTexViewGL->dim == Latte::E_DIM::DIM_2D)
@@ -39,6 +53,7 @@ public:
 		if (depthBuffer.texture)
 		{
 			LatteTextureViewGL* depthTexViewGL = (LatteTextureViewGL*)depthBuffer.texture;
+			logFakeViewTarget(depthTexViewGL, "profundidade", 0);
 			if (depthTexViewGL->dim == Latte::E_DIM::DIM_2D)
 				glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTexViewGL->glTexId, 0);
 			else if (depthTexViewGL->dim == Latte::E_DIM::DIM_2D_ARRAY)

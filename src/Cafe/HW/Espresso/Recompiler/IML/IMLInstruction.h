@@ -176,6 +176,7 @@ enum
 	PPCREC_IML_MACRO_COUNT_CYCLES,	// decrease current remaining thread cycles by a certain amount
 	PPCREC_IML_MACRO_HLE,			// HLE function call
 	PPCREC_IML_MACRO_LEAVE,			// leaves recompiler and switches to interpeter
+	PPCREC_IML_MACRO_MEMORY_BARRIER,	// full memory barrier (PPC sync/lwsync). No-op on x86 hosts, 'dmb ish' on ARM64 (weakly ordered)
 	// debugging
 	PPCREC_IML_MACRO_DEBUGBREAK,	// throws a debugbreak
 };
@@ -547,6 +548,11 @@ struct IMLInstruction
 		operation = PPCREC_IML_OP_ASSIGN;
 		op_r_name.regR = regR;
 		op_r_name.name = name;
+	}
+
+	void make_memory_barrier()
+	{
+		make_macro(PPCREC_IML_MACRO_MEMORY_BARRIER, 0, 0, 0, IMLREG_INVALID);
 	}
 
 	void make_debugbreak(uint32 currentPPCAddress = 0)

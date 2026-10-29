@@ -1299,6 +1299,14 @@ void AArch64GenContext_t::emitRegisterCanaryCheck(const char* checkpointTag)
 
 bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 {
+	// V11.63: barreira de memoria COMPLETA para sync/lwsync do PowerPC. O ARM64 reordena escritas; sem isto o padrao "lwsync; stw lock=0" (liberar lock)
+	// podia ficar visivel ANTES dos dados protegidos e alocadores lock-free do jogo (ex.: Watch Dogs) corrompiam suas listas. Fica antes do canario
+	// para nao custar instrucoes extras.
+	if (imlInstruction->operation == PPCREC_IML_MACRO_MEMORY_BARRIER)
+	{
+		dmb(ISH);
+		return true;
+	}
 	// canário: detecta o mais cedo possível se x27/x28 saíram dos valores globais
 	// esperados. Inserido no início de macro() porque essa função roda com bastante
 	// frequência (toda vez que o código recompilado faz um branch, chamada, HLE, etc)

@@ -1341,6 +1341,7 @@ namespace coreinit
 	void __OSThreadCoreIdle(void* assignedCoreIndexParam)
 	{
 #if defined(__ANDROID__)
+		ExceptionHandler_InstallAltStackForCurrentThread(); // V11.63: este fiber e uma pthread propria (sigaltstack e por thread)
 		// This fiber's entry point runs on its own brand new real pthread (see
 		// FiberUnix.cpp), which does NOT inherit t_assignedCoreIndex from the
 		// OSSched[core=X] thread that created it - that thread_local starts at
@@ -1479,6 +1480,9 @@ namespace coreinit
 #else
 	void __OSFiberThreadEntry(void* _thread)
 	{
+#endif
+#if defined(__ANDROID__)
+		ExceptionHandler_InstallAltStackForCurrentThread(); // V11.63: cada fiber e uma pthread propria (sigaltstack e por thread)
 #endif
 		OSHostThread* hostThread = (OSHostThread*)_thread;
 

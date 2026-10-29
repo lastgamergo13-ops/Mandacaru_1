@@ -8,6 +8,10 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include <fmt/printf.h>
 
@@ -79,6 +83,7 @@ struct _LogContext
 	std::vector<std::string> text_cache;
 	std::thread log_writer;
 	std::atomic<bool> threadRunning = false;
+	std::atomic<bool> writerBusy = false; // V11.63: a thread de log tem lotes copiados que ainda nao foram gravados/flushados
 
 	~_LogContext()
 	{
@@ -140,12 +145,14 @@ void cemuLog_thread()
 
 		std::vector<std::string> cache_copy;
 		cache_copy.swap(LogContext.text_cache); // fast copy & clear
+		LogContext.writerBusy.store(true); // ainda sob o lock: cemuLog_flushPendingBlocking nunca ve "fila vazia" com lote em voo
 		lock.unlock();
 
 		for (const auto& entry : cache_copy)
 			LogContext.file_stream.write(entry.data(), entry.size());
 
 		LogContext.file_stream.flush();
+		LogContext.writerBusy.store(false);
 	}
 }
 
@@ -161,6 +168,22 @@ void cemuLog_createLogFile(bool triggeredByCrash)
 		return;
 
 	const auto path = cemuLog_GetLogFilePath();
+#if defined(__ANDROID__)
+	// V11.63: abrir com std::ios::out APAGA o log anterior. Depois de um crash o app e reaberto e o log.txt do crash sumia antes de
+	// ser coletado. Agora o log da sessao anterior vira log_prev1.txt (e o anterior a ele, log_prev2.txt).
+	{
+		std::error_code ec;
+		if (fs::exists(path, ec) && fs::file_size(path, ec) > 0)
+		{
+			const fs::path prev1 = path.parent_path() / "log_prev1.txt";
+			const fs::path prev2 = path.parent_path() / "log_prev2.txt";
+			fs::remove(prev2, ec);
+			if (fs::exists(prev1, ec))
+				fs::rename(prev1, prev2, ec);
+			fs::rename(path, prev1, ec);
+		}
+	}
+#endif
 	LogContext.file_stream.open(path, std::ios::out);
 	if (LogContext.file_stream.fail())
 	{
@@ -215,6 +238,66 @@ void cemuLog_writeLineToLog(std::string_view text, bool date, bool new_line)
 
 	lock.unlock();
 	LogContext.log_condition.notify_one();
+}
+
+void cemuLog_flushPendingBlocking(int timeoutMs)
+{
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+	// 1) espera a thread de log esvaziar a fila (e terminar o lote em voo)
+	while (std::chrono::steady_clock::now() < deadline)
+	{
+		bool done = false;
+		if (LogContext.log_mutex.try_lock())
+		{
+			done = LogContext.text_cache.empty() && !LogContext.writerBusy.load();
+			LogContext.log_mutex.unlock();
+		}
+		if (done)
+			break;
+		LogContext.log_condition.notify_one();
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+#ifndef _WIN32
+	// 2) ultimo recurso (a thread de log pode estar travada/morta): o que sobrou na fila vai direto para o arquivo com write()
+	if (LogContext.log_mutex.try_lock())
+	{
+		if (!LogContext.text_cache.empty())
+		{
+			const std::string pathStr = cemuLog_GetLogFilePath().string();
+			const int fd = open(pathStr.c_str(), O_WRONLY | O_APPEND | O_CREAT, 0644);
+			if (fd >= 0)
+			{
+				for (const auto& entry : LogContext.text_cache)
+				{
+					const char* p = entry.data();
+					size_t left = entry.size();
+					while (left > 0)
+					{
+						const ssize_t w = write(fd, p, left);
+						if (w <= 0)
+							break;
+						p += w;
+						left -= (size_t)w;
+					}
+				}
+				fsync(fd);
+				close(fd);
+				LogContext.text_cache.clear();
+			}
+		}
+		LogContext.log_mutex.unlock();
+	}
+	// 3) garante que o que ja foi gravado esta no disco (fsync de outro descritor vale para o mesmo arquivo)
+	{
+		const std::string pathStr = cemuLog_GetLogFilePath().string();
+		const int fd = open(pathStr.c_str(), O_RDONLY);
+		if (fd >= 0)
+		{
+			fsync(fd);
+			close(fd);
+		}
+	}
+#endif
 }
 
 bool cemuLog_log(LogType type, std::string_view text)

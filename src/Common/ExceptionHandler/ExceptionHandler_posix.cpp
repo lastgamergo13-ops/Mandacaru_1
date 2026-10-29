@@ -790,6 +790,10 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
     ExceptionHandler_LogGeneralInfo();
     CrashLog_SetOutputChannels(true, true);
 
+	// V11.63: o relatorio so foi ENFILEIRADO para a thread de log; _Exit() abaixo matava o processo antes de ela grava-lo (log do crash vazio
+	// ou so com o inicio). Espera ate 3 s a fila chegar ao arquivo (com fsync).
+	cemuLog_flushPendingBlocking(3000);
+
 	if (GetConfig().crash_dump == CrashDump::Enabled)
 	{
 		// reset signal handler to default and re-raise signal to dump core
@@ -821,9 +825,27 @@ void ExceptionHandler_InstallAltStackForCurrentThread()
 	// Deliberately never freed: this is only ever called for a handful of long-lived threads
 	// (main thread, the PPC core scheduler threads) and there's no safe point to free it before
 	// the thread exits.
-	auto* altStackMem = new uint8_t[SIGSTKSZ * 4];
+	// V11.63: agora liberada ao fim da thread (holder thread_local) e idempotente, para poder ser chamada em CADA thread de fiber
+	// (cada fiber e uma pthread propria; sem pilha alternativa, um estouro de pilha mata o app sem nenhum log).
+	struct AltStackHolder
+	{
+		uint8_t* mem = nullptr;
+		~AltStackHolder()
+		{
+			if (!mem)
+				return;
+			stack_t off{};
+			off.ss_flags = SS_DISABLE;
+			sigaltstack(&off, nullptr);
+			delete[] mem;
+		}
+	};
+	static thread_local AltStackHolder s_holder;
+	if (s_holder.mem)
+		return;
+	s_holder.mem = new uint8_t[SIGSTKSZ * 4];
 	stack_t altStack{};
-	altStack.ss_sp = altStackMem;
+	altStack.ss_sp = s_holder.mem;
 	altStack.ss_size = SIGSTKSZ * 4;
 	altStack.ss_flags = 0;
 	sigaltstack(&altStack, nullptr);

@@ -7,6 +7,7 @@
 #include "../Recompiler/PPCRecompiler.h"
 
 #include <float.h>
+#include <atomic>
 #include "Cafe/HW/Latte/Core/LatteBufferCache.h"
 
 void PPCInterpreter_MFMSR(PPCInterpreter_t* hCPU, uint32 Opcode)
@@ -322,7 +323,9 @@ void PPCInterpreter_ICBI(PPCInterpreter_t* hCPU, uint32 Opcode)
 
 void PPCInterpreter_EIEIO(PPCInterpreter_t* hCPU, uint32 Opcode)
 {
-	// no effect
+#if defined(__aarch64__) || defined(__arm__)
+	std::atomic_thread_fence(std::memory_order_seq_cst); // V11.63: host de ordenacao fraca (ver PPCREC_IML_MACRO_MEMORY_BARRIER)
+#endif
 	// next instruction
 	PPCInterpreter_nextInstruction(hCPU);
 }
@@ -336,7 +339,9 @@ void PPCInterpreter_SC(PPCInterpreter_t* hCPU, uint32 Opcode)
 
 void PPCInterpreter_SYNC(PPCInterpreter_t* hCPU, uint32 Opcode)
 {
-	// no-op
+#if defined(__aarch64__) || defined(__arm__)
+	std::atomic_thread_fence(std::memory_order_seq_cst); // V11.63: host de ordenacao fraca (ver PPCREC_IML_MACRO_MEMORY_BARRIER)
+#endif
 	// next instruction
 	PPCInterpreter_nextInstruction(hCPU);
 }

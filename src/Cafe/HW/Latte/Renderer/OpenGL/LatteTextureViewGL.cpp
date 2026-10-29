@@ -3,6 +3,7 @@
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "config/LaunchSettings.h"
+#include <algorithm>
 
 LatteTextureViewGL::LatteTextureViewGL(LatteTextureGL* texture, Latte::E_DIM dim, Latte::E_GX2SURFFMT format, sint32 firstMip, sint32 mipCount, sint32 firstSlice, sint32 sliceCount, bool registerView, bool forceCreateNewTexId)
 	: LatteTextureView(texture, firstMip, mipCount, firstSlice, sliceCount, dim, format, registerView)
@@ -45,8 +46,17 @@ LatteTextureViewGL::LatteTextureViewGL(LatteTextureGL* texture, Latte::E_DIM dim
 	swizzleA = 0xFF;
 }
 
+// views falsas com escrita da GPU ainda nao devolvida a textura base (so a thread da GPU mexe nisto)
+static std::vector<LatteTextureViewGL*> s_pendingFakeViews;
+
 LatteTextureViewGL::~LatteTextureViewGL()
 {
+	if (!m_fakeDirty.empty())
+	{
+		auto it = std::find(s_pendingFakeViews.begin(), s_pendingFakeViews.end(), this);
+		if (it != s_pendingFakeViews.end())
+			s_pendingFakeViews.erase(it);
+	}
 	delete m_alternativeView;
 	((OpenGLRenderer*)g_renderer.get())->texture_notifyDelete(this);
 	glDeleteTextures(1, &glTexId);
@@ -158,10 +168,88 @@ void LatteTextureViewGL::CopyFakeViewContent()
 
 void LatteTextureViewGL::RefreshFakeViewIfNeeded()
 {
+	// qualquer view (real ou falsa) que va ser lida: antes devolve a base o que views falsas dela desenharam
+	FlushPendingFakeWritebacks(baseTexture);
 	if (!m_isFakeCopyView)
 		return;
 	const auto texture = (LatteTextureGL*)baseTexture;
 	if (m_fakeStampWrite == texture->lastWriteEventCounter && m_fakeStampUpdate == texture->lastUpdateEventCounter && m_fakeStampData == texture->lastDataUpdateFrameCounter)
 		return; // a textura base nao mudou desde a ultima copia
 	CopyFakeViewContent();
+}
+
+// A GPU escreveu (desenho/clear/copia) neste slice/mip da view. Numa view falsa o desenho foi para a COPIA, entao ela passa a ser a versao mais nova
+// desse pedaco: guarda o pedaco como sujo e alinha os carimbos com a base (que o motor acabou de marcar como escrita) para que
+// RefreshFakeViewIfNeeded() NAO a sobrescreva com o conteudo velho da base.
+void LatteTextureViewGL::NotifyContentWrittenByGPU(sint32 relSlice, sint32 relMip)
+{
+	if (!m_isFakeCopyView)
+		return;
+	const uint32 key = ((uint32)relSlice << 8) | ((uint32)relMip & 0xFF);
+	if (std::find(m_fakeDirty.begin(), m_fakeDirty.end(), key) == m_fakeDirty.end())
+		m_fakeDirty.push_back(key);
+	if (std::find(s_pendingFakeViews.begin(), s_pendingFakeViews.end(), this) == s_pendingFakeViews.end())
+		s_pendingFakeViews.push_back(this);
+	const auto texture = (LatteTextureGL*)baseTexture;
+	m_fakeStampWrite = texture->lastWriteEventCounter;
+	m_fakeStampUpdate = texture->lastUpdateEventCounter;
+	m_fakeStampData = texture->lastDataUpdateFrameCounter;
+}
+
+// Copia os pedacos sujos da view falsa de volta para a textura base.
+void LatteTextureViewGL::WriteBackFakeViewToBase()
+{
+	const auto texture = (LatteTextureGL*)baseTexture;
+	const sint32 viewWidth = std::max(1, texture->width >> m_fakeParams.srcMinLevel);
+	const sint32 viewHeight = std::max(1, texture->height >> m_fakeParams.srcMinLevel);
+	for (const uint32 key : m_fakeDirty)
+	{
+		const sint32 relSlice = (sint32)(key >> 8);
+		const sint32 relMip = (sint32)(key & 0xFF);
+		const uint32 mipWidth = std::max(1, viewWidth >> relMip);
+		const uint32 mipHeight = std::max(1, viewHeight >> relMip);
+		if (!glCopyImageSubDataWrapper(glTexId, glTexTarget, relMip, 0, 0, relSlice,
+				texture->glId_texture, texture->glTexTarget, m_fakeParams.srcMinLevel + relMip, 0, 0, m_fakeParams.firstSlice + relSlice,
+				mipWidth, mipHeight, 1))
+		{
+			static bool s_warned = false;
+			if (!s_warned)
+			{
+				s_warned = true;
+				cemuLog_log(LogType::Force, "[GL] view falsa: nao foi possivel devolver o desenho a textura base (glCopyImageSubData falhou; formatos incompativeis?)");
+			}
+			break;
+		}
+	}
+	m_fakeDirty.clear();
+}
+
+// Grava de volta todas as views falsas sujas de 'base'. Depois avanca o contador da base (as OUTRAS views falsas se atualizam na proxima leitura)
+// e realinha os carimbos das views gravadas (elas ja tem o conteudo certo).
+void LatteTextureViewGL::FlushPendingFakeWritebacks(LatteTexture* base)
+{
+	if (s_pendingFakeViews.empty())
+		return;
+	std::vector<LatteTextureViewGL*> flushed;
+	for (size_t i = 0; i < s_pendingFakeViews.size();)
+	{
+		LatteTextureViewGL* v = s_pendingFakeViews[i];
+		if (v->baseTexture != base)
+		{
+			i++;
+			continue;
+		}
+		v->WriteBackFakeViewToBase();
+		s_pendingFakeViews.erase(s_pendingFakeViews.begin() + i);
+		flushed.push_back(v);
+	}
+	if (flushed.empty())
+		return;
+	base->lastWriteEventCounter = LatteTexture_getNextUpdateEventCounter();
+	for (LatteTextureViewGL* v : flushed)
+	{
+		v->m_fakeStampWrite = base->lastWriteEventCounter;
+		v->m_fakeStampUpdate = base->lastUpdateEventCounter;
+		v->m_fakeStampData = base->lastDataUpdateFrameCounter;
+	}
 }

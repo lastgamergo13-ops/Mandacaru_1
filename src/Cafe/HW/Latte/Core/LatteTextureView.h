@@ -12,6 +12,10 @@ public:
 	LatteTextureView(class LatteTexture* texture, sint32 firstMip, sint32 mipCount, sint32 firstSlice, sint32 sliceCount, Latte::E_DIM dim, Latte::E_GX2SURFFMT format, bool registerView = true);
 	virtual ~LatteTextureView();
 
+	// V11.64: chamado depois que a GPU escreveu (render target, clear, copia de superficie) no slice/mip RELATIVOS a esta view. So o OpenGL sem
+	// glTextureView (view = copia) sobrescreve isto; nas demais implementacoes nao faz nada.
+	virtual void NotifyContentWrittenByGPU(sint32 relSlice, sint32 relMip) {}
+
 	void CreateLookupForSubTexture(uint32 mipStart, uint32 sliceStart);
 
 	class LatteTexture* baseTexture;

@@ -775,6 +775,8 @@ bool PPCRecompilerImlGen_ISYNC(ppcImlGenContext_t* ppcImlGenContext, uint32 opco
 
 bool PPCRecompilerImlGen_SYNC(ppcImlGenContext_t* ppcImlGenContext, uint32 opcode)
 {
+	// V11.63: antes era no-op (suficiente no x86). Em hosts ARM64 vira 'dmb ish' (ver PPCREC_IML_MACRO_MEMORY_BARRIER)
+	ppcImlGenContext->emitInst().make_memory_barrier();
 	return true;
 }
 
