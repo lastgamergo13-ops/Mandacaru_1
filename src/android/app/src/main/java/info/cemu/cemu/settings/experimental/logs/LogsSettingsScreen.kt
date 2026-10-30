@@ -141,6 +141,29 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING, it) },
         )
 
+        InfoDialogButton(
+            title = tr("Atraso na partida das threads do jogo"),
+            explanation = tr(
+                "O que e: teste para uma 'corrida de inicializacao'. Alguns jogos criam uma thread que logo usa um objeto " +
+                        "global que outra thread ainda esta criando. No Wii U real isso funciona por causa do tempo; no celular " +
+                        "a thread secundaria pode chegar antes e o jogo fecha com ponteiro nulo.\n\n" +
+                        "O que faz: faz cada thread secundaria do jogo esperar 100 ms antes de comecar a executar, dando tempo " +
+                        "para a thread principal terminar de preparar o objeto. O nucleo daquela thread fica parado nesse tempo.\n\n" +
+                        "Como usar: ligue, feche o jogo, abra o jogo que crasha (ex.: Watch Dogs) e veja se ele passa do ponto do " +
+                        "crash. Se passar, a causa e essa corrida. Vale a partir do PROXIMO jogo que voce abrir. " +
+                        "No log aparece \"[Thread] atraso de partida\"."
+            ),
+        )
+        Toggle(
+            label = tr("Atraso na partida das threads do jogo (teste)"),
+            description = tr(
+                "Cada thread secundaria do jogo espera 100 ms antes de comecar. So para testar crashes de ponteiro nulo " +
+                        "no inicio do jogo. Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY, it) },
+        )
+
         Toggle(
             label = tr("Despejar shaders (dump/shaders)"),
             description = tr(

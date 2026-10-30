@@ -4,6 +4,7 @@
 #include "Cafe/HW/Espresso/PPCCallback.h"
 #include "Cafe/OS/RPL/rpl.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
+#include "Common/DiagnosticsFlags.h"
 #if defined(__ANDROID__)
 #include <sys/syscall.h>
 #include <sys/uio.h>
@@ -610,6 +611,25 @@ namespace coreinit
 				}
 			}).detach();
 		});
+	}
+#endif
+
+#if defined(__ANDROID__)
+	// DIAGNOSTICO/TESTE: atraso na partida das threads secundarias do jogo (ver Diag::Flag::ThreadStartDelay). Chamado pelo proprio fiber da
+	// thread, DEPOIS de soltar o lock do scheduler (nunca dormir com o lock) e ANTES da primeira instrucao PPC da thread.
+	static void AndroidThreadStartDelay(OSThread_t* thread)
+	{
+		if (!thread || !Diag::IsEnabled(Diag::Flag::ThreadStartDelay))
+			return;
+		const char* name = AndroidWatchThreadName(thread);
+		// nao atrasa threads do sistema nem a thread principal do jogo
+		if (name[0] == '{' || name[0] == '?' || name[0] == '-' || strcmp(name, "Main Thread") == 0 || strncmp(name, "Default Core", 12) == 0 ||
+			strcmp(name, "Alarm Thread") == 0 || strcmp(name, "Callback Thread") == 0)
+			return;
+		static std::atomic<uint32> s_delayLog{0};
+		if (s_delayLog.fetch_add(1) < 100)
+			cemuLog_log(LogType::Force, "[Thread] atraso de partida: \"{}\" espera 100 ms antes de comecar (teste de corrida de inicializacao)", name);
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 #endif
 
@@ -1682,6 +1702,9 @@ namespace coreinit
 		__OSLoadThread(hostThread->m_thread, hCPU, hostThread->selectedCore);
 		__OSThreadStartTimeslice(hostThread->m_thread, &hostThread->ppcInstance);
 		__OSUnlockScheduler(); // lock is always held when switching to a fiber, so we need to unlock it here
+#if defined(__ANDROID__)
+		AndroidThreadStartDelay(hostThread->m_thread);
+#endif
 		while (true)
 		{
 			if (hCPU->remainingCycles > 0)
