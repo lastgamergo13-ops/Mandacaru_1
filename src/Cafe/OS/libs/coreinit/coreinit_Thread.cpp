@@ -4,6 +4,14 @@
 #include "Cafe/HW/Espresso/PPCCallback.h"
 #include "Cafe/OS/RPL/rpl.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
+#if defined(__ANDROID__)
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <unistd.h>
+#include <thread>
+#include <chrono>
+#include <mutex>
+#endif
 #include "Cafe/OS/libs/coreinit/coreinit_Time.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Alarm.h"
 #include "Cafe/OS/libs/snd_core/ax.h"
@@ -541,10 +549,76 @@ namespace coreinit
 	}
 
 #if defined(__ANDROID__)
+	// DIAGNOSTICO: vigia (thread do host) que consulta enderecos da memoria do Wii U a cada ~300us e registra quando o valor MUDA,
+	// junto com os nomes das threads PPC que estavam rodando em cada nucleo nesse instante. Serve para descobrir QUANDO (e por quem)
+	// um ponteiro global do jogo e preenchido - ou se ele nunca chega a ser preenchido antes do crash.
+	static bool AndroidWatchReadU32(uint32 ppcAddr, uint32& out)
+	{
+		if (!memory_base)
+			return false;
+		uint32 raw = 0;
+		struct iovec local = { &raw, sizeof(raw) };
+		struct iovec remote = { (void*)((uintptr_t)memory_base + ppcAddr), sizeof(raw) };
+		long n = syscall(SYS_process_vm_readv, (long)getpid(), &local, 1L, &remote, 1L, 0L);
+		if (n != (long)sizeof(raw))
+			return false;
+		out = _swapEndianU32(raw);
+		return true;
+	}
+
+	static const char* AndroidWatchThreadName(OSThread_t* t)
+	{
+		if (!t)
+			return "-";
+		return t->threadName.GetMPTR() != 0 ? t->threadName.GetPtr() : "?";
+	}
+
+	static void AndroidStartGuestWatch()
+	{
+		static std::once_flag s_once;
+		std::call_once(s_once, []()
+		{
+			std::thread([]()
+			{
+				// 0x10875D04 = r13 - 0x7DBC (ponteiro global lido pela CDelayedArchivesOpenThread logo antes do crash no Watch Dogs)
+				const uint32 watchAddrs[] = { 0x10875D04 };
+				const int count = (int)(sizeof(watchAddrs) / sizeof(watchAddrs[0]));
+				uint32 lastValue[1] = {};
+				bool haveLast[1] = {};
+				uint32 logged = 0;
+				for (;;)
+				{
+					for (int i = 0; i < count; i++)
+					{
+						uint32 v;
+						if (!AndroidWatchReadU32(watchAddrs[i], v))
+							continue;
+						if (!haveLast[i] || v != lastValue[i])
+						{
+							if (logged < 200)
+							{
+								logged++;
+								cemuLog_log(LogType::Force, "[Vigia] mem[{:08x}]: {} -> {:08x} | rodando: nucleo0=\"{}\" nucleo1=\"{}\" nucleo2=\"{}\"", watchAddrs[i],
+									haveLast[i] ? fmt::format("{:08x}", lastValue[i]) : std::string("(inicio)"), v,
+									AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]));
+							}
+							lastValue[i] = v;
+							haveLast[i] = true;
+						}
+					}
+					std::this_thread::sleep_for(std::chrono::microseconds(300));
+				}
+			}).detach();
+		});
+	}
+#endif
+
+#if defined(__ANDROID__)
 	// DIAGNOSTICO: registra cada thread PPC criada pelo jogo (entrada, argumentos, nucleo). Serve para descobrir threads iniciadas
 	// com argumento nulo (r3/r4) e para ligar o endereco de uma thread (0x........) ao nome que o jogo deu a ela.
 	static void AndroidLogThreadCreate(const char* api, OSThread_t* thread, MPTR entryPoint, sint32 numParam, void* ptrParam, sint32 priority, uint32 attr)
 	{
+		AndroidStartGuestWatch();
 		static std::atomic<uint32> s_count{0};
 		if (s_count.fetch_add(1) >= 400)
 			return;
@@ -983,6 +1057,18 @@ namespace coreinit
 		__OSLockScheduler();
 		sint32 previousSuspendCount = __OSResumeThreadInternal(thread, 1);
 		__OSUnlockScheduler();
+#if defined(__ANDROID__)
+		{
+			// DIAGNOSTICO: quem acordou qual thread (so retomadas que realmente tinham contador de suspensao > 0)
+			static std::atomic<uint32> s_resumeCount{0};
+			if (previousSuspendCount > 0 && s_resumeCount.fetch_add(1) < 400)
+			{
+				OSThread_t* caller = OSGetCurrentThread();
+				cemuLog_log(LogType::Force, "[Thread] OSResumeThread: alvo={:08x} \"{}\" contador_anterior={} chamada_por=\"{}\"", memory_getVirtualOffsetFromPointer(thread),
+					AndroidWatchThreadName(thread), previousSuspendCount, AndroidWatchThreadName(caller));
+			}
+		}
+#endif
 		return previousSuspendCount;
 	}
 

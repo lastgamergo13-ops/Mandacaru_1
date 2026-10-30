@@ -996,7 +996,7 @@ namespace CafeSystem
 		}
 
 		sTitlePaused = true;
-
+		cemuLog_log(LogType::Force, "[Sistema] PauseTitle(): suspendendo as threads do jogo (ex.: app em segundo plano / superficie de video destruida)");
 		coreinit::SuspendActiveThreads();
 	}
 
@@ -1008,7 +1008,7 @@ namespace CafeSystem
 		}
 
 		sTitlePaused = false;
-
+		cemuLog_log(LogType::Force, "[Sistema] ResumeTitle(): retomando as threads do jogo");
 		coreinit::ResumeActiveThreads();
 	}
 
