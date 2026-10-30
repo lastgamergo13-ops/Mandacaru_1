@@ -25,6 +25,7 @@ namespace Diag
 		AutoCleanOff = 2,
 		SustainedPerformance = 3,
 		DumpShaders = 4,
+		JitStrictOrdering = 5, // teste do JIT: dmb ish antes de cada load e depois de cada store (ver BackendAArch64.cpp)
 		Count
 	};
 
@@ -37,11 +38,12 @@ namespace Diag
 		case Flag::AutoCleanOff: return "diag_autoclean_off";
 		case Flag::SustainedPerformance: return "diag_sustained_perf";
 		case Flag::DumpShaders: return "diag_dump_shaders";
+		case Flag::JitStrictOrdering: return "diag_jit_strict_order";
 		default: return "diag_unknown";
 		}
 	}
 
-	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1, -1 }; // -1 = ainda nao lido
+	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1, -1, -1 }; // -1 = ainda nao lido
 
 	inline bool IsEnabled(Flag f)
 	{

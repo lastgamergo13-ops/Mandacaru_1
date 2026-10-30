@@ -55,6 +55,7 @@ object NativeSettings {
         const val AUTO_CLEAN_OFF = 2
         const val SUSTAINED_PERFORMANCE = 3
         const val DUMP_SHADERS = 4
+        const val JIT_STRICT_ORDERING = 5
     }
 
     @JvmStatic

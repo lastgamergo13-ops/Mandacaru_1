@@ -16,6 +16,7 @@
 #include "HW/Espresso/Interpreter/PPCInterpreterHelper.h"
 #include "HW/Espresso/PPCState.h"
 #include "config/ActiveSettings.h"
+#include "Common/DiagnosticsFlags.h"
 #include <filesystem>
 #include "Common/ExceptionHandler/ExceptionHandler.h"
 
@@ -1300,20 +1301,19 @@ void AArch64GenContext_t::emitRegisterCanaryCheck(const char* checkpointTag)
 }
 
 #ifdef __ANDROID__
-// MODO DE TESTE (diagnostico): com o arquivo "jit_ordem_estrita.txt" na pasta de dados do app, TODA leitura da memoria do jogo ganha um
-// "dmb ish" antes e TODA gravacao ganha um "dmb ish" depois (ordenacao total, como num x86). Fica bem mais lento, mas se o jogo deixar
-// de crashar com esse modo ligado, a causa e reordenacao de memoria do ARM64 entre os nucleos do jogo.
+// MODO DE TESTE (diagnostico): ordenacao estrita de memoria. TODA leitura da memoria do jogo ganha um "dmb ish" antes e TODA gravacao
+// ganha um "dmb ish" depois (ordenacao total, como num x86). Fica bem mais lento, mas se o jogo deixar de crashar com esse modo ligado,
+// a causa e reordenacao de memoria do ARM64 entre os nucleos do jogo.
+// Liga/desliga pelo botao em Experimental > Logs e Diagnostico (Diag::Flag::JitStrictOrdering). Vale para o codigo gerado DEPOIS da troca
+// (ou seja, no proximo jogo que for aberto).
 static bool AArch64StrictMemoryOrdering()
 {
-	static const bool s_strict = []()
-	{
-		std::error_code ec;
-		bool v = std::filesystem::exists(ActiveSettings::GetUserDataPath("jit_ordem_estrita.txt"), ec);
-		if (v)
-			cemuLog_log(LogType::Force, "[JIT] MODO DE TESTE: ordenacao estrita de memoria LIGADA (jit_ordem_estrita.txt). Mais lento.");
-		return v;
-	}();
-	return s_strict;
+	const bool on = Diag::IsEnabled(Diag::Flag::JitStrictOrdering);
+	static std::atomic<int> s_lastLogged{-1};
+	const int onInt = on ? 1 : 0;
+	if (s_lastLogged.exchange(onInt) != onInt && on)
+		cemuLog_log(LogType::Force, "[JIT] MODO DE TESTE: ordenacao estrita de memoria LIGADA (botao em Logs e Diagnostico). Mais lento.");
+	return on;
 }
 #endif
 static inline void AArch64EmitStrictBarrier(AArch64GenContext_t& ctx)

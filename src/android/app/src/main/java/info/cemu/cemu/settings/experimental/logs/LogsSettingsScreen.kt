@@ -116,6 +116,31 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             },
         )
 
+        InfoDialogButton(
+            title = tr("Ordenacao estrita de memoria do JIT"),
+            explanation = tr(
+                "O que e: teste para descobrir se um crash vem da reordenacao de memoria do processador ARM. " +
+                        "O PowerPC do Wii U e o ARM do celular podem executar leituras e gravacoes de memoria em ordem " +
+                        "diferente entre os nucleos; se o jogo depende de uma ordem que o ARM nao garante, ele recebe " +
+                        "dados velhos ou ponteiros nulos e fecha.\n\n" +
+                        "O que faz: coloca uma barreira de memoria (dmb ish) antes de TODA leitura e depois de TODA " +
+                        "gravacao do codigo do jogo. Isso forca a ordem correta.\n\n" +
+                        "Cuidado: deixa o jogo MUITO mais lento. Serve so para teste: ligue, abra o jogo que crasha e " +
+                        "veja se ele passa do ponto do crash. Se passar, a causa e a ordem de memoria. Depois desligue.\n\n" +
+                        "Vale a partir do PROXIMO jogo que voce abrir (feche o jogo atual antes). No log aparece a linha " +
+                        "\"[JIT] MODO DE TESTE: ordenacao estrita de memoria LIGADA\"."
+            ),
+        )
+        Toggle(
+            label = tr("Ordenacao estrita de memoria do JIT (teste)"),
+            description = tr(
+                "Barreira de memoria em toda leitura/gravacao do jogo. MUITO mais lento; so para testar crashes. " +
+                        "Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING, it) },
+        )
+
         Toggle(
             label = tr("Despejar shaders (dump/shaders)"),
             description = tr(
