@@ -770,6 +770,9 @@ bool PPCRecompilerImlGen_BCSPR(ppcImlGenContext_t* ppcImlGenContext, uint32 opco
 
 bool PPCRecompilerImlGen_ISYNC(ppcImlGenContext_t* ppcImlGenContext, uint32 opcode)
 {
+	// CORRECAO (ARM64): "isync" depois de um laco de espera por trava/flag (lwz; cmpw; bne loop; isync) e o que impede o jogo de ler os
+	// dados protegidos ANTES de ver o flag. No x86 nao precisa de instrucao; no ARM64 virou no-op por engano -> dados velhos/ponteiros nulos.
+	ppcImlGenContext->emitInst().make_memory_barrier();
 	return true;
 }
 

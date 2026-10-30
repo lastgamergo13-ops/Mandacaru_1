@@ -15,6 +15,8 @@
 #include "HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include "HW/Espresso/Interpreter/PPCInterpreterHelper.h"
 #include "HW/Espresso/PPCState.h"
+#include "config/ActiveSettings.h"
+#include <filesystem>
 #include "Common/ExceptionHandler/ExceptionHandler.h"
 
 #ifdef __ANDROID__
@@ -1297,6 +1299,31 @@ void AArch64GenContext_t::emitRegisterCanaryCheck(const char* checkpointTag)
 	}
 }
 
+#ifdef __ANDROID__
+// MODO DE TESTE (diagnostico): com o arquivo "jit_ordem_estrita.txt" na pasta de dados do app, TODA leitura da memoria do jogo ganha um
+// "dmb ish" antes e TODA gravacao ganha um "dmb ish" depois (ordenacao total, como num x86). Fica bem mais lento, mas se o jogo deixar
+// de crashar com esse modo ligado, a causa e reordenacao de memoria do ARM64 entre os nucleos do jogo.
+static bool AArch64StrictMemoryOrdering()
+{
+	static const bool s_strict = []()
+	{
+		std::error_code ec;
+		bool v = std::filesystem::exists(ActiveSettings::GetUserDataPath("jit_ordem_estrita.txt"), ec);
+		if (v)
+			cemuLog_log(LogType::Force, "[JIT] MODO DE TESTE: ordenacao estrita de memoria LIGADA (jit_ordem_estrita.txt). Mais lento.");
+		return v;
+	}();
+	return s_strict;
+}
+#endif
+static inline void AArch64EmitStrictBarrier(AArch64GenContext_t& ctx)
+{
+#ifdef __ANDROID__
+	if (AArch64StrictMemoryOrdering())
+		ctx.dmb(ISH);
+#endif
+}
+
 bool AArch64GenContext_t::macro(IMLInstruction* imlInstruction)
 {
 	// V11.63: barreira de memoria COMPLETA para sync/lwsync do PowerPC. O ARM64 reordena escritas; sem isto o padrao "lwsync; stw lock=0" (liberar lock)
@@ -1963,11 +1990,13 @@ bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, 
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_LOAD)
 			{
+				AArch64EmitStrictBarrier(aarch64GenContext);
 				if (!aarch64GenContext.load(imlInstruction, false))
 					codeGenerationFailed = true;
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_LOAD_INDEXED)
 			{
+				AArch64EmitStrictBarrier(aarch64GenContext);
 				if (!aarch64GenContext.load(imlInstruction, true))
 					codeGenerationFailed = true;
 			}
@@ -1975,11 +2004,13 @@ bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, 
 			{
 				if (!aarch64GenContext.store(imlInstruction, false))
 					codeGenerationFailed = true;
+				AArch64EmitStrictBarrier(aarch64GenContext);
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_STORE_INDEXED)
 			{
 				if (!aarch64GenContext.store(imlInstruction, true))
 					codeGenerationFailed = true;
+				AArch64EmitStrictBarrier(aarch64GenContext);
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_ATOMIC_CMP_STORE)
 			{
@@ -1995,11 +2026,13 @@ bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, 
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_FPR_LOAD)
 			{
+				AArch64EmitStrictBarrier(aarch64GenContext);
 				if (!aarch64GenContext.fpr_load(imlInstruction, false))
 					codeGenerationFailed = true;
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_FPR_LOAD_INDEXED)
 			{
+				AArch64EmitStrictBarrier(aarch64GenContext);
 				if (!aarch64GenContext.fpr_load(imlInstruction, true))
 					codeGenerationFailed = true;
 			}
@@ -2007,11 +2040,13 @@ bool PPCRecompiler_generateAArch64Code(struct PPCRecFunction_t* PPCRecFunction, 
 			{
 				if (!aarch64GenContext.fpr_store(imlInstruction, false))
 					codeGenerationFailed = true;
+				AArch64EmitStrictBarrier(aarch64GenContext);
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_FPR_STORE_INDEXED)
 			{
 				if (!aarch64GenContext.fpr_store(imlInstruction, true))
 					codeGenerationFailed = true;
+				AArch64EmitStrictBarrier(aarch64GenContext);
 			}
 			else if (imlInstruction->type == PPCREC_IML_TYPE_FPR_R_R)
 			{

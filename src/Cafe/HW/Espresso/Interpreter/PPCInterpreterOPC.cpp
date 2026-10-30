@@ -348,7 +348,9 @@ void PPCInterpreter_SYNC(PPCInterpreter_t* hCPU, uint32 Opcode)
 
 void PPCInterpreter_ISYNC(PPCInterpreter_t* hCPU, uint32 Opcode)
 {
-	// no-op
+#if defined(__aarch64__) || defined(__arm__)
+	std::atomic_thread_fence(std::memory_order_seq_cst); // ver PPCRecompilerImlGen_ISYNC: host de ordenacao fraca
+#endif
 	// next instruction
 	PPCInterpreter_nextInstruction(hCPU);
 }

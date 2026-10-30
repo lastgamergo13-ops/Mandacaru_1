@@ -472,6 +472,16 @@ namespace iosu
 				fsc_setFileSeek(fscFile, filePos);
 			// todo: File permissions
 			uint32 bytesSuccessfullyRead = fsc_readFile(fscFile, destPtr, bytesToRead);
+#if defined(__ANDROID__)
+			{
+				// DIAGNOSTICO: leituras CURTAS (menos bytes do que o jogo pediu) podem deixar dados zerados na memoria do jogo e causar
+				// ponteiros nulos mais tarde. Registra todas as leituras curtas (ate 200) e as primeiras 40 leituras normais.
+				static std::atomic<uint32> s_shortCount{0}, s_normalCount{0};
+				const bool isShort = bytesSuccessfullyRead != bytesToRead;
+				if ((isShort ? s_shortCount.fetch_add(1) < 200 : s_normalCount.fetch_add(1) < 40))
+					cemuLog_log(LogType::Force, "[FS] leitura handle={} pos={:#x} pedido={:#x} lido={:#x} destino={:08x}{}", fileHandle, (uint32)fsc_getFileSeek(fscFile) - bytesSuccessfullyRead, bytesToRead, bytesSuccessfullyRead, destPtr.GetMPTR(), isShort ? "  <-- LEITURA CURTA" : "");
+			}
+#endif
 			if (transferElementSize == 0)
 				return FSA_RESULT::OK;
 
