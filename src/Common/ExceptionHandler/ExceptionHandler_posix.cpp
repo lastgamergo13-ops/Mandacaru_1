@@ -9,6 +9,7 @@
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/HW/Espresso/Debugger/GDBBreakpoints.h"
 #include "Cemu/Logging/CemuLogging.h"
+#include "Cafe/HW/MMU/MMU.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 
 #if defined(__ANDROID__)
@@ -34,6 +35,7 @@
 #include <chrono>
 #include <atomic>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 
 // ---------------------------------------------------------------------------------------------
 // Watchdog: lightweight per-thread "what am I doing right now" status registry + a background
@@ -483,6 +485,67 @@ void AndroidPrintRegisters(void* context)
 }
 #endif
 
+#if defined(__ANDROID__)
+// DIAGNOSTICO: leitura segura da memoria do Wii U dentro do handler de crash. process_vm_readv devolve EFAULT em vez de
+// derrubar o handler quando o endereco nao esta mapeado (async-signal-safe: e uma syscall direta).
+static bool CrashGuestReadU32(uint32_t ppcAddr, uint32_t& out)
+{
+	if (!memory_base || (ppcAddr & 3) != 0)
+		return false;
+	uint32_t raw = 0;
+	struct iovec local = { &raw, sizeof(raw) };
+	struct iovec remote = { (void*)((uintptr_t)memory_base + ppcAddr), sizeof(raw) };
+	long n = syscall(SYS_process_vm_readv, (long)getpid(), &local, 1L, &remote, 1L, 0L);
+	if (n != (long)sizeof(raw))
+		return false;
+	out = __builtin_bswap32(raw); // memoria do Wii U e big-endian
+	return true;
+}
+
+// Imprime: endereco PPC acessado, instrucoes do bloco que falhou e a cadeia de chamadas do jogo (pilha PPC).
+static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
+{
+	if (!h)
+		return;
+	if (info && memory_base)
+	{
+		uintptr_t fa = reinterpret_cast<uintptr_t>(info->si_addr);
+		uintptr_t mb = reinterpret_cast<uintptr_t>(memory_base);
+		if (fa >= mb && fa < mb + 0x100000000ull)
+			CrashLog_WriteLine(fmt::format("[Convidado] endereco do Wii U acessado quando falhou = 0x{:08x} (endereco baixo/nulo = o jogo usou um ponteiro nulo ou invalido)", (uint32_t)(fa - mb)));
+		else
+			CrashLog_WriteLine("[Convidado] o endereco que falhou NAO esta dentro da memoria do Wii U (a falha foi no codigo nativo do emulador/driver)");
+	}
+	// palavras (instrucoes PPC) a partir do inicio do bloco que estava executando
+	{
+		std::string line = fmt::format("[Convidado] instrucoes PPC a partir de 0x{:08x}:", h->instructionPointer);
+		for (int i = 0; i < 12; i++)
+		{
+			uint32_t w;
+			if (CrashGuestReadU32(h->instructionPointer + i * 4, w))
+				line += fmt::format(" {:08x}", w);
+			else
+			{
+				line += " ??";
+				break;
+			}
+		}
+		CrashLog_WriteLine(line);
+	}
+	// cadeia de chamadas: LR atual e depois a corrente de quadros de pilha (r1 -> [r1] -> ...; LR salvo em [quadro+4])
+	CrashLog_WriteLine(fmt::format("[Convidado] cadeia de chamadas do jogo (mais recente primeiro): LR=0x{:08x}", h->spr.LR));
+	uint32_t sp = h->gpr[1];
+	for (int depth = 0; depth < 16; depth++)
+	{
+		uint32_t back = 0, savedLR = 0;
+		if (!CrashGuestReadU32(sp, back) || back <= sp || !CrashGuestReadU32(back + 4, savedLR))
+			break;
+		CrashLog_WriteLine(fmt::format("[Convidado]   #{:<2} retorna para 0x{:08x}  (quadro de pilha 0x{:08x})", depth, savedLR, back));
+		sp = back;
+	}
+}
+#endif
+
 void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 {
 	const char* codeDescription = AndroidSignalCodeToString(sig, info->si_code);
@@ -584,6 +647,9 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 			CrashLog_WriteLine(fmt::format("  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}  r{:<2} 0x{:08x}",
 				i, hCPU->gpr[i], i + 1, hCPU->gpr[i + 1], i + 2, hCPU->gpr[i + 2], i + 3, hCPU->gpr[i + 3]));
 		}
+#if defined(__ANDROID__)
+		CrashPrintGuestDetails(hCPU, info);
+#endif
 	}
 #if defined(__aarch64__)
 	else
@@ -619,6 +685,9 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 			// memory base) - printing them helps confirm whether this really looks like JIT code
 			CrashLog_WriteLine(fmt::format("  x27 (PPC_REC_INSTANCE_REG) = 0x{:016x}  x28 (MEM_BASE_REG) = 0x{:016x}",
 				(uint64_t)uc->uc_mcontext.regs[27], (uint64_t)uc->uc_mcontext.regs[28]));
+#if defined(__ANDROID__)
+			CrashPrintGuestDetails(hCPUFromReg, info);
+#endif
 		}
 	}
 #endif

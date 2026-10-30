@@ -540,6 +540,19 @@ namespace coreinit
 		return true;
 	}
 
+#if defined(__ANDROID__)
+	// DIAGNOSTICO: registra cada thread PPC criada pelo jogo (entrada, argumentos, nucleo). Serve para descobrir threads iniciadas
+	// com argumento nulo (r3/r4) e para ligar o endereco de uma thread (0x........) ao nome que o jogo deu a ela.
+	static void AndroidLogThreadCreate(const char* api, OSThread_t* thread, MPTR entryPoint, sint32 numParam, void* ptrParam, sint32 priority, uint32 attr)
+	{
+		static std::atomic<uint32> s_count{0};
+		if (s_count.fetch_add(1) >= 400)
+			return;
+		cemuLog_log(LogType::Force, "[Thread] {}: thread={:08x} entrada={:08x} r3(numParam)={} r4(ptrParam)={:08x} prioridade={} afinidade={:03b}",
+			api, memory_getVirtualOffsetFromPointer(thread), entryPoint, numParam, ptrParam ? memory_getVirtualOffsetFromPointer(ptrParam) : 0u, priority, attr & 7);
+	}
+#endif
+
 	bool OSCreateThreadType(OSThread_t* thread, MPTR entryPoint, sint32 numParam, void* ptrParam, void* stackTop, sint32 stackSize, sint32 priority, uint32 attr, OSThread_t::THREAD_TYPE threadType)
 	{
 		if(threadType != OSThread_t::THREAD_TYPE::TYPE_APP && threadType != OSThread_t::THREAD_TYPE::TYPE_IO)
@@ -548,11 +561,17 @@ namespace coreinit
 			cemu_assert_suspicious();
 			return false;
 		}
+#if defined(__ANDROID__)
+		AndroidLogThreadCreate("OSCreateThreadType", thread, entryPoint, numParam, ptrParam, priority, attr);
+#endif
 		return __OSCreateThreadInternal2(thread, MEMPTR<void>(entryPoint), numParam, ptrParam, stackTop, stackSize, priority, attr, threadType);
 	}
 
 	bool OSCreateThread(OSThread_t* thread, MPTR entryPoint, sint32 numParam, void* ptrParam, void* stackTop, sint32 stackSize, sint32 priority, uint32 attr)
 	{
+#if defined(__ANDROID__)
+		AndroidLogThreadCreate("OSCreateThread", thread, entryPoint, numParam, ptrParam, priority, attr);
+#endif
 		return __OSCreateThreadInternal2(thread, MEMPTR<void>(entryPoint), numParam, ptrParam, stackTop, stackSize, priority, attr, OSThread_t::THREAD_TYPE::TYPE_APP);
 	}
 
@@ -698,6 +717,13 @@ namespace coreinit
 
 	void OSSetThreadName(OSThread_t* thread, const char* name)
 	{
+#if defined(__ANDROID__)
+		{
+			static std::atomic<uint32> s_nameCount{0};
+			if (name && s_nameCount.fetch_add(1) < 400)
+				cemuLog_log(LogType::Force, "[Thread] nome: thread={:08x} nome=\"{}\"", memory_getVirtualOffsetFromPointer(thread), name);
+		}
+#endif
 		thread->threadName = name;
 	}
 

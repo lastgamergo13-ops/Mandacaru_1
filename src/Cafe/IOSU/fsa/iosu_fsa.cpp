@@ -8,6 +8,8 @@
 #include "Cafe/HW/Latte/Core/LatteBufferCache.h" // also remove this dependency
 
 #include "Cafe/HW/MMU/MMU.h"
+#include "Cemu/Logging/CemuLogging.h"
+#include <atomic>
 
 using namespace iosu::kernel;
 
@@ -531,6 +533,15 @@ namespace iosu
 			sint32 fileHandle = 0;
 			FSA_RESULT fsaResult = __FSAOpenFile(client, (char*)shimBuffer->request.cmdOpenFile.path, (char*)shimBuffer->request.cmdOpenFile.mode, &fileHandle);
 			shimBuffer->response.cmdOpenFile.fileHandleOutput = fileHandle;
+#if defined(__ANDROID__)
+			{
+				// DIAGNOSTICO: o jogo abriu (ou tentou abrir) este arquivo. Falhas tem contador proprio para nunca serem cortadas pelas aberturas OK.
+				static std::atomic<uint32> s_okCount{0}, s_failCount{0};
+				const bool ok = (fsaResult == FSA_RESULT::OK);
+				if ((ok ? s_okCount.fetch_add(1) < 300 : s_failCount.fetch_add(1) < 300))
+					cemuLog_log(LogType::Force, "[FS] abrir arquivo \"{}\" modo=\"{}\" -> {} (FSA={:#x}, handle={})", (const char*)shimBuffer->request.cmdOpenFile.path, (const char*)shimBuffer->request.cmdOpenFile.mode, ok ? "OK" : "FALHOU", (uint32)(sint32)fsaResult, fileHandle);
+			}
+#endif
 			return fsaResult;
 		}
 
