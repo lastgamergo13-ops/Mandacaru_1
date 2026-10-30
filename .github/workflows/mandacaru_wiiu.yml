@@ -28,11 +28,11 @@ env:
 
 jobs:
   deploy:
-    name: Deploy experimental release
+    name: Build APK
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
-      packages: write
+      contents: read   # nao publica mais Release, so le o codigo
+      packages: write  # necessario para o cache binario do vcpkg (NuGet no GitHub Packages)
 
     steps:
       - name: Checkout repo
@@ -105,19 +105,19 @@ jobs:
 
           ./gradlew assembleRelease
 
-      - name: Prepare APK for release
+      - name: Prepare APK
         run: |
           VERSION=${{ env.CEMU_VERSION }}
           mkdir upload
           mv ./src/android/app/build/outputs/apk/*/*.apk upload/Cemu-$VERSION.apk
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      # O APK aparece na secao "Artefatos" no fim da pagina da execucao (Actions > execucao > Artefatos).
+      # NAO cria Release nem tag. O GitHub entrega artefatos dentro de um .zip: baixe, extraia e instale o .apk.
+      - name: Upload APK como artefato
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ env.CEMU_VERSION }}
-          name: "Cemu ${{ env.CEMU_VERSION }}"
-          body: "Experimental release ${{ env.CEMU_VERSION }}"
-          prerelease: true
-          fail_on_unmatched_files: true
-          files: upload/Cemu-${{ env.CEMU_VERSION }}.apk
+          name: Cemu-${{ env.CEMU_VERSION }}-apk
+          path: upload/Cemu-${{ env.CEMU_VERSION }}.apk
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
