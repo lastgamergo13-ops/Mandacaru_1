@@ -702,6 +702,19 @@ namespace coreinit
 	void OSSetThreadSpecific(uint32 index, void* value)
 	{
 		OSThread_t* currentThread = OSGetCurrentThread();
+#if defined(__ANDROID__)
+		{
+			// DIAGNOSTICO: "dados privados da thread" (TLS do jogo). Se uma thread grava aqui e depois le NULO, o jogo usa ponteiro nulo.
+			static std::atomic<uint32> s_setCount{0};
+			if (s_setCount.fetch_add(1) < 300)
+			{
+				PPCInterpreter_t* inst = PPCInterpreter_getCurrentInstance();
+				cemuLog_log(LogType::Force, "[TLS] Set: thread={:08x} \"{}\" nucleo={} indice={} valor={:08x}{}", memory_getVirtualOffsetFromPointer(currentThread),
+					(currentThread && currentThread->threadName.GetMPTR() != 0) ? currentThread->threadName.GetPtr() : "?", inst ? inst->spr.UPIR : 99, index,
+					value ? memory_getVirtualOffsetFromPointer(value) : 0u, (currentThread && index >= (uint32)currentThread->specificArray.size()) ? "  <-- INDICE FORA DO LIMITE (ignorado)" : "");
+			}
+		}
+#endif
 		if (index >= (uint32)currentThread->specificArray.size())
 			return;
 		currentThread->specificArray[index] = value;
@@ -710,6 +723,19 @@ namespace coreinit
 	void* OSGetThreadSpecific(uint32 index)
 	{
 		OSThread_t* currentThread = OSGetCurrentThread();
+#if defined(__ANDROID__)
+		{
+			static std::atomic<uint32> s_nullGetCount{0};
+			const bool outOfRange = index >= (uint32)currentThread->specificArray.size();
+			const bool isNull = outOfRange || currentThread->specificArray[index].GetPtr() == nullptr;
+			if (isNull && s_nullGetCount.fetch_add(1) < 300)
+			{
+				PPCInterpreter_t* inst = PPCInterpreter_getCurrentInstance();
+				cemuLog_log(LogType::Force, "[TLS] Get NULO: thread={:08x} \"{}\" nucleo={} indice={}{}", memory_getVirtualOffsetFromPointer(currentThread),
+					(currentThread->threadName.GetMPTR() != 0) ? currentThread->threadName.GetPtr() : "?", inst ? inst->spr.UPIR : 99, index, outOfRange ? "  <-- INDICE FORA DO LIMITE" : "");
+			}
+		}
+#endif
 		if (index >= (uint32)currentThread->specificArray.size())
 			return nullptr;
 		return currentThread->specificArray[index].GetPtr();
