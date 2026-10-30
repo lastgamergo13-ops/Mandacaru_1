@@ -534,6 +534,18 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 	}
 	// cadeia de chamadas: LR atual e depois a corrente de quadros de pilha (r1 -> [r1] -> ...; LR salvo em [quadro+4])
 	CrashLog_WriteLine(fmt::format("[Convidado] cadeia de chamadas do jogo (mais recente primeiro): LR=0x{:08x}", h->spr.LR));
+	{
+		std::string code = fmt::format("[Convidado]       codigo antes do LR 0x{:08x}:", h->spr.LR);
+		for (int i = -10; i <= 1; i++)
+		{
+			uint32_t w;
+			if (CrashGuestReadU32(h->spr.LR + i * 4, w))
+				code += fmt::format(" {:08x}", w);
+			else
+				code += " ??";
+		}
+		CrashLog_WriteLine(code);
+	}
 	uint32_t sp = h->gpr[1];
 	for (int depth = 0; depth < 16; depth++)
 	{
@@ -541,6 +553,20 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 		if (!CrashGuestReadU32(sp, back) || back <= sp || !CrashGuestReadU32(back + 4, savedLR))
 			break;
 		CrashLog_WriteLine(fmt::format("[Convidado]   #{:<2} retorna para 0x{:08x}  (quadro de pilha 0x{:08x})", depth, savedLR, back));
+		if (depth < 4)
+		{
+			// instrucoes PPC logo ANTES do ponto de retorno: mostram de onde o jogo tirou os argumentos da chamada (ex.: lwz r3,0x1c(r31))
+			std::string code = fmt::format("[Convidado]       codigo antes de 0x{:08x}:", savedLR);
+			for (int i = -10; i <= 1; i++)
+			{
+				uint32_t w;
+				if (CrashGuestReadU32(savedLR + i * 4, w))
+					code += fmt::format(" {:08x}", w);
+				else
+					code += " ??";
+			}
+			CrashLog_WriteLine(code);
+		}
 		sp = back;
 	}
 }

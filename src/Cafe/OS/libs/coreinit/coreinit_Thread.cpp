@@ -725,10 +725,33 @@ namespace coreinit
 		OSThread_t* currentThread = OSGetCurrentThread();
 #if defined(__ANDROID__)
 		{
-			static std::atomic<uint32> s_nullGetCount{0};
 			const bool outOfRange = index >= (uint32)currentThread->specificArray.size();
 			const bool isNull = outOfRange || currentThread->specificArray[index].GetPtr() == nullptr;
-			if (isNull && s_nullGetCount.fetch_add(1) < 300)
+			// registra so as 3 primeiras leituras nulas de cada (thread, indice): o jogo repete a mesma leitura milhares de vezes
+			bool logIt = false;
+			if (isNull)
+			{
+				static std::mutex s_nullMutex;
+				static std::vector<std::pair<uint64, uint32>> s_seen;
+				std::lock_guard<std::mutex> lk(s_nullMutex);
+				const uint64 key = ((uint64)memory_getVirtualOffsetFromPointer(currentThread) << 8) | (index & 0xFF);
+				bool found = false;
+				for (auto& e : s_seen)
+				{
+					if (e.first == key)
+					{
+						found = true;
+						logIt = (++e.second) <= 3;
+						break;
+					}
+				}
+				if (!found && s_seen.size() < 200)
+				{
+					s_seen.emplace_back(key, 1);
+					logIt = true;
+				}
+			}
+			if (logIt)
 			{
 				PPCInterpreter_t* inst = PPCInterpreter_getCurrentInstance();
 				cemuLog_log(LogType::Force, "[TLS] Get NULO: thread={:08x} \"{}\" nucleo={} indice={}{}", memory_getVirtualOffsetFromPointer(currentThread),
