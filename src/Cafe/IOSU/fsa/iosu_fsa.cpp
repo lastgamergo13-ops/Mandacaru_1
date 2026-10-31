@@ -10,6 +10,15 @@
 #include "Cafe/HW/MMU/MMU.h"
 #include "Cemu/Logging/CemuLogging.h"
 #include <atomic>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
+#if defined(__ANDROID__)
+// DIAGNOSTICO: caminho de cada handle de arquivo aberto (para identificar os videos .bik nas leituras)
+static std::mutex g_diagFsPathMutex;
+static std::unordered_map<uint32, std::string> g_diagFsPaths;
+#endif
 
 using namespace iosu::kernel;
 
@@ -481,6 +490,31 @@ namespace iosu
 				if ((isShort ? s_shortCount.fetch_add(1) < 200 : s_normalCount.fetch_add(1) < 40))
 					cemuLog_log(LogType::Force, "[FS] leitura handle={} pos={:#x} pedido={:#x} lido={:#x} destino={:08x}{}", fileHandle, (uint32)fsc_getFileSeek(fscFile) - bytesSuccessfullyRead, bytesToRead, bytesSuccessfullyRead, destPtr.GetMPTR(), isShort ? "  <-- LEITURA CURTA" : "");
 			}
+			{
+				// DIAGNOSTICO: progresso de leitura dos videos (.bik). Mostra se o video continua sendo lido (tocando) ou parou.
+				static std::atomic<uint32> s_bikLogCount{0};
+				std::string path;
+				{
+					std::lock_guard<std::mutex> lk(g_diagFsPathMutex);
+					auto it = g_diagFsPaths.find((uint32)fileHandle);
+					if (it != g_diagFsPaths.end())
+						path = it->second;
+				}
+				if (path.size() > 4 && path.compare(path.size() - 4, 4, ".bik") == 0)
+				{
+					static std::mutex s_bikMutex;
+					static std::unordered_map<uint32, uint64> s_bikBytes, s_bikLastLogged;
+					std::lock_guard<std::mutex> lk(s_bikMutex);
+					uint64& total = s_bikBytes[(uint32)fileHandle];
+					total += bytesSuccessfullyRead;
+					uint64& last = s_bikLastLogged[(uint32)fileHandle];
+					if (total >= last + 0x200000 && s_bikLogCount.fetch_add(1) < 200)
+					{
+						last = total;
+						cemuLog_log(LogType::Force, "[FS] video \"{}\" (handle {}): {:.1f} MB lidos ate agora, ultima leitura em pos={:#x}", path, fileHandle, total / 1048576.0, (uint32)fsc_getFileSeek(fscFile));
+					}
+				}
+			}
 #endif
 			if (transferElementSize == 0)
 				return FSA_RESULT::OK;
@@ -548,6 +582,11 @@ namespace iosu
 				// DIAGNOSTICO: o jogo abriu (ou tentou abrir) este arquivo. Falhas tem contador proprio para nunca serem cortadas pelas aberturas OK.
 				static std::atomic<uint32> s_okCount{0}, s_failCount{0};
 				const bool ok = (fsaResult == FSA_RESULT::OK);
+				if (ok)
+				{
+					std::lock_guard<std::mutex> lk(g_diagFsPathMutex);
+					g_diagFsPaths[(uint32)fileHandle] = std::string((const char*)shimBuffer->request.cmdOpenFile.path);
+				}
 				if ((ok ? s_okCount.fetch_add(1) < 300 : s_failCount.fetch_add(1) < 300))
 					cemuLog_log(LogType::Force, "[FS] abrir arquivo \"{}\" modo=\"{}\" -> {} (FSA={:#x}, handle={})", (const char*)shimBuffer->request.cmdOpenFile.path, (const char*)shimBuffer->request.cmdOpenFile.mode, ok ? "OK" : "FALHOU", (uint32)(sint32)fsaResult, fileHandle);
 			}

@@ -1,5 +1,7 @@
 #include "CubebAPI.h"
 #include "config/CemuConfig.h"
+#include "Common/DiagnosticsFlags.h"
+#include <atomic>
 
 #if BOOST_OS_WINDOWS
 #include <combaseapi.h>
@@ -35,6 +37,9 @@ static void state_cb(cubeb_stream* stream, void* user, cubeb_state state)
 	}*/
 }
 
+// DIAGNOSTICO (Diag::Flag::GuestWatch): estatisticas do audio lidas pelo vigia a cada 2 s (ver coreinit_Thread.cpp)
+std::atomic<uint32> g_diagAudioPeak{0}, g_diagAudioCallbacks{0}, g_diagAudioSilentCallbacks{0};
+
 long CubebAPI::data_cb(cubeb_stream* stream, void* user, const void* inputbuffer, void* outputbuffer, long nframes)
 {
 	auto* thisptr = (CubebAPI*)user;
@@ -57,6 +62,8 @@ long CubebAPI::data_cb(cubeb_stream* stream, void* user, const void* inputbuffer
 	{
 		// we got no data, just write silence
 		memset(outputbuffer, 0x00, size);
+		g_diagAudioCallbacks++;
+		g_diagAudioSilentCallbacks++;
 	}
 	else
 	{
@@ -67,6 +74,22 @@ long CubebAPI::data_cb(cubeb_stream* stream, void* user, const void* inputbuffer
 		// fill rest with silence
 		if (copied != size)
 			memset((uint8*)outputbuffer + copied, 0x00, size - copied);
+		g_diagAudioCallbacks++;
+		if (thisptr->m_bitsPerSample == 16 && Diag::IsEnabled(Diag::Flag::GuestWatch))
+		{
+			// pico de amplitude (0..32768) do que foi entregue ao dispositivo
+			const int16_t* s = (const int16_t*)outputbuffer;
+			uint32 peak = 0;
+			for (size_t i = 0; i < copied / 2; i++)
+			{
+				const int32_t v = s[i];
+				const uint32 a = (uint32)(v < 0 ? -v : v);
+				if (a > peak)
+					peak = a;
+			}
+			uint32 cur = g_diagAudioPeak.load();
+			while (peak > cur && !g_diagAudioPeak.compare_exchange_weak(cur, peak)) {}
+		}
 	}
 
 	return nframes;

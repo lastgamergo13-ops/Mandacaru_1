@@ -1204,6 +1204,23 @@ void PPCRecompiler_dumpRecentHleCallHistoryToCrashLog()
 	}
 }
 
+std::string PPCRecompiler_getRecentHleCallsString(uint32 maxEntries)
+{
+	// resumo compacto das ultimas chamadas HLE (de todas as threads), mais recente por ultimo: "nome(tid) nome(tid) ..."
+	const uint64 totalCount = s_hleCallRingCounter.load();
+	uint64 n = totalCount < kHleCallRingBufferSize ? totalCount : kHleCallRingBufferSize;
+	if (n > maxEntries)
+		n = maxEntries;
+	std::string out;
+	for (uint64 i = totalCount - n; i < totalCount; i++)
+	{
+		const auto& entry = s_hleCallRingBuffer[i % kHleCallRingBufferSize];
+		const std::string& name = PPCInterpreter_getHLEName(entry.hleFuncId);
+		out += fmt::format("{}({}) ", name.empty() ? "?" : name, entry.threadId);
+	}
+	return out;
+}
+
 void* PPCRecompiler_virtualHLE(PPCInterpreter_t* ppcInterpreter, uint32 hleFuncId)
 {
 	if (hleFuncId != 0xFFD0)
@@ -1308,6 +1325,16 @@ void AArch64GenContext_t::emitRegisterCanaryCheck(const char* checkpointTag)
 // (ou seja, no proximo jogo que for aberto).
 static bool AArch64StrictMemoryOrdering()
 {
+	// O teste de ordenacao estrita foi concluido (descartado como causa dos crashes) e o botao foi ocultado da tela. O arquivo-marcador pode
+	// ter ficado LIGADO de testes antigos e agora nao ha como desliga-lo pela tela: por isso o modo fica DESLIGADO aqui e o marcador e limpo.
+	// Para voltar a usar: troque para true e mostre o botao (MOSTRAR_ORDENACAO_ESTRITA em LogsSettingsScreen.kt).
+	static constexpr bool kOrdenacaoEstritaDisponivel = false;
+	if (!kOrdenacaoEstritaDisponivel)
+	{
+		if (Diag::IsEnabled(Diag::Flag::JitStrictOrdering))
+			Diag::SetEnabled(Diag::Flag::JitStrictOrdering, false);
+		return false;
+	}
 	const bool on = Diag::IsEnabled(Diag::Flag::JitStrictOrdering);
 	static std::atomic<int> s_lastLogged{-1};
 	const int onInt = on ? 1 : 0;

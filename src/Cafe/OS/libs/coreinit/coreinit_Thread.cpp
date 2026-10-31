@@ -12,6 +12,10 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
+#include <vector>
+#include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
+// contadores de audio definidos em audio/CubebAPI.cpp (escopo global, fora do namespace coreinit)
+extern std::atomic<uint32> g_diagAudioPeak, g_diagAudioCallbacks, g_diagAudioSilentCallbacks;
 #endif
 #include "Cafe/OS/libs/coreinit/coreinit_Time.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Alarm.h"
@@ -567,6 +571,17 @@ namespace coreinit
 		return true;
 	}
 
+	// le um bloco de memoria do Wii U (bytes crus, big-endian) sem derrubar o processo se a pagina nao estiver acessivel
+	static bool AndroidWatchReadBlock(uint32 ppcAddr, void* out, size_t bytes)
+	{
+		if (!memory_base)
+			return false;
+		struct iovec local = { out, bytes };
+		struct iovec remote = { (void*)((uintptr_t)memory_base + ppcAddr), bytes };
+		long n = syscall(SYS_process_vm_readv, (long)getpid(), &local, 1L, &remote, 1L, 0L);
+		return n == (long)bytes;
+	}
+
 	static const char* AndroidWatchThreadName(OSThread_t* t)
 	{
 		if (!t)
@@ -587,6 +602,28 @@ namespace coreinit
 				uint32 lastValue[1] = {};
 				bool haveLast[1] = {};
 				uint32 logged = 0;
+
+				// REGIAO vigiada (so com Diag::Flag::GuestWatch): tabelas de pares (ponteiro, contador) do alocador do Watch Dogs. Nos crashes
+				// da Main Thread UMA palavra de ponteiro aparece trocada por lixo (ex.: 0x72794172 "ryAr", 0x919429da). Aqui registramos o
+				// instante em que um ponteiro valido vira lixo, quem estava rodando em cada nucleo e as ultimas chamadas HLE.
+				constexpr uint32 kRegionBase = 0x10760000;
+				constexpr uint32 kRegionWords = 2048; // 8 KB
+				std::vector<uint32> regionPrev(kRegionWords), regionCur(kRegionWords);
+				bool regionInit = false;
+				uint32 regionLogged = 0;
+				auto lastReport = std::chrono::steady_clock::now();
+
+				auto looksAscii = [](uint32 v)
+				{
+					for (int i = 0; i < 4; i++)
+					{
+						const uint32 c = (v >> (i * 8)) & 0xFF;
+						if (c < 0x20 || c > 0x7E)
+							return false;
+					}
+					return true;
+				};
+
 				for (;;)
 				{
 					for (int i = 0; i < count; i++)
@@ -607,7 +644,54 @@ namespace coreinit
 							haveLast[i] = true;
 						}
 					}
-					std::this_thread::sleep_for(std::chrono::microseconds(300));
+
+					if (Diag::IsEnabled(Diag::Flag::GuestWatch))
+					{
+						// ---- vigia de regiao
+						if (AndroidWatchReadBlock(kRegionBase, regionCur.data(), kRegionWords * 4))
+						{
+							if (!regionInit)
+							{
+								regionPrev = regionCur;
+								regionInit = true;
+							}
+							else
+							{
+								for (uint32 w = 0; w < kRegionWords; w++)
+								{
+									if (regionCur[w] == regionPrev[w])
+										continue;
+									const uint32 oldV = _swapEndianU32(regionPrev[w]);
+									const uint32 newV = _swapEndianU32(regionCur[w]);
+									regionPrev[w] = regionCur[w];
+									const bool oldWasPointer = oldV >= 0x10000000 && oldV < 0x50000000;
+									const bool newIsPointer = newV >= 0x10000000 && newV < 0x50000000;
+									const bool suspicious = (oldWasPointer && !newIsPointer && newV != 0) || (looksAscii(newV) && newV != 0x20202020);
+									if (!suspicious || regionLogged >= 150)
+										continue;
+									regionLogged++;
+									std::string ctx;
+									for (uint32 k = (w >= 4 ? w - 4 : 0); k < w + 5 && k < kRegionWords; k++)
+										ctx += fmt::format(" {:08x}", _swapEndianU32(regionCur[k]));
+									cemuLog_log(LogType::Force, "[Vigia] CORRUPCAO? mem[{:08x}]: {:08x} -> {:08x}{} | vizinhanca (a partir de {:08x}):{} | rodando: nucleo0=\"{}\" nucleo1=\"{}\" nucleo2=\"{}\" | ultimas chamadas HLE: {}",
+										kRegionBase + w * 4, oldV, newV, looksAscii(newV) ? fmt::format(" (texto \"{}{}{}{}\")", (char)(newV >> 24), (char)(newV >> 16), (char)(newV >> 8), (char)newV) : std::string(), kRegionBase + (w >= 4 ? w - 4 : 0) * 4, ctx,
+										AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]),
+										PPCRecompiler_getRecentHleCallsString(6));
+								}
+							}
+						}
+						else
+							regionInit = false;
+
+						// ---- relatorio de audio a cada 2 s
+						const auto now = std::chrono::steady_clock::now();
+						if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastReport).count() >= 2000)
+						{
+							lastReport = now;
+							cemuLog_log(LogType::Force, "[Audio] ultimos 2 s: callbacks={} sem_dados_do_jogo(silencio)={} pico={}/32768", (uint32)g_diagAudioCallbacks.exchange(0), (uint32)g_diagAudioSilentCallbacks.exchange(0), (uint32)g_diagAudioPeak.exchange(0));
+						}
+					}
+					std::this_thread::sleep_for(std::chrono::microseconds(Diag::IsEnabled(Diag::Flag::GuestWatch) ? 150 : 300));
 				}
 			}).detach();
 		});
@@ -732,6 +816,9 @@ namespace coreinit
 			const char* threadNamePtr = threadNameSafe.c_str();
 			Watchdog_SetThreadStatus(fmt::format("exited: PPC thread \"{}\" (0x{:08x}) called OSExitThread({})",
 				threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(currentThread).GetMPTR(), exitValue));
+			static std::atomic<uint32> s_exitLogCount{0};
+			if (s_exitLogCount.fetch_add(1) < 400)
+				cemuLog_log(LogType::Force, "[Thread] saiu: thread={:08x} \"{}\" valor_de_saida={}", MEMPTR<OSThread_t>(currentThread).GetMPTR(), threadNamePtr ? threadNamePtr : "(unnamed)", exitValue);
 		}
 #endif
 

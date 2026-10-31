@@ -24,6 +24,10 @@ import java.io.File
 
 private const val VK_TRACE_FILE = "vk_trace.txt"
 
+// O teste de ordenacao estrita de memoria do JIT foi concluido (descartado como causa) e fica OCULTO para ninguem ligar sem querer.
+// Para mostrar de novo: troque para true aqui E para true em kOrdenacaoEstritaDisponivel (BackendAArch64.cpp).
+private const val MOSTRAR_ORDENACAO_ESTRITA = false
+
 /** Botao "Tap for details" que abre um dialogo rolavel (mesmo padrao da tela Experimental). */
 @Composable
 private fun InfoDialogButton(title: String, explanation: String) {
@@ -116,30 +120,32 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             },
         )
 
-        InfoDialogButton(
-            title = tr("Ordenacao estrita de memoria do JIT"),
-            explanation = tr(
-                "O que e: teste para descobrir se um crash vem da reordenacao de memoria do processador ARM. " +
-                        "O PowerPC do Wii U e o ARM do celular podem executar leituras e gravacoes de memoria em ordem " +
-                        "diferente entre os nucleos; se o jogo depende de uma ordem que o ARM nao garante, ele recebe " +
-                        "dados velhos ou ponteiros nulos e fecha.\n\n" +
-                        "O que faz: coloca uma barreira de memoria (dmb ish) antes de TODA leitura e depois de TODA " +
-                        "gravacao do codigo do jogo. Isso forca a ordem correta.\n\n" +
-                        "Cuidado: deixa o jogo MUITO mais lento. Serve so para teste: ligue, abra o jogo que crasha e " +
-                        "veja se ele passa do ponto do crash. Se passar, a causa e a ordem de memoria. Depois desligue.\n\n" +
-                        "Vale a partir do PROXIMO jogo que voce abrir (feche o jogo atual antes). No log aparece a linha " +
-                        "\"[JIT] MODO DE TESTE: ordenacao estrita de memoria LIGADA\"."
-            ),
-        )
-        Toggle(
-            label = tr("Ordenacao estrita de memoria do JIT (teste)"),
-            description = tr(
-                "Barreira de memoria em toda leitura/gravacao do jogo. MUITO mais lento; so para testar crashes. " +
-                        "Vale no proximo jogo que voce abrir."
-            ),
-            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING) },
-            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING, it) },
-        )
+        if (MOSTRAR_ORDENACAO_ESTRITA) {
+            InfoDialogButton(
+                title = tr("Ordenacao estrita de memoria do JIT"),
+                explanation = tr(
+                    "O que e: teste para descobrir se um crash vem da reordenacao de memoria do processador ARM. " +
+                            "O PowerPC do Wii U e o ARM do celular podem executar leituras e gravacoes de memoria em ordem " +
+                            "diferente entre os nucleos; se o jogo depende de uma ordem que o ARM nao garante, ele recebe " +
+                            "dados velhos ou ponteiros nulos e fecha.\n\n" +
+                            "O que faz: coloca uma barreira de memoria (dmb ish) antes de TODA leitura e depois de TODA " +
+                            "gravacao do codigo do jogo. Isso forca a ordem correta.\n\n" +
+                            "Cuidado: deixa o jogo MUITO mais lento. Serve so para teste: ligue, abra o jogo que crasha e " +
+                            "veja se ele passa do ponto do crash. Se passar, a causa e a ordem de memoria. Depois desligue.\n\n" +
+                            "Vale a partir do PROXIMO jogo que voce abrir (feche o jogo atual antes). No log aparece a linha " +
+                            "\"[JIT] MODO DE TESTE: ordenacao estrita de memoria LIGADA\"."
+                ),
+            )
+            Toggle(
+                label = tr("Ordenacao estrita de memoria do JIT (teste)"),
+                description = tr(
+                    "Barreira de memoria em toda leitura/gravacao do jogo. MUITO mais lento; so para testar crashes. " +
+                            "Vale no proximo jogo que voce abrir."
+                ),
+                initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING) },
+                onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING, it) },
+            )
+        }
 
         InfoDialogButton(
             title = tr("Atraso na partida das threads do jogo"),
@@ -162,6 +168,28 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             ),
             initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY) },
             onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY, it) },
+        )
+
+        InfoDialogButton(
+            title = tr("Vigia de memoria, tela e audio"),
+            explanation = tr(
+                "O que e: diagnostico para achar (1) quem corrompe a memoria do jogo, (2) por que a tela fica preta e (3) por que " +
+                        "nao ha som.\n\n" +
+                        "O que faz: a cada 2 segundos escreve no log a cor media da imagem na tela ([Tela]) e o volume do audio " +
+                        "([Audio]); e vigia uma area da memoria do jogo e registra quem estava rodando quando um ponteiro foi " +
+                        "trocado por lixo ([Vigia]).\n\n" +
+                        "Cuidado: pode causar pequenas travadas a cada 2 s (a leitura da tela). Use so para diagnostico e desligue depois. " +
+                        "Vale a partir do PROXIMO jogo que voce abrir."
+            ),
+        )
+        Toggle(
+            label = tr("Vigia de memoria, tela e audio (diagnostico)"),
+            description = tr(
+                "Registra no log a cor da tela, o volume do audio e corrupcoes de memoria. So para diagnostico. " +
+                        "Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.GUEST_WATCH) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.GUEST_WATCH, it) },
         )
 
         Toggle(

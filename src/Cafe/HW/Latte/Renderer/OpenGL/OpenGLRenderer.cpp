@@ -1,4 +1,6 @@
 #include "Common/DiagnosticsFlags.h"
+#include <chrono>
+#include <vector>
 #include <cstring>
 #include "Cafe/HW/Latte/Renderer/OpenGL/OpenGLRenderer.h"
 #include "WindowSystem.h"
@@ -1382,12 +1384,76 @@ static void FrameGenGL_PresentMain()
 }
 #endif
 
+#if defined(__ANDROID__)
+// DIAGNOSTICO (Diag::Flag::GuestWatch): a cada 2 s le a imagem que esta prestes a ser apresentada na tela e registra a cor media e a
+// porcentagem de pontos nao pretos. Responde "a tela esta realmente preta ou o jogo desenha e nao aparece?".
+static void AndroidProbeFrame()
+{
+	if (!Diag::IsEnabled(Diag::Flag::GuestWatch))
+		return;
+	static auto s_last = std::chrono::steady_clock::now();
+	static uint32 s_frames = 0;
+	s_frames++;
+	const auto now = std::chrono::steady_clock::now();
+	if (std::chrono::duration_cast<std::chrono::milliseconds>(now - s_last).count() < 2000)
+		return;
+	const uint32 framesSince = s_frames;
+	s_frames = 0;
+	s_last = now;
+
+	ESShim::Load();
+	GLint vp[4] = { 0, 0, 0, 0 };
+	glGetIntegerv(0x0BA2 /*GL_VIEWPORT*/, vp);
+	const GLint w = vp[2], h = vp[3];
+	if (w <= 0 || h <= 0 || w > 4096 || h > 4096)
+	{
+		cemuLog_log(LogType::Force, "[Tela] {} quadros em 2 s; viewport invalido ({}x{}), nao foi possivel medir a imagem", framesSince, (sint32)w, (sint32)h);
+		return;
+	}
+	GLint prevRead = 0, prevAlign = 4;
+	glGetIntegerv(0x8CAA /*GL_READ_FRAMEBUFFER_BINDING*/, &prevRead);
+	glGetIntegerv(0x0D05 /*GL_PACK_ALIGNMENT*/, &prevAlign);
+	glBindFramebuffer(0x8CA8 /*GL_READ_FRAMEBUFFER*/, 0);
+	glPixelStorei(0x0D05, 1);
+	std::vector<uint8> px((size_t)w * (size_t)h * 4);
+	ESShim::g.ReadPixels(vp[0], vp[1], w, h, 0x1908 /*GL_RGBA*/, 0x1401 /*GL_UNSIGNED_BYTE*/, px.data());
+	glPixelStorei(0x0D05, prevAlign);
+	glBindFramebuffer(0x8CA8, (GLuint)prevRead);
+
+	uint64 sumR = 0, sumG = 0, sumB = 0, samples = 0, nonBlack = 0;
+	uint32 maxV = 0;
+	for (GLint y = 0; y < h; y += 4)
+	{
+		for (GLint x = 0; x < w; x += 4)
+		{
+			const uint8* p = &px[((size_t)y * (size_t)w + (size_t)x) * 4];
+			sumR += p[0]; sumG += p[1]; sumB += p[2];
+			const uint32 m = std::max<uint32>(p[0], std::max<uint32>(p[1], p[2]));
+			if (m > 12)
+				nonBlack++;
+			if (m > maxV)
+				maxV = m;
+			samples++;
+		}
+	}
+	if (!samples)
+		return;
+	cemuLog_log(LogType::Force, "[Tela] {} quadros em 2 s; imagem {}x{}: cor media RGB=({},{},{}), {}% dos pontos nao sao pretos, brilho maximo={}/255{}",
+		framesSince, (sint32)w, (sint32)h, (uint32)(sumR / samples), (uint32)(sumG / samples), (uint32)(sumB / samples), (uint32)(nonBlack * 100 / samples), maxV,
+		maxV <= 12 ? "  <-- IMAGEM TOTALMENTE PRETA" : "");
+}
+#endif
+
 void OpenGLRenderer::SwapBuffers(bool swapTV, bool swapDRC)
 {
 #if defined(__ANDROID__)
 	// Frame Generation: captura o frame real ANTES do swap...
 	if (swapTV)
 		FrameGenGL::CaptureRealFrame();
+#endif
+#if defined(__ANDROID__)
+	if (swapTV)
+		AndroidProbeFrame();
 #endif
 	GLCanvas_SwapBuffers(swapTV, swapDRC);
 #if defined(__ANDROID__)

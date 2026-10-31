@@ -57,6 +57,7 @@ object NativeSettings {
         const val DUMP_SHADERS = 4
         const val JIT_STRICT_ORDERING = 5
         const val THREAD_START_DELAY = 6
+        const val GUEST_WATCH = 7
     }
 
     @JvmStatic

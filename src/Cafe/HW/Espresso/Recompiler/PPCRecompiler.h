@@ -223,6 +223,7 @@ void PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog();
 // Diagnóstico de crash: mesma ideia acima, mas para as últimas chamadas HLE (funções de
 // sistema/gráficas do Wii U, ex: GX2DrawEx), com o nome legível de cada uma.
 void PPCRecompiler_dumpRecentHleCallHistoryToCrashLog();
+std::string PPCRecompiler_getRecentHleCallsString(uint32 maxEntries);
 
 // recompiler interface
 
