@@ -34,6 +34,7 @@ namespace
 
 	FileCache* s_aotCache = nullptr;
 	std::atomic<uint32> s_aotHits{0}, s_aotMisses{0}, s_aotStores{0}; // V11.39: contadores para o log
+	std::atomic<uint32> s_aotLookups{0}, s_aotRejectedCRC{0}, s_aotRejectedOther{0}, s_aotNotCacheable{0}; // diagnostico: motivos de nao aproveitar o cache
 
 	bool IsAOTCacheEnabled()
 	{
@@ -127,6 +128,18 @@ namespace
 	}
 }
 
+std::string PPCRecompilerCache_GetStatsString()
+{
+	if (!IsAOTCacheEnabled())
+		return "[AOT] cache do recompilador DESLIGADO nas configuracoes";
+	if (!s_aotCache)
+		return "[AOT] cache do recompilador ligado, mas o arquivo NAO esta aberto";
+	const uint32 hits = s_aotHits, misses = s_aotMisses;
+	const uint32 total = hits + misses;
+	return fmt::format("[AOT] {} consultas: {} acertos ({}%), {} falhas (compilou na hora), {} rejeitadas por CRC do codigo do jogo, {} rejeitadas por outros motivos, {} gravadas, {} nao gravaveis (endereco absoluto)",
+		total, hits, total ? (hits * 100 / total) : 0, misses, (uint32)s_aotRejectedCRC, (uint32)s_aotRejectedOther, (uint32)s_aotStores, (uint32)s_aotNotCacheable);
+}
+
 void PPCRecompilerCache_Load(TitleId titleId)
 {
 	PPCRecompilerCache_Unload();
@@ -139,6 +152,7 @@ void PPCRecompilerCache_Load(TitleId titleId)
 	std::error_code ec;
 	fs::create_directories(ActiveSettings::GetCachePath("recompilerCache"), ec);
 	fs::path cachePath = ActiveSettings::GetCachePath("recompilerCache/{:016x}_ppcRec.bin", (uint64)titleId);
+	s_aotHits = 0; s_aotMisses = 0; s_aotStores = 0; s_aotLookups = 0; s_aotRejectedCRC = 0; s_aotRejectedOther = 0; s_aotNotCacheable = 0;
 	s_aotCache = FileCache::Open(cachePath, true, GetCacheExtraVersion());
 	if (!s_aotCache)
 	{
@@ -147,7 +161,7 @@ void PPCRecompilerCache_Load(TitleId titleId)
 	}
 	// this cache is consulted on every cold function entry, so keep lookups cheap rather than paying zlib decompression on the hot path
 	s_aotCache->UseCompression(false);
-	cemuLog_log(LogType::Force, "[AOT] cache do recompilador aberto: {}", _pathToUtf8(cachePath));
+	cemuLog_log(LogType::Force, "[AOT] cache do recompilador aberto: {} ({} funcoes ja gravadas no arquivo)", _pathToUtf8(cachePath), (sint32)s_aotCache->GetFileCount());
 #endif
 }
 
@@ -167,6 +181,12 @@ PPCRecFunction_t* PPCRecompilerCache_TryLoad(const PPCFunctionBoundaryTracker::P
 	if (!IsAOTCacheEnabled() || !s_aotCache)
 		return nullptr;
 
+	{
+		// a cada 500 consultas escreve um resumo no log (o resumo final so sairia ao fechar o jogo, o que nunca acontece num crash)
+		const uint32 n = ++s_aotLookups;
+		if (n % 500 == 0)
+			cemuLog_log(LogType::Force, "{}", PPCRecompilerCache_GetStatsString());
+	}
 	std::vector<uint8> blob;
 	if (!s_aotCache->GetFile({ (uint64)range.startAddress, 0 }, blob))
 	{
@@ -184,21 +204,36 @@ PPCRecFunction_t* PPCRecompilerCache_TryLoad(const PPCFunctionBoundaryTracker::P
 	uint32 codeSize = reader.readBE<uint32>();
 	std::span<uint8> codeBytes = reader.readDataNoCopy(codeSize);
 	if (reader.hasError())
+	{
+		s_aotRejectedOther++;
 		return nullptr; // truncated/corrupt entry - ignore and recompile normally
+	}
 
 	if (formatVersion != kCacheFormatVersion)
+	{
+		s_aotRejectedOther++;
 		return nullptr;
+	}
 	if (ppcAddress != range.startAddress || ppcSize != range.length)
+	{
+		s_aotRejectedOther++;
 		return nullptr; // the boundary tracker disagrees with the shape that was cached - safer to just recompile
+	}
 
 	// validate the cached code was compiled from the same guest instruction bytes that are
 	// currently in memory (protects against game updates, romhacks, or a different game entirely
 	// reusing the same title id's cache directory)
 	const uint8* srcCode = memory_getPointerFromVirtualOffsetAllowNull(ppcAddress);
 	if (!srcCode)
+	{
+		s_aotRejectedOther++;
 		return nullptr;
+	}
 	if (crc32_calc(srcCode, ppcSize) != storedCRC)
+	{
+		s_aotRejectedCRC++;
 		return nullptr;
+	}
 
 	void* execCode = nullptr;
 #if defined(ARCH_X86_64)
@@ -207,7 +242,10 @@ PPCRecFunction_t* PPCRecompilerCache_TryLoad(const PPCFunctionBoundaryTracker::P
 	execCode = PPCRecompiler_injectAArch64CachedCode(codeBytes.data(), codeBytes.size(), relocations);
 #endif
 	if (!execCode)
+	{
+		s_aotRejectedOther++;
 		return nullptr;
+	}
 
 	PPCRecFunction_t* ppcRecFunc = new PPCRecFunction_t();
 	ppcRecFunc->ppcAddress = ppcAddress;
@@ -235,7 +273,10 @@ void PPCRecompilerCache_Store(PPCRecFunction_t* ppcRecFunc, const std::vector<st
 	if (!ppcRecFunc || !ppcRecFunc->x86Code || ppcRecFunc->x86Size == 0)
 		return;
 	if (!ppcRecFunc->aotCacheable)
+	{
+		s_aotNotCacheable++;
 		return; // V11.43: contem endereco absoluto nao relocavel
+	}
 
 	const uint8* srcCode = memory_getPointerFromVirtualOffsetAllowNull(ppcRecFunc->ppcAddress);
 	if (!srcCode)

@@ -10,6 +10,9 @@
 #include "Cafe/HW/Espresso/Debugger/GDBBreakpoints.h"
 #include "Cemu/Logging/CemuLogging.h"
 #include "Cafe/HW/MMU/MMU.h"
+#if defined(__ANDROID__)
+#include "Cafe/HW/Espresso/Recompiler/PPCRecompilerCache.h"
+#endif
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
 
 #if defined(__ANDROID__)
@@ -569,6 +572,38 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 		}
 		sp = back;
 	}
+	// conteudo da memoria do Wii U apontada pelos registradores (r3..r31 que parecem enderecos validos): mostra o estado de tabelas/objetos
+	// quando o jogo falha (ex.: texto ASCII onde deveria haver ponteiros). 48 bytes a partir de (endereco - 16), sem repetir enderecos.
+	{
+		uint32_t seen[32];
+		int seenCount = 0;
+		for (int r = 3; r <= 31; r++)
+		{
+			uint32_t v = h->gpr[r];
+			if (v < 0x10000000u || v >= 0x50000000u)
+				continue;
+			uint32_t start = (v & ~0xFu) - 0x10;
+			bool dup = false;
+			for (int i = 0; i < seenCount; i++)
+				if (seen[i] == start)
+					dup = true;
+			if (dup || seenCount >= 32)
+				continue;
+			seen[seenCount++] = start;
+			std::string line = fmt::format("[Convidado] mem r{}=0x{:08x} (a partir de 0x{:08x}):", r, v, start);
+			for (int i = 0; i < 12; i++)
+			{
+				uint32_t w;
+				if (!CrashGuestReadU32(start + i * 4, w))
+				{
+					line += " ??";
+					break;
+				}
+				line += fmt::format(" {:08x}", w);
+			}
+			CrashLog_WriteLine(line);
+		}
+	}
 }
 #endif
 
@@ -832,6 +867,9 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
         return; // give up if crashlog was already created
 #endif
     }
+#if defined(__ANDROID__)
+	CrashLog_WriteLine(PPCRecompilerCache_GetStatsString()); // contadores do cache AOT no momento do crash
+#endif
 
     char* sigName = strsignal(sig);
 	if (sigName)

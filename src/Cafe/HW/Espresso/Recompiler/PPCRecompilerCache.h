@@ -3,6 +3,7 @@
 #include "PPCRecompiler.h"
 #include "PPCFunctionBoundaryTracker.h"
 #include "Cafe/TitleList/TitleId.h"
+#include <string>
 
 // AOT (ahead-of-time) disk cache for the PPC recompiler.
 //
@@ -54,3 +55,7 @@ PPCRecFunction_t* PPCRecompilerCache_TryLoad(const PPCFunctionBoundaryTracker::P
 // This is fire-and-forget; the write happens on a background thread and never blocks
 // recompilation. Safe to call even if no cache is currently open (no-op in that case).
 void PPCRecompilerCache_Store(PPCRecFunction_t* ppcRecFunc, const std::vector<std::pair<MPTR, uint32>>& entryPoints);
+
+// Resumo dos contadores do cache AOT (acertos, falhas, rejeicoes, gravacoes) numa linha de texto pronta para o log.
+// So le contadores atomicos: pode ser chamada de qualquer thread, inclusive do relatorio de crash.
+std::string PPCRecompilerCache_GetStatsString();
