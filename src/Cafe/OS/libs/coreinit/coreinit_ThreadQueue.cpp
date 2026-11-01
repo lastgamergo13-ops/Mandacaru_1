@@ -3,8 +3,35 @@
 
 #if defined(__ANDROID__)
 #include "Common/ExceptionHandler/ExceptionHandler.h"
+#include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
+#include "Common/DiagnosticsFlags.h"
 
 thread_local std::string g_watchdogWaitReasonOverride;
+
+// DIAGNOSTICO (Diag::Flag::GuestWatch): em que ponto do CODIGO DO JOGO a thread atual vai dormir. Devolve " | espera chamada do jogo em
+// LR=0x........ cadeia: 0x.... 0x...." (LR e enderecos de retorno da pilha PPC, mais recente primeiro). No relatorio de threads isso mostra
+// QUAL funcao do jogo esta esperando cada evento/fila/semaforo - sem isso so aparece "waiting on event 0x...".
+static std::string AndroidGuestWaitCallChain()
+{
+	if (!Diag::IsEnabled(Diag::Flag::GuestWatch))
+		return std::string();
+	PPCInterpreter_t* h = PPCInterpreter_getCurrentInstance();
+	if (!h)
+		return std::string();
+	std::string s = fmt::format(" | espera chamada do jogo em LR=0x{:08x} cadeia:", h->spr.LR);
+	uint32 sp = h->gpr[1];
+	for (int depth = 0; depth < 6; depth++)
+	{
+		if (sp < 0x0E000000u || sp >= 0x50000000u || (sp & 3) != 0 || !memory_isAddressRangeAccessible(sp, 8))
+			break;
+		const uint32 back = memory_readU32(sp);
+		if (back <= sp || back >= 0x50000000u || (back & 3) != 0 || !memory_isAddressRangeAccessible(back, 8))
+			break;
+		s += fmt::format(" 0x{:08x}", memory_readU32(back + 4));
+		sp = back;
+	}
+	return s;
+}
 #endif
 
 namespace coreinit
@@ -44,6 +71,7 @@ namespace coreinit
 			statusMsg = fmt::format("blocked: PPC thread \"{}\" (0x{:08x}) waiting on queue 0x{:08x}",
 				threadNamePtr ? threadNamePtr : "(unnamed)", MEMPTR<OSThread_t>(thread).GetMPTR(), MEMPTR<void>(this).GetMPTR());
 		}
+		statusMsg += AndroidGuestWaitCallChain();
 		Watchdog_SetThreadStatus(statusMsg);
 #endif
 		PPCCore_switchToSchedulerWithLock();
