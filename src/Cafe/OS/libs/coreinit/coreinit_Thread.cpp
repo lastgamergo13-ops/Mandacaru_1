@@ -16,6 +16,7 @@
 #include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
 // contadores de audio definidos em audio/CubebAPI.cpp (escopo global, fora do namespace coreinit)
 extern std::atomic<uint32> g_diagAudioPeak, g_diagAudioCallbacks, g_diagAudioSilentCallbacks;
+void AndroidRequestFrameProbe(); // definido em Cafe/HW/Latte/Renderer/Renderer.cpp
 #endif
 #include "Cafe/OS/libs/coreinit/coreinit_Time.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Alarm.h"
@@ -664,6 +665,10 @@ namespace coreinit
 									const uint32 oldV = _swapEndianU32(regionPrev[w]);
 									const uint32 newV = _swapEndianU32(regionCur[w]);
 									regionPrev[w] = regionCur[w];
+									// ruido conhecido: 0x10760270 muda sem parar (gerador de numeros aleatorios do jogo) e as "tags" de mutex/objeto
+									// (0x5874556d, 0x54614049) sao texto legitimo gravado por OSInitMutex
+									if (kRegionBase + w * 4 == 0x10760270 || newV == 0x5874556d || newV == 0x54614049)
+										continue;
 									const bool oldWasPointer = oldV >= 0x10000000 && oldV < 0x50000000;
 									const bool newIsPointer = newV >= 0x10000000 && newV < 0x50000000;
 									const bool suspicious = (oldWasPointer && !newIsPointer && newV != 0) || (looksAscii(newV) && newV != 0x20202020);
@@ -688,6 +693,7 @@ namespace coreinit
 						if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastReport).count() >= 2000)
 						{
 							lastReport = now;
+							AndroidRequestFrameProbe(); // [Imagem do jogo]: cor media da saida do jogo (Vulkan e OpenGL)
 							cemuLog_log(LogType::Force, "[Audio] ultimos 2 s: callbacks={} sem_dados_do_jogo(silencio)={} pico={}/32768", (uint32)g_diagAudioCallbacks.exchange(0), (uint32)g_diagAudioSilentCallbacks.exchange(0), (uint32)g_diagAudioPeak.exchange(0));
 						}
 					}

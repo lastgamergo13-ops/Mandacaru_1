@@ -147,6 +147,16 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             )
         }
 
+        Toggle(
+            label = tr("Aumentar volume do audio (x2)"),
+            description = tr(
+                "Dobra o volume do jogo com um limitador suave para nao estourar. Use se o som estiver baixo mesmo com " +
+                        "o volume da TV em 100%. Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.AUDIO_BOOST) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.AUDIO_BOOST, it) },
+        )
+
         InfoDialogButton(
             title = tr("Atraso na partida das threads do jogo"),
             explanation = tr(

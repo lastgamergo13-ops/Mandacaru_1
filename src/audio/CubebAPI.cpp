@@ -75,6 +75,24 @@ long CubebAPI::data_cb(cubeb_stream* stream, void* user, const void* inputbuffer
 		if (copied != size)
 			memset((uint8*)outputbuffer + copied, 0x00, size - copied);
 		g_diagAudioCallbacks++;
+		if (thisptr->m_bitsPerSample == 16 && Diag::IsEnabled(Diag::Flag::AudioBoost))
+		{
+			// ganho x2 com limitador suave: acima de +-24000 o excesso e comprimido (1/4) e o resultado e limitado a +-32767
+			int16_t* s = (int16_t*)outputbuffer;
+			for (size_t i = 0; i < copied / 2; i++)
+			{
+				int32_t v = (int32_t)s[i] * 2;
+				if (v > 24000)
+					v = 24000 + (v - 24000) / 4;
+				else if (v < -24000)
+					v = -24000 + (v + 24000) / 4;
+				if (v > 32767)
+					v = 32767;
+				else if (v < -32767)
+					v = -32767;
+				s[i] = (int16_t)v;
+			}
+		}
 		if (thisptr->m_bitsPerSample == 16 && Diag::IsEnabled(Diag::Flag::GuestWatch))
 		{
 			// pico de amplitude (0..32768) do que foi entregue ao dispositivo

@@ -135,3 +135,43 @@ void Renderer::SaveScreenshot(const std::vector<uint8>& rgb_data, int width, int
 		})
 		.detach();
 }
+
+#if defined(__ANDROID__)
+#include <optional>
+// DIAGNOSTICO (Diag::Flag::GuestWatch): pede ao renderizador (Vulkan ou OpenGL) a captura de tela INTERNA - a imagem final que o JOGO
+// produziu (o "scan buffer" da TV), antes de a tela do Android apresenta-la - e registra a cor media. Junto com o "[Tela]" do OpenGL
+// (imagem ja apresentada), separa "o jogo desenha preto" de "o jogo desenha mas nao aparece".
+void AndroidRequestFrameProbe()
+{
+	if (!g_renderer)
+		return;
+	g_renderer->RequestScreenshot([](const std::vector<uint8>& rgb, int w, int h, bool mainWindow) -> std::optional<std::string>
+	{
+		if (!mainWindow || w <= 0 || h <= 0 || rgb.size() < (size_t)w * (size_t)h * 3)
+			return std::nullopt;
+		uint64 sumR = 0, sumG = 0, sumB = 0, samples = 0, nonBlack = 0;
+		uint32 maxV = 0;
+		for (int y = 0; y < h; y += 4)
+		{
+			for (int x = 0; x < w; x += 4)
+			{
+				const uint8* p = &rgb[((size_t)y * (size_t)w + (size_t)x) * 3];
+				sumR += p[0];
+				sumG += p[1];
+				sumB += p[2];
+				const uint32 m = std::max<uint32>(p[0], std::max<uint32>(p[1], p[2]));
+				if (m > 12)
+					nonBlack++;
+				if (m > maxV)
+					maxV = m;
+				samples++;
+			}
+		}
+		if (samples)
+			cemuLog_log(LogType::Force, "[Imagem do jogo] saida do jogo {}x{}: cor media RGB=({},{},{}), {}% dos pontos nao sao pretos, brilho maximo={}/255{}", w, h,
+				(uint32)(sumR / samples), (uint32)(sumG / samples), (uint32)(sumB / samples), (uint32)(nonBlack * 100 / samples), maxV,
+				maxV <= 12 ? "  <-- O JOGO ESTA PRODUZINDO IMAGEM TOTALMENTE PRETA" : "");
+		return std::nullopt;
+	});
+}
+#endif
