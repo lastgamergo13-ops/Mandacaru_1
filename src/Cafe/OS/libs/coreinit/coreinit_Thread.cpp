@@ -712,8 +712,17 @@ namespace coreinit
 		if (!thread || !Diag::IsEnabled(Diag::Flag::ThreadStartDelay))
 			return;
 		const char* name = AndroidWatchThreadName(thread);
-		// nao atrasa threads do sistema nem a thread principal do jogo
-		if (name[0] == '{' || name[0] == '?' || name[0] == '-' || strcmp(name, "Main Thread") == 0 || strncmp(name, "Default Core", 12) == 0 ||
+		// ALVO ESTREITO: so a thread que comprovadamente corre com a Main Thread (usa um objeto global que a Main ainda esta criando).
+		// A versao anterior atrasava TODAS as threads do jogo (DecompressionThread, StreamingThread, LoadingThread, GX2 event callback...) e
+		// isso provavelmente causou crashes novos na Main Thread (dados ainda nao descomprimidos/carregados). Para voltar ao comportamento
+		// amplo, troque kAtrasarSomenteThreadComprovada para false.
+		static constexpr bool kAtrasarSomenteThreadComprovada = true;
+		if (kAtrasarSomenteThreadComprovada)
+		{
+			if (strcmp(name, "CDelayedArchivesOpenThread") != 0)
+				return;
+		}
+		else if (name[0] == '{' || name[0] == '?' || name[0] == '-' || strcmp(name, "Main Thread") == 0 || strncmp(name, "Default Core", 12) == 0 ||
 			strcmp(name, "Alarm Thread") == 0 || strcmp(name, "Callback Thread") == 0)
 			return;
 		static std::atomic<uint32> s_delayLog{0};
