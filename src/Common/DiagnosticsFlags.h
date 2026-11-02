@@ -28,8 +28,9 @@ namespace Diag
 		JitStrictOrdering = 5, // teste do JIT: dmb ish antes de cada load e depois de cada store (ver BackendAArch64.cpp)
 		ThreadStartDelay = 6,  // teste de corrida: atrasa o inicio das threads secundarias do jogo (ver coreinit_Thread.cpp)
 		GuestWatch = 7,        // vigia de memoria do jogo + sonda de tela/audio (ver coreinit_Thread.cpp, OpenGLRenderer.cpp, CubebAPI.cpp)
-		PreferBigCores = 9,    // prende as threads principais do emulador nos nucleos rapidos da CPU (ver Common/AndroidCpuAffinity.h)
 		AudioBoost = 8,        // ganho de audio x2 com limitador suave (ver audio/CubebAPI.cpp)
+		PreferBigCores = 9,    // prende as threads principais do emulador nos nucleos rapidos da CPU (ver Common/AndroidCpuAffinity.h)
+		// REGRA: ao adicionar uma opcao, use o proximo numero e mantenha "Count" SEMPRE por ultimo.
 		Count
 	};
 
@@ -51,18 +52,19 @@ namespace Diag
 		}
 	}
 
-	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }; // -1 = ainda nao lido
+	// Zerado por padrao (nao precisa contar valores iniciais): 0 = ainda nao lido, 1 = desligado, 2 = ligado
+	inline std::atomic<int> g_flagState[(int)Flag::Count] = {};
 
 	inline bool IsEnabled(Flag f)
 	{
 		int s = g_flagState[(int)f].load(std::memory_order_relaxed);
-		if (s < 0)
+		if (s == 0)
 		{
 			std::error_code ec;
-			s = std::filesystem::exists(ActiveSettings::GetUserDataPath(FlagMarkerName(f)), ec) ? 1 : 0;
+			s = std::filesystem::exists(ActiveSettings::GetUserDataPath(FlagMarkerName(f)), ec) ? 2 : 1;
 			g_flagState[(int)f] = s;
 		}
-		return s == 1;
+		return s == 2;
 	}
 
 	inline void SetEnabled(Flag f, bool on)
@@ -73,7 +75,7 @@ namespace Diag
 			std::ofstream(marker, std::ios::trunc) << "1";
 		else
 			std::filesystem::remove(marker, ec);
-		g_flagState[(int)f] = on ? 1 : 0;
+		g_flagState[(int)f] = on ? 2 : 1;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------
