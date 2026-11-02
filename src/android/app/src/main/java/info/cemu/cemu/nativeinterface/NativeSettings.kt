@@ -59,6 +59,7 @@ object NativeSettings {
         const val THREAD_START_DELAY = 6
         const val GUEST_WATCH = 7
         const val AUDIO_BOOST = 8
+        const val PREFER_BIG_CORES = 9
     }
 
     @JvmStatic

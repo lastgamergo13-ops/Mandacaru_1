@@ -1,3 +1,6 @@
+#if defined(__ANDROID__)
+#include "Common/AndroidCpuAffinity.h"
+#endif
 #include "Cafe/HW/Latte/ISA/RegDefines.h"
 #include "Cafe/OS/libs/gx2/GX2.h" // todo - remove dependency
 #include "Cafe/HW/Latte/Core/Latte.h"
@@ -119,6 +122,9 @@ void LatteThread_HandleOSScreen()
 int Latte_ThreadEntry()
 {
 	SetThreadName("LatteThread");
+#if defined(__ANDROID__)
+	AndroidCpu::PreferFastCores("LatteThread");
+#endif
 #if defined(__ANDROID__)
 	Watchdog_SetThreadStatus("GPU thread - starting up");
 #endif

@@ -148,6 +148,17 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
         }
 
         Toggle(
+            label = tr("Preferir nucleos rapidos da CPU (teste)"),
+            description = tr(
+                "Mantem as threads principais do emulador (nucleos do Wii U e GPU) nos nucleos rapidos do processador. " +
+                        "Pode reduzir a lentidao dos primeiros segundos (ex.: o primeiro video do jogo). So age se o aparelho " +
+                        "tiver pelo menos 4 nucleos rapidos. Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.PREFER_BIG_CORES) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.PREFER_BIG_CORES, it) },
+        )
+
+        Toggle(
             label = tr("Aumentar volume do audio (x2)"),
             description = tr(
                 "Dobra o volume do jogo com um limitador suave para nao estourar. Use se o som estiver baixo mesmo com " +

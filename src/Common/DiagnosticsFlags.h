@@ -28,6 +28,7 @@ namespace Diag
 		JitStrictOrdering = 5, // teste do JIT: dmb ish antes de cada load e depois de cada store (ver BackendAArch64.cpp)
 		ThreadStartDelay = 6,  // teste de corrida: atrasa o inicio das threads secundarias do jogo (ver coreinit_Thread.cpp)
 		GuestWatch = 7,        // vigia de memoria do jogo + sonda de tela/audio (ver coreinit_Thread.cpp, OpenGLRenderer.cpp, CubebAPI.cpp)
+		PreferBigCores = 9,    // prende as threads principais do emulador nos nucleos rapidos da CPU (ver Common/AndroidCpuAffinity.h)
 		AudioBoost = 8,        // ganho de audio x2 com limitador suave (ver audio/CubebAPI.cpp)
 		Count
 	};
@@ -45,11 +46,12 @@ namespace Diag
 		case Flag::ThreadStartDelay: return "diag_thread_start_delay";
 		case Flag::GuestWatch: return "diag_guest_watch";
 		case Flag::AudioBoost: return "diag_audio_boost";
+		case Flag::PreferBigCores: return "diag_prefer_big_cores";
 		default: return "diag_unknown";
 		}
 	}
 
-	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 }; // -1 = ainda nao lido
+	inline std::atomic<int> g_flagState[(int)Flag::Count] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }; // -1 = ainda nao lido
 
 	inline bool IsEnabled(Flag f)
 	{

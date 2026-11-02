@@ -13,6 +13,7 @@
 #include <chrono>
 #include <mutex>
 #include <vector>
+#include "Common/AndroidCpuAffinity.h"
 #include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
 // contadores de audio definidos em audio/CubebAPI.cpp (escopo global, fora do namespace coreinit)
 extern std::atomic<uint32> g_diagAudioPeak, g_diagAudioCallbacks, g_diagAudioSilentCallbacks;
@@ -1885,6 +1886,7 @@ namespace coreinit
 		// alt-signal-stack, a stack-overflow crash on this thread would have no room left to run
 		// our crash handler at all and die with nothing in log.txt.
 		ExceptionHandler_InstallAltStackForCurrentThread();
+		AndroidCpu::PreferFastCores("nucleo PPC");
 		Watchdog_SetThreadStatus(fmt::format("core {} - starting up", (uintptr_t)_assignedCoreIndex));
 #endif
 
