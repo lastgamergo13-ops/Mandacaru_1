@@ -17,6 +17,58 @@
 #define LC_MASK_RESERVED		(1)
 #define LC_MASK_RESERVED_END	(2) // indicates end of reserved block
 
+#if defined(__ANDROID__)
+#include <atomic>
+#include <string>
+// DIAGNOSTICO: anel com as ultimas operacoes de DMA do Locked Cache (o alocador de objetos pequenos do Watch Dogs move os descritores dos
+// pools por LCLoadDMABlocks/LCStoreDMABlocks). O vigia de memoria (coreinit_Thread.cpp) usa isto ao detectar um ponteiro corrompido.
+struct LcDiagOp
+{
+	std::atomic<uint32> seq{0};
+	uint32 isStore = 0, core = 0, dst = 0, src = 0, blocks = 0;
+};
+static LcDiagOp g_lcDiagRing[16];
+static std::atomic<uint32> g_lcDiagCounter{0};
+static std::atomic<uint32> g_lcDiagLastStoreDst{0}, g_lcDiagLastStoreSrc{0}, g_lcDiagLastStoreBlocks{0};
+
+static void LcDiagRecord(bool isStore, uint32 core, uint32 dst, uint32 src, uint32 blocks)
+{
+	const uint32 n = ++g_lcDiagCounter;
+	LcDiagOp& e = g_lcDiagRing[n % 16];
+	e.isStore = isStore ? 1 : 0;
+	e.core = core;
+	e.dst = dst;
+	e.src = src;
+	e.blocks = blocks;
+	e.seq = n;
+	if (isStore)
+	{
+		g_lcDiagLastStoreDst = dst;
+		g_lcDiagLastStoreSrc = src;
+		g_lcDiagLastStoreBlocks = blocks;
+	}
+}
+
+// texto com as ultimas operacoes (mais recente por ultimo) e os dados da ultima Store
+std::string LCDiag_GetRecentOps(uint32 maxEntries, uint32& lastStoreDst, uint32& lastStoreSrc, uint32& lastStoreBlocks)
+{
+	lastStoreDst = g_lcDiagLastStoreDst;
+	lastStoreSrc = g_lcDiagLastStoreSrc;
+	lastStoreBlocks = g_lcDiagLastStoreBlocks;
+	const uint32 total = g_lcDiagCounter.load();
+	uint32 n = total < 16 ? total : 16;
+	if (n > maxEntries)
+		n = maxEntries;
+	std::string out;
+	for (uint32 i = total - n + 1; i <= total && n > 0; i++)
+	{
+		const LcDiagOp& e = g_lcDiagRing[i % 16];
+		out += fmt::format("{}(nucleo{} destino={:08x} origem={:08x} blocos={}) ", e.isStore ? "Store" : "Load", e.core, e.dst, e.src, e.blocks);
+	}
+	return out;
+}
+#endif
+
 namespace coreinit
 {
 	uint8   lcCacheMask[PPC_CORE_COUNT][(LC_LOCKED_CACHE_SIZE + LC_LOCKED_CACHE_GRANULARITY - 1) / LC_LOCKED_CACHE_GRANULARITY] = { 0 };
@@ -242,6 +294,9 @@ namespace coreinit
 		uint8* srcPtr = memory_getPointerFromVirtualOffset(hCPU->gpr[4]);
 		// copy right away, we don't emulate the DMAQueue currently
 		memcpy(destPtr, srcPtr, transferSize);
+#if defined(__ANDROID__)
+		LcDiagRecord(false, PPCInterpreter_getCoreIndex(hCPU), hCPU->gpr[3], hCPU->gpr[4], numBlocks);
+#endif
 
 		osLib_returnFromFunction(hCPU, 0);
 	}
@@ -257,6 +312,9 @@ namespace coreinit
 		uint8* srcPtr = memory_getPointerFromVirtualOffset(hCPU->gpr[4]);
 		// copy right away, we don't emulate the DMAQueue currently
 		memcpy_qwords(destPtr, srcPtr, numBlocks * (32 / sizeof(uint64)));
+#if defined(__ANDROID__)
+		LcDiagRecord(true, PPCInterpreter_getCoreIndex(hCPU), hCPU->gpr[3], hCPU->gpr[4], numBlocks);
+#endif
 
 		LatteBufferCache_notifyDCFlush(hCPU->gpr[3], numBlocks * 32);
 

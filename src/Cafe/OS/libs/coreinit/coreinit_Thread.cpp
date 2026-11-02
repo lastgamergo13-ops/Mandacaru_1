@@ -18,6 +18,7 @@
 // contadores de audio definidos em audio/CubebAPI.cpp (escopo global, fora do namespace coreinit)
 extern std::atomic<uint32> g_diagAudioPeak, g_diagAudioCallbacks, g_diagAudioSilentCallbacks;
 void AndroidRequestFrameProbe(); // definido em Cafe/HW/Latte/Renderer/Renderer.cpp
+std::string LCDiag_GetRecentOps(uint32 maxEntries, uint32& lastStoreDst, uint32& lastStoreSrc, uint32& lastStoreBlocks); // coreinit_LockedCache.cpp
 #endif
 #include "Cafe/OS/libs/coreinit/coreinit_Time.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Alarm.h"
@@ -616,6 +617,22 @@ namespace coreinit
 		return s;
 	}
 
+	// "palavras" (big-endian ja convertido) de um trecho da memoria do Wii U, para o log
+	static std::string AndroidWatchDumpWords(uint32 ppcAddr, uint32 bytes)
+	{
+		std::vector<uint8> buf(bytes);
+		if (!AndroidWatchReadBlock(ppcAddr, buf.data(), bytes))
+			return "(nao legivel)";
+		std::string s;
+		for (uint32 i = 0; i + 4 <= bytes; i += 4)
+		{
+			uint32 raw;
+			memcpy(&raw, &buf[i], 4);
+			s += fmt::format("{:08x} ", _swapEndianU32(raw));
+		}
+		return s;
+	}
+
 	static void AndroidStartGuestWatch()
 	{
 		static std::once_flag s_once;
@@ -712,7 +729,16 @@ namespace coreinit
 										kRegionBase + w * 4, oldV, newV, looksAscii(newV) ? fmt::format(" (texto \"{}{}{}{}\")", (char)(newV >> 24), (char)(newV >> 16), (char)(newV >> 8), (char)newV) : std::string(), kRegionBase + (w >= 4 ? w - 4 : 0) * 4, ctx,
 										AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]),
 										PPCRecompiler_getRecentHleCallsString(6) + fmt::format(" | estado dos nucleos: n0=[{}] n1=[{}] n2=[{}]",
-											AndroidWatchGuestState(__currentCoreThread[0]), AndroidWatchGuestState(__currentCoreThread[1]), AndroidWatchGuestState(__currentCoreThread[2])));
+											AndroidWatchGuestState(__currentCoreThread[0]), AndroidWatchGuestState(__currentCoreThread[1]), AndroidWatchGuestState(__currentCoreThread[2]))
+										+ [&]() -> std::string
+										{
+											uint32 sDst = 0, sSrc = 0, sBlocks = 0;
+											const std::string ops = LCDiag_GetRecentOps(6, sDst, sSrc, sBlocks);
+											std::string r = fmt::format(" | DMA do Locked Cache (mais recente por ultimo): {}", ops);
+											if (sBlocks > 0 && sBlocks <= 8)
+												r += fmt::format("| ultima Store: copia no LC [{:08x}] = {} | memoria principal [{:08x}] = {}", sSrc, AndroidWatchDumpWords(sSrc, sBlocks * 32), sDst, AndroidWatchDumpWords(sDst, sBlocks * 32));
+											return r;
+										}());
 								}
 							}
 						}
