@@ -590,6 +590,31 @@ namespace coreinit
 		return t->threadName.GetMPTR() != 0 ? t->threadName.GetPtr() : "?";
 	}
 
+	// Estado PPC (IP, LR e cadeia de retornos da pilha) da thread que roda num nucleo. Usado pelo vigia no instante em que um ponteiro
+	// do alocador do jogo vira lixo: mostra QUEM (que funcao do jogo) estava rodando, p.ex. o chamador do free()/malloc().
+	static std::string AndroidWatchGuestState(OSThread_t* thread)
+	{
+		if (!thread)
+			return "-";
+		auto it = s_threadToFiber.find(thread);
+		if (it == s_threadToFiber.end() || !it->second)
+			return "?";
+		PPCInterpreter_t* h = &it->second->ppcInstance;
+		std::string s = fmt::format("\"{}\" IP={:08x} LR={:08x} pilha:", AndroidWatchThreadName(thread), h->instructionPointer, h->spr.LR);
+		uint32 sp = h->gpr[1];
+		for (int depth = 0; depth < 8; depth++)
+		{
+			uint32 back = 0, lr = 0;
+			if (sp < 0x0E000000u || sp >= 0x50000000u || (sp & 3) != 0)
+				break;
+			if (!AndroidWatchReadU32(sp, back) || back <= sp || back >= 0x50000000u || !AndroidWatchReadU32(back + 4, lr))
+				break;
+			s += fmt::format(" {:08x}", lr);
+			sp = back;
+		}
+		return s;
+	}
+
 	static void AndroidStartGuestWatch()
 	{
 		static std::once_flag s_once;
@@ -671,7 +696,11 @@ namespace coreinit
 										continue;
 									const bool oldWasPointer = oldV >= 0x10000000 && oldV < 0x50000000;
 									const bool newIsPointer = newV >= 0x10000000 && newV < 0x50000000;
-									const bool suspicious = (oldWasPointer && !newIsPointer && newV != 0) || (looksAscii(newV) && newV != 0x20202020);
+									// pools do alocador de objetos pequenos do Watch Dogs: pilhas de pares (ponteiro livre, contador) em 0x107605d0 + n*0xA8.
+									// Um "ponteiro" >= 0x50000000 ali (ex.: 0x919429da) e o free() de um valor corrompido: o crash vem depois, no malloc.
+									const uint32 slotAddr = kRegionBase + w * 4;
+									const bool badPoolPtr = slotAddr >= 0x107605d0 && slotAddr < 0x10760a00 && newV >= 0x50000000 && newV != 0xFFFFFFFF;
+									const bool suspicious = badPoolPtr || (oldWasPointer && !newIsPointer && newV != 0) || (looksAscii(newV) && newV != 0x20202020);
 									if (!suspicious || regionLogged >= 150)
 										continue;
 									regionLogged++;
@@ -681,7 +710,8 @@ namespace coreinit
 									cemuLog_log(LogType::Force, "[Vigia] CORRUPCAO? mem[{:08x}]: {:08x} -> {:08x}{} | vizinhanca (a partir de {:08x}):{} | rodando: nucleo0=\"{}\" nucleo1=\"{}\" nucleo2=\"{}\" | ultimas chamadas HLE: {}",
 										kRegionBase + w * 4, oldV, newV, looksAscii(newV) ? fmt::format(" (texto \"{}{}{}{}\")", (char)(newV >> 24), (char)(newV >> 16), (char)(newV >> 8), (char)newV) : std::string(), kRegionBase + (w >= 4 ? w - 4 : 0) * 4, ctx,
 										AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]),
-										PPCRecompiler_getRecentHleCallsString(6));
+										PPCRecompiler_getRecentHleCallsString(6) + fmt::format(" | estado dos nucleos: n0=[{}] n1=[{}] n2=[{}]",
+											AndroidWatchGuestState(__currentCoreThread[0]), AndroidWatchGuestState(__currentCoreThread[1]), AndroidWatchGuestState(__currentCoreThread[2])));
 								}
 							}
 						}
