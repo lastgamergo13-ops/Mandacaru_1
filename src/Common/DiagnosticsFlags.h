@@ -30,6 +30,7 @@ namespace Diag
 		GuestWatch = 7,        // vigia de memoria do jogo + sonda de tela/audio (ver coreinit_Thread.cpp, OpenGLRenderer.cpp, CubebAPI.cpp)
 		AudioBoost = 8,        // ganho de audio x2 com limitador suave (ver audio/CubebAPI.cpp)
 		PreferBigCores = 9,    // prende as threads principais do emulador nos nucleos rapidos da CPU (ver Common/AndroidCpuAffinity.h)
+		ReduceGameMem = 10,    // informa ao jogo 128 MB a menos de MEM2 (ver coreinit_Memory.cpp: OSGetMemBound)
 		// REGRA: ao adicionar uma opcao, use o proximo numero e mantenha "Count" SEMPRE por ultimo.
 		Count
 	};
@@ -48,6 +49,7 @@ namespace Diag
 		case Flag::GuestWatch: return "diag_guest_watch";
 		case Flag::AudioBoost: return "diag_audio_boost";
 		case Flag::PreferBigCores: return "diag_prefer_big_cores";
+		case Flag::ReduceGameMem: return "diag_reduce_game_mem";
 		default: return "diag_unknown";
 		}
 	}

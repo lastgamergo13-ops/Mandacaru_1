@@ -60,6 +60,7 @@ object NativeSettings {
         const val GUEST_WATCH = 7
         const val AUDIO_BOOST = 8
         const val PREFER_BIG_CORES = 9
+        const val REDUCE_GAME_MEM = 10
     }
 
     @JvmStatic

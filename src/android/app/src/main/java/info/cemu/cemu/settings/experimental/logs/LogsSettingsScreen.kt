@@ -148,6 +148,17 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
         }
 
         Toggle(
+            label = tr("Reduzir memoria informada ao jogo em 128 MB (teste)"),
+            description = tr(
+                "Alguns jogos crasham por 'estouro interno' quando o emulador informa mais memoria do que o Wii U real tem " +
+                        "(o emulador reserva menos memoria para o sistema). Esta opcao informa 128 MB a menos ao jogo. " +
+                        "Use para testar crashes do Watch Dogs. Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.REDUCE_GAME_MEM) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.REDUCE_GAME_MEM, it) },
+        )
+
+        Toggle(
             label = tr("Preferir nucleos rapidos da CPU (teste)"),
             description = tr(
                 "Mantem as threads principais do emulador (nucleos do Wii U e GPU) nos nucleos rapidos do processador. " +

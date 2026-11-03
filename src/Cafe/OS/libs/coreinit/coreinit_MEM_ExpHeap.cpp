@@ -853,6 +853,13 @@ void export_MEMCreateExpHeapEx(PPCInterpreter_t* hCPU)
 	ppcDefineParamU16(options, 2);
 	MEMPTR<MEMHeapBase> heap = MEMCreateExpHeapEx(startAddress.GetPtr(), size, options);
 	cemuLog_logDebug(LogType::CoreinitMem, "MEMCreateExpHeapEx(0x{:08x}, 0x{:x}, 0x{:x}) Result: 0x{:08x}", startAddress.GetMPTR(), size, options, heap.GetMPTR());
+#if defined(__ANDROID__)
+	{
+		static std::atomic<uint32> s_createLogs{0};
+		if (s_createLogs.fetch_add(1) < 60)
+			cemuLog_log(LogType::Force, "[Heap] MEMCreateExpHeapEx(inicio=0x{:08x}, tamanho=0x{:x} ({} MB), opcoes=0x{:x}) -> heap 0x{:08x}", startAddress.GetMPTR(), size, size / (1024 * 1024), options, heap.GetMPTR());
+	}
+#endif
 	osLib_returnFromFunction(hCPU, heap.GetMPTR());
 }
 
@@ -871,6 +878,14 @@ void export_MEMAllocFromExpHeapEx(PPCInterpreter_t* hCPU)
 	ppcDefineParamS32(alignment, 2);
 	MEMPTR<void> mem = MEMAllocFromExpHeapEx(heap.GetPtr(), size, alignment);
 	cemuLog_logDebug(LogType::CoreinitMem, "MEMAllocFromExpHeapEx(0x{:08x}, 0x{:x}, {}) Result: 0x{:08x}", heap.GetMPTR(), size, alignment, mem.GetMPTR());
+#if defined(__ANDROID__)
+	{
+		// DIAGNOSTICO: como o jogo reparte a memoria (so alocacoes >= 1 MB, ate 150 linhas)
+		static std::atomic<uint32> s_bigAllocLogs{0};
+		if (size >= 0x100000 && s_bigAllocLogs.fetch_add(1) < 150)
+			cemuLog_log(LogType::Force, "[Heap] MEMAllocFromExpHeapEx(heap=0x{:08x}, tamanho=0x{:x} ({} MB), alinhamento={}) -> 0x{:08x}", heap.GetMPTR(), size, size / (1024 * 1024), alignment, mem.GetMPTR());
+	}
+#endif
 	osLib_returnFromFunction(hCPU, mem.GetMPTR());
 }
 
@@ -932,6 +947,13 @@ void export_MEMGetAllocatableSizeForExpHeapEx(PPCInterpreter_t* hCPU)
 	ppcDefineParamS32(alignment, 1);
 	uint32 size = MEMGetAllocatableSizeForExpHeapEx(heap.GetPtr(), alignment);
 	cemuLog_logDebug(LogType::CoreinitMem, "MEMGetAllocatableSizeForExpHeapEx(0x{:08x}, 0x{:x}) Result: 0x{:x}", heap.GetMPTR(), alignment, size);
+#if defined(__ANDROID__)
+	{
+		static std::atomic<uint32> s_allocatableLogs{0};
+		if (s_allocatableLogs.fetch_add(1) < 40)
+			cemuLog_log(LogType::Force, "[Heap] MEMGetAllocatableSizeForExpHeapEx(heap=0x{:08x}, alinhamento={}) -> 0x{:x} ({} MB)", heap.GetMPTR(), alignment, size, size / (1024 * 1024));
+	}
+#endif
 	osLib_returnFromFunction(hCPU, size);
 }
 

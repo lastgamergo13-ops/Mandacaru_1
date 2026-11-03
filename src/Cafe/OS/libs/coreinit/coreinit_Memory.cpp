@@ -1,3 +1,4 @@
+#include "Common/DiagnosticsFlags.h"
 #include "Cafe/OS/common/OSCommon.h"
 #include "coreinit_Memory.h"
 #include "Cafe/HW/Latte/Core/LatteBufferCache.h"
@@ -187,6 +188,20 @@ namespace coreinit
 				cemuLog_logDebug(LogType::Force, "Hack: Reduce available memory to simulate loaded RPLs");
 				currentRPLAllocatorOffset += (48 * 1024 * 1024); // 48MB
 			}
+#if defined(__ANDROID__)
+			if (Diag::IsEnabled(Diag::Flag::ReduceGameMem))
+			{
+				// TESTE: o Wii U real reserva mais memoria para o sistema/RPLs do que nos. Informar menos MEM2 ao jogo (mesma ideia da lista
+				// acima, aplicada a qualquer jogo com o botao ligado). O jogo recebe um inicio de heap 128 MB mais alto.
+				currentRPLAllocatorOffset += (128 * 1024 * 1024);
+				static bool s_logged = false;
+				if (!s_logged)
+				{
+					s_logged = true;
+					cemuLog_log(LogType::Force, "[Memoria] teste ligado: MEM2 informada ao jogo comeca em 0x{:08x} (128 MB a menos)", currentRPLAllocatorOffset);
+				}
+			}
+#endif
 			memAddr = currentRPLAllocatorOffset;
 			memSize = mmuRange_MEM2.getEnd() - currentRPLAllocatorOffset;
 		}
@@ -194,6 +209,14 @@ namespace coreinit
 		{
 			cemu_assert_debug(false);
 		}
+#if defined(__ANDROID__)
+		{
+			// DIAGNOSTICO: o que o jogo recebe como memoria disponivel (tipo 1 = MEM1, 2 = MEM2)
+			static std::atomic<uint32> s_memBoundLogs{0};
+			if (s_memBoundLogs.fetch_add(1) < 8)
+				cemuLog_log(LogType::Force, "[Memoria] OSGetMemBound(tipo={}) -> inicio=0x{:08x} tamanho=0x{:08x} ({} MB) fim=0x{:08x}", memType, memAddr, memSize, memSize / (1024 * 1024), memAddr + memSize);
+		}
+#endif
 		if (offsetOutput)
 			*offsetOutput = memAddr;
 		if (sizeOutput)
