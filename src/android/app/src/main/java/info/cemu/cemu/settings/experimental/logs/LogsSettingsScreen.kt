@@ -16,6 +16,7 @@ import info.cemu.cemu.common.cemufiles.userDataFileExists
 import info.cemu.cemu.common.ui.components.Button
 import info.cemu.cemu.common.ui.components.ScreenContent
 import info.cemu.cemu.common.ui.components.ScrollableDialog
+import info.cemu.cemu.common.ui.components.SingleSelection
 import info.cemu.cemu.common.ui.components.Toggle
 import info.cemu.cemu.common.ui.localization.tr
 import info.cemu.cemu.nativeinterface.NativeActiveSettings
@@ -27,6 +28,24 @@ private const val VK_TRACE_FILE = "vk_trace.txt"
 // O teste de ordenacao estrita de memoria do JIT foi concluido (descartado como causa) e fica OCULTO para ninguem ligar sem querer.
 // Para mostrar de novo: troque para true aqui E para true em kOrdenacaoEstritaDisponivel (BackendAArch64.cpp).
 private const val MOSTRAR_ORDENACAO_ESTRITA = false
+
+// Reducao da memoria informada ao jogo: cada valor em MB corresponde a uma chave de diagnostico (apenas uma fica ligada por vez).
+private val MEM_REDUCE_FLAGS = listOf(
+    64 to NativeSettings.DiagFlag.REDUCE_MEM_64,
+    128 to NativeSettings.DiagFlag.REDUCE_GAME_MEM,
+    256 to NativeSettings.DiagFlag.REDUCE_MEM_256,
+    384 to NativeSettings.DiagFlag.REDUCE_MEM_384,
+    512 to NativeSettings.DiagFlag.REDUCE_MEM_512,
+)
+
+private fun memReduceCurrentChoice(): Int =
+    MEM_REDUCE_FLAGS.firstOrNull { NativeSettings.getDiagFlag(it.second) }?.first ?: 0
+
+private fun setMemReduceChoice(megabytes: Int) {
+    for ((mb, flag) in MEM_REDUCE_FLAGS) {
+        NativeSettings.setDiagFlag(flag, mb == megabytes)
+    }
+}
 
 /** Botao "Tap for details" que abre um dialogo rolavel (mesmo padrao da tela Experimental). */
 @Composable
@@ -147,15 +166,24 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             )
         }
 
-        Toggle(
-            label = tr("Reduzir memoria informada ao jogo em 128 MB (teste)"),
-            description = tr(
-                "Alguns jogos crasham por 'estouro interno' quando o emulador informa mais memoria do que o Wii U real tem " +
-                        "(o emulador reserva menos memoria para o sistema). Esta opcao informa 128 MB a menos ao jogo. " +
-                        "Use para testar crashes do Watch Dogs. Vale no proximo jogo que voce abrir."
+        InfoDialogButton(
+            title = tr("Reduzir memoria informada ao jogo"),
+            explanation = tr(
+                "O que e: o Watch Dogs pede ao sistema TODA a memoria disponivel (cerca de 980 MB) de uma vez e a divide com o " +
+                        "alocador proprio. Em testes, informar menos memoria evitou o crash do inicio do jogo. O emulador reserva " +
+                        "menos memoria para o sistema do que o Wii U real, entao sobra mais para o jogo.\n\n" +
+                        "O que faz: informa ao jogo a quantidade escolhida de MEM2 a menos. Quanto maior a reducao, menos memoria " +
+                        "o jogo tem; se ele faltar memoria, escolha um valor menor.\n\n" +
+                        "Como usar: escolha um valor, feche o jogo e abra de novo (vale a partir do proximo jogo). " +
+                        "No log aparece \"[Memoria] OSGetMemBound(tipo=2)\"."
             ),
-            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.REDUCE_GAME_MEM) },
-            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.REDUCE_GAME_MEM, it) },
+        )
+        SingleSelection(
+            label = tr("Reduzir memoria informada ao jogo (teste)"),
+            initialChoice = { memReduceCurrentChoice() },
+            choices = listOf(0, 64, 128, 256, 384, 512),
+            choiceToString = { if (it == 0) tr("Desligado") else "$it MB" },
+            onChoiceChanged = { setMemReduceChoice(it) },
         )
 
         Toggle(

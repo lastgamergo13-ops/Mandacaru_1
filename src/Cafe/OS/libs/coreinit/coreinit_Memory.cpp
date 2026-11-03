@@ -189,16 +189,30 @@ namespace coreinit
 				currentRPLAllocatorOffset += (48 * 1024 * 1024); // 48MB
 			}
 #if defined(__ANDROID__)
-			if (Diag::IsEnabled(Diag::Flag::ReduceGameMem))
 			{
-				// TESTE: o Wii U real reserva mais memoria para o sistema/RPLs do que nos. Informar menos MEM2 ao jogo (mesma ideia da lista
-				// acima, aplicada a qualquer jogo com o botao ligado). O jogo recebe um inicio de heap 128 MB mais alto.
-				currentRPLAllocatorOffset += (128 * 1024 * 1024);
-				static bool s_logged = false;
-				if (!s_logged)
+				// TESTE: o Watch Dogs pega TODA a MEM2 oferecida de uma vez e a divide com o alocador proprio; informar menos memoria evitou o
+				// crash do inicio do jogo. O Wii U real reserva mais memoria para o sistema/RPLs do que nos. Valor escolhido na tela
+				// (Experimental > Logs e Diagnostico); so uma das chaves fica ligada.
+				uint32 reduceMB = 0;
+				if (Diag::IsEnabled(Diag::Flag::ReduceMem512))
+					reduceMB = 512;
+				else if (Diag::IsEnabled(Diag::Flag::ReduceMem384))
+					reduceMB = 384;
+				else if (Diag::IsEnabled(Diag::Flag::ReduceMem256))
+					reduceMB = 256;
+				else if (Diag::IsEnabled(Diag::Flag::ReduceGameMem))
+					reduceMB = 128;
+				else if (Diag::IsEnabled(Diag::Flag::ReduceMem64))
+					reduceMB = 64;
+				if (reduceMB)
 				{
-					s_logged = true;
-					cemuLog_log(LogType::Force, "[Memoria] teste ligado: MEM2 informada ao jogo comeca em 0x{:08x} (128 MB a menos)", currentRPLAllocatorOffset);
+					currentRPLAllocatorOffset += (reduceMB * 1024 * 1024);
+					static uint32 s_loggedFor = 0;
+					if (s_loggedFor != reduceMB)
+					{
+						s_loggedFor = reduceMB;
+						cemuLog_log(LogType::Force, "[Memoria] teste ligado: MEM2 informada ao jogo comeca em 0x{:08x} ({} MB a menos)", currentRPLAllocatorOffset, reduceMB);
+					}
 				}
 			}
 #endif

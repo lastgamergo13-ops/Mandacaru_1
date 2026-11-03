@@ -60,7 +60,11 @@ object NativeSettings {
         const val GUEST_WATCH = 7
         const val AUDIO_BOOST = 8
         const val PREFER_BIG_CORES = 9
-        const val REDUCE_GAME_MEM = 10
+        const val REDUCE_GAME_MEM = 10 // 128 MB
+        const val REDUCE_MEM_64 = 11
+        const val REDUCE_MEM_256 = 12
+        const val REDUCE_MEM_384 = 13
+        const val REDUCE_MEM_512 = 14
     }
 
     @JvmStatic

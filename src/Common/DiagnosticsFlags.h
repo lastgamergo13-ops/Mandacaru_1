@@ -31,6 +31,10 @@ namespace Diag
 		AudioBoost = 8,        // ganho de audio x2 com limitador suave (ver audio/CubebAPI.cpp)
 		PreferBigCores = 9,    // prende as threads principais do emulador nos nucleos rapidos da CPU (ver Common/AndroidCpuAffinity.h)
 		ReduceGameMem = 10,    // informa ao jogo 128 MB a menos de MEM2 (ver coreinit_Memory.cpp: OSGetMemBound)
+		ReduceMem64 = 11,      // idem, 64 MB a menos
+		ReduceMem256 = 12,     // idem, 256 MB a menos
+		ReduceMem384 = 13,     // idem, 384 MB a menos
+		ReduceMem512 = 14,     // idem, 512 MB a menos
 		// REGRA: ao adicionar uma opcao, use o proximo numero e mantenha "Count" SEMPRE por ultimo.
 		Count
 	};
@@ -50,6 +54,10 @@ namespace Diag
 		case Flag::AudioBoost: return "diag_audio_boost";
 		case Flag::PreferBigCores: return "diag_prefer_big_cores";
 		case Flag::ReduceGameMem: return "diag_reduce_game_mem";
+		case Flag::ReduceMem64: return "diag_reduce_mem_64";
+		case Flag::ReduceMem256: return "diag_reduce_mem_256";
+		case Flag::ReduceMem384: return "diag_reduce_mem_384";
+		case Flag::ReduceMem512: return "diag_reduce_mem_512";
 		default: return "diag_unknown";
 		}
 	}
