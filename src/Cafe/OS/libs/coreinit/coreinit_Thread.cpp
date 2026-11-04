@@ -633,6 +633,39 @@ namespace coreinit
 		return s;
 	}
 
+	// Registradores (r3..r12 e r28..r31) da thread PPC de um nucleo e o conteudo (16 palavras a partir de endereco-16) dos que apontam para a
+	// memoria do jogo: mostra o objeto que esta sendo liberado e seu "vtable"/campos vizinhos no instante da corrupcao.
+	static std::string AndroidWatchGuestObjects(OSThread_t* thread)
+	{
+		if (!thread)
+			return "-";
+		auto it = s_threadToFiber.find(thread);
+		if (it == s_threadToFiber.end() || !it->second)
+			return "?";
+		PPCInterpreter_t* h = &it->second->ppcInstance;
+		std::string regs, dumps;
+		uint32 seen[16];
+		int seenCount = 0;
+		const int order[] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 28, 29, 30, 31 };
+		for (int r : order)
+		{
+			const uint32 v = h->gpr[r];
+			regs += fmt::format("r{}={:08x} ", r, v);
+			if (v < 0x10000000u || v >= 0x50000000u || seenCount >= 8)
+				continue;
+			const uint32 start = (v & ~0xFu) - 0x10;
+			bool dup = false;
+			for (int i = 0; i < seenCount; i++)
+				if (seen[i] == start)
+					dup = true;
+			if (dup)
+				continue;
+			seen[seenCount++] = start;
+			dumps += fmt::format(" [r{} -> {:08x}]: {}", r, start, AndroidWatchDumpWords(start, 64));
+		}
+		return regs + "|" + dumps;
+	}
+
 	static void AndroidStartGuestWatch()
 	{
 		static std::once_flag s_once;
@@ -730,6 +763,7 @@ namespace coreinit
 										AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]),
 										PPCRecompiler_getRecentHleCallsString(6) + fmt::format(" | estado dos nucleos: n0=[{}] n1=[{}] n2=[{}]",
 											AndroidWatchGuestState(__currentCoreThread[0]), AndroidWatchGuestState(__currentCoreThread[1]), AndroidWatchGuestState(__currentCoreThread[2]))
+										+ fmt::format(" | registradores e objetos apontados: n0=[{}] n1=[{}] n2=[{}]", AndroidWatchGuestObjects(__currentCoreThread[0]), AndroidWatchGuestObjects(__currentCoreThread[1]), AndroidWatchGuestObjects(__currentCoreThread[2]))
 										+ [&]() -> std::string
 										{
 											uint32 sDst = 0, sSrc = 0, sBlocks = 0;

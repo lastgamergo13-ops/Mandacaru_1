@@ -198,9 +198,9 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
         )
 
         Toggle(
-            label = tr("Aumentar volume do audio (x2)"),
+            label = tr("Aumentar volume do audio (x1,5)"),
             description = tr(
-                "Dobra o volume do jogo com um limitador suave para nao estourar. Use se o som estiver baixo mesmo com " +
+                "Aumenta o volume do jogo em 50% com um limitador suave para nao estourar. Use se o som estiver baixo mesmo com " +
                         "o volume da TV em 100%. Vale no proximo jogo que voce abrir."
             ),
             initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.AUDIO_BOOST) },
