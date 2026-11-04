@@ -1,3 +1,4 @@
+#include "Common/DiagnosticsFlags.h"
 #include <algorithm>
 #include "Cafe/OS/common/OSCommon.h"
 #include "WindowSystem.h"
@@ -497,6 +498,16 @@ void cemu_initForGame()
 		(bool)GetConfig().enable_recompiler_aot_cache.GetValue(), (bool)GetConfig().limit_shader_compiler_threads.GetValue(),
 		(bool)GetConfig().advanced_iml_optimizations.GetValue(), (bool)GetConfig().memory_usage_brake.GetValue(), (sint32)GetConfig().memory_ceiling_mb.GetValue(),
 		(bool)GetConfig().gx2drawdone_sync.GetValue(), (bool)GetConfig().skip_depth_only_draws.GetValue());
+#if defined(__ANDROID__)
+	{
+		// DIAGNOSTICO: estado de TODAS as chaves de teste (Experimental > Logs e Diagnostico) neste jogo. Sem isso, ao comparar logs nao ha como
+		// saber o que estava ligado em cada tentativa (o log "atraso de partida" so aparece quando a thread atrasada chega a existir).
+		std::string diagFlags;
+		for (int i = 0; i < (int)Diag::Flag::Count; i++)
+			diagFlags += fmt::format("{}={} ", Diag::FlagMarkerName((Diag::Flag)i), Diag::IsEnabled((Diag::Flag)i) ? 1 : 0);
+		cemuLog_log(LogType::Force, "[Diag] chaves de teste neste jogo: {}", diagFlags);
+	}
+#endif
 
 	// print audio log
 	IAudioAPI::PrintLogging();
