@@ -1,3 +1,6 @@
+#if defined(__ANDROID__)
+#include "Common/AndroidCpuAffinity.h"
+#endif
 #include "Cafe/HW/Latte/Renderer/Vulkan/RendererShaderVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
@@ -157,6 +160,9 @@ public:
 	void CompilerThreadFunc()
 	{
 		SetThreadName("vkShaderComp");
+#if defined(__ANDROID__)
+	AndroidCpu::AllowAllCores(); // thread auxiliar: pode usar todos os nucleos
+#endif
 		while (m_threadsActive.load(std::memory_order::relaxed))
 		{
 			s_compilationQueueCount.decrementWithWait();

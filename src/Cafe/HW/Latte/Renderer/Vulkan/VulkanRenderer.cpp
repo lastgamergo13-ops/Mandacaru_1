@@ -1,3 +1,6 @@
+#if defined(__ANDROID__)
+#include "Common/AndroidCpuAffinity.h"
+#endif
 #include <filesystem>
 #include <string_view>
 #include "Cafe/HW/Latte/Core/FrameGenSettings.h"
@@ -2674,6 +2677,9 @@ static bool VkPlCacheReadValidated(const fs::path& path, std::vector<uint8_t>& o
 void VulkanRenderer::PipelineCacheSaveThread(size_t cache_size)
 {
 	SetThreadName("vkDriverPlCache");
+#if defined(__ANDROID__)
+	AndroidCpu::AllowAllCores(); // thread auxiliar: pode usar todos os nucleos
+#endif
 	const auto dir = ActiveSettings::GetCachePath("shaderCache/driver/vk");
 	if (!fs::exists(dir))
 	{

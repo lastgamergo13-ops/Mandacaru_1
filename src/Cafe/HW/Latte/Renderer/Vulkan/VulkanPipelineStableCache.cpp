@@ -1,3 +1,6 @@
+#if defined(__ANDROID__)
+#include "Common/AndroidCpuAffinity.h"
+#endif
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineCompiler.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineStableCache.h"
@@ -425,6 +428,9 @@ bool VulkanPipelineStableCache::DeserializePipeline(MemStreamReader& memReader, 
 int VulkanPipelineStableCache::CompilerThread()
 {
 	SetThreadName("plCacheCompiler");
+#if defined(__ANDROID__)
+	AndroidCpu::AllowAllCores(); // thread auxiliar: pode usar todos os nucleos
+#endif
 	while (m_numCompilationThreads != 0)
 	{
 		std::vector<uint8> pipelineData = m_compilationQueue.pop();

@@ -1,3 +1,6 @@
+#if defined(__ANDROID__)
+#include "Common/AndroidCpuAffinity.h"
+#endif
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include <chrono>
 #include <algorithm>
@@ -562,6 +565,9 @@ void PPCRecompiler_recompileAtAddress(uint32 address)
 void PPCRecompiler_thread()
 {
 	SetThreadName("PPCRecompiler");
+#if defined(__ANDROID__)
+	AndroidCpu::AllowAllCores(); // thread auxiliar: pode usar todos os nucleos
+#endif
 #if PPCREC_FORCE_SYNCHRONOUS_COMPILATION
 	return;
 #endif

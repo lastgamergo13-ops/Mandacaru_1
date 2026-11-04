@@ -65,6 +65,25 @@ namespace AndroidCpu
 		return s_mask;
 	}
 
+	// Threads AUXILIARES (compilacao do JIT, de shaders e de pipelines, caches em disco) devem poder usar TODOS os nucleos. Como a mascara e herdada
+	// pelas threads filhas, quem e criado a partir de uma thread restrita nasce restrito; estas threads chamam isto para voltar a usar todos.
+	// So tem efeito se a opcao "Preferir nucleos rapidos" estiver ligada e houver restricao a desfazer.
+	inline void AllowAllCores()
+	{
+		if (!Diag::IsEnabled(Diag::Flag::PreferBigCores))
+			return;
+		if (FastCoreMask() == 0)
+			return;
+		const long n = sysconf(_SC_NPROCESSORS_CONF);
+		if (n <= 0)
+			return;
+		cpu_set_t set;
+		CPU_ZERO(&set);
+		for (long i = 0; i < n && i < CPU_SETSIZE; i++)
+			CPU_SET(i, &set);
+		sched_setaffinity(0, sizeof(set), &set);
+	}
+
 	inline void PreferFastCores(const char* who)
 	{
 		if (!Diag::IsEnabled(Diag::Flag::PreferBigCores))
