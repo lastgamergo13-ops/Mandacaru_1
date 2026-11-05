@@ -509,8 +509,15 @@ namespace coreinit
 
 	/* coreinit logging and string format */
 
+#if defined(__ANDROID__)
+	void AndroidLogRegionWrite(const char* fn, uint32 dst, uint32 srcOrValue, uint32 size, bool srcIsValue); // coreinit_Memory.cpp
+#endif
+
 	sint32 __os_snprintf(char* outputStr, sint32 maxLength, const char* formatStr)
 	{
+#if defined(__ANDROID__)
+		AndroidLogRegionWrite("__os_snprintf", memory_getVirtualOffsetFromPointer(outputStr), memory_getVirtualOffsetFromPointer((void*)formatStr), maxLength > 0 ? (uint32)maxLength : 0, false);
+#endif
 		ppc_define_va_list(3, 0);
 		sint32 r = ppc_vprintf(formatStr, outputStr, maxLength, &vargs);
 		return r;

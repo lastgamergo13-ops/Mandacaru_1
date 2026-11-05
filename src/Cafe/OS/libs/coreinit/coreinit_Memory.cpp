@@ -1,3 +1,7 @@
+#if defined(__ANDROID__)
+#include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
+#include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
+#endif
 #include "Common/DiagnosticsFlags.h"
 #include "Cafe/OS/common/OSCommon.h"
 #include "coreinit_Memory.h"
@@ -69,8 +73,48 @@ namespace coreinit
 		return true;
 	}
 
+#if defined(__ANDROID__)
+	// DIAGNOSTICO (Diag::Flag::GuestWatch): registra quando uma funcao de COPIA do emulador (memcpy/memmove/memset/OSBlockMove/OSBlockSet/snprintf)
+	// escreve na regiao das tabelas do alocador do Watch Dogs (0x10760000-0x10762000). Os crashes mostram ali fragmentos de TEXTO ("sndE", "xtur",
+	// "ryAr"): se o autor for uma funcao do emulador, aparece aqui com os argumentos e o chamador (LR); se nao aparecer, quem escreve e o proprio
+	// codigo do jogo.
+	void AndroidLogRegionWrite(const char* fn, uint32 dst, uint32 srcOrValue, uint32 size, bool srcIsValue)
+	{
+		if (!Diag::IsEnabled(Diag::Flag::GuestWatch))
+			return;
+		const uint64 end = (uint64)dst + (uint64)size;
+		if (end <= 0x10760000ull || dst >= 0x10762000u)
+			return;
+		static std::atomic<uint32> s_count{0};
+		if (s_count.fetch_add(1) >= 150)
+			return;
+		PPCInterpreter_t* h = PPCInterpreter_getCurrentInstance();
+		OSThread_t* cur = OSGetCurrentThread();
+		std::string preview;
+		if (!srcIsValue && memory_isAddressRangeAccessible(srcOrValue, 16))
+		{
+			const uint8* p = (const uint8*)memory_getPointerFromVirtualOffset(srcOrValue);
+			for (int i = 0; i < 16; i++)
+			{
+				preview += fmt::format("{:02x}", p[i]);
+				if ((i & 3) == 3)
+					preview += ' ';
+			}
+			preview += "\"";
+			for (int i = 0; i < 16; i++)
+				preview += (p[i] >= 0x20 && p[i] < 0x7F) ? (char)p[i] : '.';
+			preview += "\"";
+		}
+		cemuLog_log(LogType::Force, "[Escrita] {}(destino={:08x}, {}={:08x}, tamanho={:#x}) chamada de LR={:08x} thread=\"{}\" conteudo da origem: {}", fn, dst, srcIsValue ? "valor" : "origem", srcOrValue, size,
+			h ? h->spr.LR : 0u, (cur && cur->threadName.GetMPTR() != 0) ? cur->threadName.GetPtr() : "?", preview.empty() ? "-" : preview);
+	}
+#endif
+
 	void* coreinit_memset(void* dst, uint32 value, uint32 size)
 	{
+#if defined(__ANDROID__)
+		AndroidLogRegionWrite("memset", memory_getVirtualOffsetFromPointer(dst), value, size, true);
+#endif
 		memset(dst, value, size);
 		return dst;
 	}
@@ -83,6 +127,9 @@ namespace coreinit
 			// this may be a bug in the game. The last few bytes of the address space are writable, but wrap-around behavior of COS memcpy is unknown
 			cemu_assert_debug(false);
 		}
+#if defined(__ANDROID__)
+		AndroidLogRegionWrite("memcpy", dst.GetMPTR(), src.GetMPTR(), size, false);
+#endif
 		if (size > 0)
 		{
 			memcpy(dst.GetPtr(), src.GetPtr(), size);
@@ -95,6 +142,9 @@ namespace coreinit
 
 	void* coreinit_memmove(MEMPTR<void> dst, void* src, uint32 size)
 	{
+#if defined(__ANDROID__)
+		AndroidLogRegionWrite("memmove", dst.GetMPTR(), memory_getVirtualOffsetFromPointer(src), size, false);
+#endif
 		if (size > 0)
 		{
 			memmove(dst.GetPtr(), src, size);
@@ -106,6 +156,9 @@ namespace coreinit
 
 	void* OSBlockMove(MEMPTR<void> dst, MEMPTR<void> src, uint32 size, bool flushDC)
 	{
+#if defined(__ANDROID__)
+		AndroidLogRegionWrite("OSBlockMove", dst.GetMPTR(), src.GetMPTR(), size, false);
+#endif
 		if (size > 0)
 		{
 			memmove(dst.GetPtr(), src.GetPtr(), size);
@@ -117,6 +170,9 @@ namespace coreinit
 
 	void* OSBlockSet(MEMPTR<void> dst, uint32 value, uint32 size)
 	{
+#if defined(__ANDROID__)
+		AndroidLogRegionWrite("OSBlockSet", dst.GetMPTR(), value & 0xFF, size, true);
+#endif
 		memset(dst.GetPtr(), value&0xFF, size);
 		return dst.GetPtr();
 	}
