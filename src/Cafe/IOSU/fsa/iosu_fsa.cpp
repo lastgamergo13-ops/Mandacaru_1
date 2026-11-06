@@ -425,6 +425,14 @@ namespace iosu
 			{
 				FSStat_t* fsStat = &shimBuffer->response.cmdQueryInfo.queryStat.stat;
 				FSA_RESULT fsaStatus = __FSA_GetFileStat(client, path, fsStat);
+#if defined(__ANDROID__)
+				{
+					static std::atomic<uint32> s_statLogs{0};
+					if (s_statLogs.fetch_add(1) < 300)
+						cemuLog_log(LogType::Force, "[FS] consulta de info \"{}\" -> {} (FSA={:#x}) tamanho={} flag={:#x}", path, fsaStatus == FSA_RESULT::OK ? "OK" : "FALHOU", (uint32)(sint32)fsaStatus,
+							fsaStatus == FSA_RESULT::OK ? (uint32)fsStat->size : 0u, fsaStatus == FSA_RESULT::OK ? (uint32)static_cast<uint32>(fsStat->flag.value()) : 0u);
+				}
+#endif
 				return fsaStatus;
 			}
 			else if (queryType == FSA_QUERY_TYPE_FREESPACE)
@@ -461,6 +469,13 @@ namespace iosu
 				return FSA_RESULT::NOT_FOUND;
 			cemu_assert_debug(fsc_isFile(fscFile));
 			__FSA_GetStatFromFSCFile(fscFile, statOut);
+#if defined(__ANDROID__)
+			{
+				static std::atomic<uint32> s_statFileLogs{0};
+				if (s_statFileLogs.fetch_add(1) < 150)
+					cemuLog_log(LogType::Force, "[FS] tamanho do arquivo aberto handle={}: {}", (uint32)fileHandle, (uint32)statOut->size);
+			}
+#endif
 			return FSA_RESULT::OK;
 		}
 
@@ -604,6 +619,14 @@ namespace iosu
 			sint32 dirHandle = 0;
 			FSA_RESULT fsaResult = __FSAOpenDirectory(client, (const char*)shimBuffer->request.cmdOpenFile.path, &dirHandle);
 			shimBuffer->response.cmdOpenDir.dirHandleOutput = dirHandle;
+#if defined(__ANDROID__)
+			{
+				// DIAGNOSTICO: diretorios que o jogo lista (o texto que aparece nas tabelas do alocador sao NOMES de arquivos)
+				static std::atomic<uint32> s_dirLogs{0};
+				if (s_dirLogs.fetch_add(1) < 200)
+					cemuLog_log(LogType::Force, "[FS] abrir diretorio \"{}\" -> {} (FSA={:#x}, handle={})", (const char*)shimBuffer->request.cmdOpenFile.path, fsaResult == FSA_RESULT::OK ? "OK" : "FALHOU", (uint32)(sint32)fsaResult, dirHandle);
+			}
+#endif
 			return fsaResult;
 		}
 
@@ -630,6 +653,13 @@ namespace iosu
 			}
 			dirEntryOut->stat.flag = statFlag;
 			dirEntryOut->stat.permissions = 0x777;
+#if defined(__ANDROID__)
+			{
+				static std::atomic<uint32> s_entryLogs{0};
+				if (s_entryLogs.fetch_add(1) < 500)
+					cemuLog_log(LogType::Force, "[FS] entrada de diretorio handle={}: \"{}\" {} tamanho={}", (sint32)shimBuffer->request.cmdReadDir.dirHandle, dirEntryOut->name, fscDirEntry.isDirectory ? "(pasta)" : "(arquivo)", (uint32)fscDirEntry.fileSize);
+			}
+#endif
 			return FSA_RESULT::OK;
 		}
 
