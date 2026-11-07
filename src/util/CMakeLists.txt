@@ -1,3 +1,5 @@
+# TESTE: ON = fibers por corrotina no Android (usar com o perfil do jogo em nucleo unico). OFF = padrao (uma pthread por fiber).
+set(MANDACARU_FCONTEXT_FIBERS ON)
 add_library(CemuUtil
   boost/bluetooth.h
   bootSound/BootSoundReader.cpp
@@ -74,7 +76,14 @@ if(WIN32)
 	target_sources(CemuUtil PRIVATE MemMapper/MemMapperWin.cpp)
 	target_sources(CemuUtil PRIVATE SystemInfo/SystemInfoWin.cpp)
 elseif(UNIX)
-	target_sources(CemuUtil PRIVATE Fiber/FiberUnix.cpp)
+	if(ANDROID AND MANDACARU_FCONTEXT_FIBERS)
+		# TESTE: fibers por corrotina (boost.context), todas na mesma thread do sistema (modelo do Cemu de PC)
+		target_sources(CemuUtil PRIVATE Fiber/FiberFContext.cpp)
+		target_compile_definitions(CemuUtil PUBLIC MANDACARU_FCONTEXT_FIBERS=1)
+		target_link_libraries(CemuUtil PUBLIC Boost::context)
+	else()
+		target_sources(CemuUtil PRIVATE Fiber/FiberUnix.cpp)
+	endif()
 	target_sources(CemuUtil PRIVATE MemMapper/MemMapperUnix.cpp)
 	target_sources(CemuUtil PRIVATE SystemInfo/SystemInfoUnix.cpp)
 	if(NOT APPLE)
