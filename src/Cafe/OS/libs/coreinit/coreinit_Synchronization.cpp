@@ -1,3 +1,7 @@
+#if defined(__ANDROID__)
+#include "Common/DiagnosticsFlags.h"
+#include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
+#endif
 #include "Cafe/OS/common/OSCommon.h"
 #include "Cafe/OS/libs/coreinit/coreinit.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
@@ -266,6 +270,20 @@ namespace coreinit
 						MEMPTR<OSMutex>(mutex).GetMPTR(),
 						ownerThread ? (ownerNamePtr ? ownerNamePtr : "(unnamed)") : "(no owner?)",
 						ownerThread ? MEMPTR<OSThread_t>(ownerThread).GetMPTR() : 0);
+					// DIAGNOSTICO (Diag::Flag::GuestWatch): cada bloqueio de mutex (quem espera, quem segura, prioridades, estado do dono) - ajuda a
+					// entender o impasse entre StreamingThread0 e LoadingThread durante a tela preta. Ate 250 linhas.
+					if (Diag::IsEnabled(Diag::Flag::GuestWatch))
+					{
+						static std::atomic<uint32> s_mutexBlockLogs{0};
+						if (s_mutexBlockLogs.fetch_add(1) < 250)
+						{
+							PPCInterpreter_t* hCur = PPCInterpreter_getCurrentInstance();
+							cemuLog_log(LogType::Force, "[Mutex] bloqueio: \"{}\" (prioridade {}) espera mutex 0x{:08x} (contador {}) segurado por \"{}\" (prioridade {}, estado {}, suspensa={}) | chamado do jogo em LR=0x{:08x} tentativas={}",
+								__OSSafeThreadName(currentThread), (sint32)currentThread->effectivePriority, MEMPTR<OSMutex>(mutex).GetMPTR(), (sint32)mutex->lockCount,
+								ownerThread ? (ownerNamePtr ? ownerNamePtr : "(unnamed)") : "(sem dono?)", ownerThread ? (sint32)ownerThread->effectivePriority : -1,
+								ownerThread ? (sint32)(uint32)ownerThread->state.value() : -1, ownerThread ? (sint32)ownerThread->suspendCounter : -1, hCur ? hCur->spr.LR : 0u, (sint32)failedAttempts);
+						}
+					}
 				}
 #endif
 				mutex->threadQueue.queueAndWait(currentThread);
