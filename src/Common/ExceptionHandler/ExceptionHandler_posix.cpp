@@ -40,6 +40,8 @@
 #include <atomic>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+#include <cstring>
+#include <algorithm>
 
 // ---------------------------------------------------------------------------------------------
 // Watchdog: lightweight per-thread "what am I doing right now" status registry + a background
@@ -530,6 +532,54 @@ static bool CrashGuestReadBlock(uint32_t ppcAddr, uint32_t* outWords, size_t num
 	return true;
 }
 
+// Mandacaru: quando o "endereco" acessado sao 4 caracteres ASCII imprimiveis (ex.: 0x72794172 = "ryAr"), o jogo usou como ponteiro um
+// TEXTO que sobrescreveu uma estrutura. Procura esse texto na memoria do Wii U para descobrir de qual string ele veio
+// (a string completa e o contexto mostram qual parte do jogo/HLE escreveu isso).
+static void CrashScanTextValue(uint32_t value)
+{
+	char txt[5] = {(char)(value >> 24), (char)(value >> 16), (char)(value >> 8), (char)value, 0};
+	for (int i = 0; i < 4; i++)
+		if (txt[i] < 0x20 || txt[i] > 0x7e)
+			return;
+	CrashLog_WriteLine(fmt::format("[Texto] valor 0x{:08x} = texto \"{}\": procurando na memoria do Wii U (codigo/dados 0x02000000-0x10900000 e pool 0x4f000000-0x50000000)...", value, txt));
+	static const uint32_t ranges[][2] = {{0x02000000, 0x10900000}, {0x4f000000, 0x50000000}};
+	std::vector<uint32_t> buf(0x4000);
+	int hits = 0;
+	for (auto& r : ranges)
+	{
+		for (uint32_t base = r[0]; base < r[1] && hits < 16; base += 0x10000)
+		{
+			if (!CrashGuestReadBlock(base, buf.data(), buf.size()))
+				continue;
+			const uint8_t* bytes = (const uint8_t*)buf.data();
+			// buf foi convertido para host-endian palavra a palavra; reconstroi os bytes na ordem do Wii U
+			std::vector<uint8_t> raw(0x10000);
+			for (size_t k = 0; k < buf.size(); k++)
+			{
+				raw[k * 4 + 0] = (uint8_t)(buf[k] >> 24);
+				raw[k * 4 + 1] = (uint8_t)(buf[k] >> 16);
+				raw[k * 4 + 2] = (uint8_t)(buf[k] >> 8);
+				raw[k * 4 + 3] = (uint8_t)buf[k];
+			}
+			(void)bytes;
+			for (size_t k = 0; k + 4 <= raw.size() && hits < 16; k++)
+			{
+				if (memcmp(&raw[k], txt, 4) != 0)
+					continue;
+				const uint32_t at = base + (uint32_t)k;
+				size_t from = k >= 24 ? k - 24 : 0;
+				size_t to = std::min<size_t>(raw.size(), k + 4 + 28);
+				std::string ctx;
+				for (size_t j = from; j < to; j++)
+					ctx += (raw[j] >= 0x20 && raw[j] <= 0x7e) ? (char)raw[j] : '.';
+				CrashLog_WriteLine(fmt::format("[Texto]   0x{:08x} (bytes {}) contexto: \"{}\"", at, (at & 3) == 0 ? "alinhado" : "NAO alinhado", ctx));
+				hits++;
+			}
+		}
+	}
+	CrashLog_WriteLine(fmt::format("[Texto]   {} ocorrencia(s) encontrada(s){}", hits, hits == 0 ? " (o texto nao existe inteiro na memoria: foi montado por partes ou ja foi sobrescrito)" : ""));
+}
+
 // Mandacaru: analisa o ponto de chamada que levou ao ponteiro nulo.
 //  - da nome (simbolo) ao IP, LR e CTR;
 //  - nas instrucoes antes do LR, decodifica "bl" (alvo + simbolo) e "lwz rX,d(r13)" (leitura de variavel global do jogo);
@@ -608,7 +658,10 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 		uintptr_t fa = reinterpret_cast<uintptr_t>(info->si_addr);
 		uintptr_t mb = reinterpret_cast<uintptr_t>(memory_base);
 		if (fa >= mb && fa < mb + 0x100000000ull)
+		{
 			CrashLog_WriteLine(fmt::format("[Convidado] endereco do Wii U acessado quando falhou = 0x{:08x} (endereco baixo/nulo = o jogo usou um ponteiro nulo ou invalido)", (uint32_t)(fa - mb)));
+			CrashScanTextValue((uint32_t)(fa - mb));
+		}
 		else
 			CrashLog_WriteLine("[Convidado] o endereco que falhou NAO esta dentro da memoria do Wii U (a falha foi no codigo nativo do emulador/driver)");
 	}
