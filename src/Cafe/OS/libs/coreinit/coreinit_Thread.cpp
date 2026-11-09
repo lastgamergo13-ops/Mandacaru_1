@@ -278,7 +278,7 @@ namespace coreinit
 		uint32 newThread = 0;   // MPTR da thread que passou a ocupar o slot (0 = slot limpo)
 		uint32 callerOwner = 0; // MPTR da thread dona da instancia PPC que executou a troca (0 = sem instancia)
 		uint32 callerUPIR = 99; // UPIR da instancia PPC de quem executou a troca (99 = sem instancia)
-		int32 tid = 0;          // tid do host que executou a troca
+		sint32 tid = 0;          // tid do host que executou a troca
 		uint32 flags = 0;       // 1 = slot ja estava ocupado por OUTRA thread, 2 = limpou o slot de OUTRA thread
 	};
 	static constexpr uint32 kAndroidSchedRingSize = 512;
@@ -663,7 +663,7 @@ namespace coreinit
 		e.newThread = newThread ? memory_getVirtualOffsetFromPointer(newThread) : 0u;
 		e.callerOwner = callerOwner ? memory_getVirtualOffsetFromPointer(callerOwner) : 0u;
 		e.callerUPIR = inst ? (uint32)inst->spr.UPIR : 99u;
-		e.tid = (int32)syscall(SYS_gettid);
+		e.tid = (sint32)syscall(SYS_gettid);
 		e.flags = 0;
 		if (newThread && oldThread && newThread != oldThread)
 			e.flags = 1;
@@ -692,7 +692,7 @@ namespace coreinit
 			return;
 		cemuLog_log(LogType::Force, "[Escalonador] OSGetCurrentThread CORRIGIDO #{}: slot do nucleo UPIR={} dizia \"{}\"({:08x}) mas a instancia PPC pertence a \"{}\"({:08x}) | tid={} IP={:08x} LR={:08x} | slots: n0=\"{}\" n1=\"{}\" n2=\"{}\"",
 			n + 1, (uint32)inst->spr.UPIR, AndroidWatchThreadName(slotThread), slotThread ? memory_getVirtualOffsetFromPointer(slotThread) : 0u,
-			AndroidWatchThreadName(ownThread), memory_getVirtualOffsetFromPointer(ownThread), (int32)syscall(SYS_gettid), inst->instructionPointer, inst->spr.LR,
+			AndroidWatchThreadName(ownThread), memory_getVirtualOffsetFromPointer(ownThread), (sint32)syscall(SYS_gettid), inst->instructionPointer, inst->spr.LR,
 			AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]));
 	}
 
