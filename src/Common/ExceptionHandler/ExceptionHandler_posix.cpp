@@ -17,6 +17,7 @@
 
 #if defined(__ANDROID__)
 #include "Cafe/HW/Espresso/PPCState.h"
+#include "Cafe/OS/RPL/rpl_symbol_storage.h"
 #include "Cafe/HW/Espresso/Recompiler/PPCRecompiler.h"
 #endif
 
@@ -505,6 +506,98 @@ static bool CrashGuestReadU32(uint32_t ppcAddr, uint32_t& out)
 	return true;
 }
 
+// Mandacaru: nome "biblioteca.funcao+offset" de um endereco do jogo (vazio se nao ha simbolo)
+static std::string CrashGuestSymbol(uint32_t addr)
+{
+	RPLStoredSymbol* sym = rplSymbolStorage_getByClosestAddress(addr);
+	if (!sym || !sym->symbolName)
+		return std::string();
+	return fmt::format("{}.{}+0x{:x}", sym->libName ? (const char*)sym->libName : "?", (const char*)sym->symbolName, addr - sym->address);
+}
+
+// Le um bloco de memoria do Wii U (big-endian) para um buffer local. Retorna false se falhar.
+static bool CrashGuestReadBlock(uint32_t ppcAddr, uint32_t* outWords, size_t numWords)
+{
+	if (!memory_base)
+		return false;
+	struct iovec local = { outWords, numWords * 4 };
+	struct iovec remote = { (void*)((uintptr_t)memory_base + ppcAddr), numWords * 4 };
+	long n = syscall(SYS_process_vm_readv, (long)getpid(), &local, 1L, &remote, 1L, 0L);
+	if (n != (long)(numWords * 4))
+		return false;
+	for (size_t i = 0; i < numWords; i++)
+		outWords[i] = __builtin_bswap32(outWords[i]);
+	return true;
+}
+
+// Mandacaru: analisa o ponto de chamada que levou ao ponteiro nulo.
+//  - da nome (simbolo) ao IP, LR e CTR;
+//  - nas instrucoes antes do LR, decodifica "bl" (alvo + simbolo) e "lwz rX,d(r13)" (leitura de variavel global do jogo);
+//  - varre o codigo do jogo procurando "stw rS,d(r13)" com o MESMO deslocamento d: sao as funcoes que DEVERIAM ter preenchido
+//    essa global (se a global esta nula, a funcao que a inicializa nao rodou antes, ou rodou depois).
+static void CrashAnalyzeNullCallSite(const PPCInterpreter_t* h)
+{
+	CrashLog_WriteLine(fmt::format("[Analise] IP  = 0x{:08x} {}", h->instructionPointer, CrashGuestSymbol(h->instructionPointer)));
+	CrashLog_WriteLine(fmt::format("[Analise] LR  = 0x{:08x} {}", h->spr.LR, CrashGuestSymbol(h->spr.LR)));
+	CrashLog_WriteLine(fmt::format("[Analise] CTR = 0x{:08x} {}", h->spr.CTR, CrashGuestSymbol(h->spr.CTR)));
+	std::vector<int32_t> globalOffsets;
+	for (int i = -12; i <= 1; i++)
+	{
+		const uint32_t at = h->spr.LR + i * 4;
+		uint32_t w;
+		if (!CrashGuestReadU32(at, w))
+			continue;
+		const uint32_t op = w >> 26;
+		if (op == 18 && (w & 1)) // bl
+		{
+			int32_t li = (int32_t)(w & 0x03FFFFFC);
+			if (li & 0x02000000)
+				li |= 0xFC000000;
+			const uint32_t target = (w & 2) ? (uint32_t)li : (at + li);
+			CrashLog_WriteLine(fmt::format("[Analise]   em 0x{:08x}: bl 0x{:08x} {}", at, target, CrashGuestSymbol(target)));
+		}
+		else if (op == 32 && ((w >> 16) & 31) == 13) // lwz rD,d(r13)
+		{
+			const int32_t d = (int16_t)(w & 0xFFFF);
+			CrashLog_WriteLine(fmt::format("[Analise]   em 0x{:08x}: lwz r{},{}(r13) = variavel global do jogo no endereco 0x{:08x}", at, (w >> 21) & 31, d, (uint32_t)(h->gpr[13] + d)));
+			bool known = false;
+			for (int32_t o : globalOffsets) known |= (o == d);
+			if (!known)
+				globalOffsets.push_back(d);
+		}
+	}
+	if (globalOffsets.empty())
+		return;
+	// varre 0x02000000..0x08000000 (codigo do RPX) em blocos de 64 KB
+	std::vector<uint32_t> buf(0x4000);
+	int hits = 0;
+	uint32_t scanned = 0;
+	for (uint32_t base = 0x02000000; base < 0x08000000 && hits < 24; base += 0x10000)
+	{
+		if (!CrashGuestReadBlock(base, buf.data(), buf.size()))
+			continue;
+		scanned += 0x10000;
+		for (size_t k = 0; k < buf.size() && hits < 24; k++)
+		{
+			const uint32_t w = buf[k];
+			const uint32_t op = w >> 26;
+			if ((op != 36 && op != 37) || ((w >> 16) & 31) != 13) // stw / stwu com rA = r13
+				continue;
+			const int32_t d = (int16_t)(w & 0xFFFF);
+			for (int32_t o : globalOffsets)
+			{
+				if (o != d)
+					continue;
+				const uint32_t at = base + (uint32_t)k * 4;
+				CrashLog_WriteLine(fmt::format("[Analise]   ESCRITOR da global {}(r13): 0x{:08x} stw r{},{}(r13)  em {}", d, at, (w >> 21) & 31, d, CrashGuestSymbol(at)));
+				hits++;
+			}
+		}
+	}
+	CrashLog_WriteLine(fmt::format("[Analise]   varridos {} KB de codigo do jogo; {} escritor(es) estatico(s) encontrado(s) para as globais acima{}", scanned / 1024, hits,
+		hits == 0 ? " (nenhum: a global e escrita por outro registrador/ponteiro, ou via funcao auxiliar)" : ""));
+}
+
 // Imprime: endereco PPC acessado, instrucoes do bloco que falhou e a cadeia de chamadas do jogo (pilha PPC).
 static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 {
@@ -549,6 +642,7 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 		}
 		CrashLog_WriteLine(code);
 	}
+	CrashAnalyzeNullCallSite(h);
 	uint32_t sp = h->gpr[1];
 	for (int depth = 0; depth < 16; depth++)
 	{
