@@ -131,6 +131,9 @@ namespace coreinit
 	{
 		OSHostThread(OSThread_t* thread) : m_thread(thread), m_fiber((void(*)(void*))__OSFiberThreadEntry, this, this)
 		{
+			// Mandacaru: marca a instancia PPC com a thread dona (ver PPCState.h / OSGetCurrentThread)
+			ppcInstance.ownerOSThread = thread;
+			ppcInstance.ownerOSThreadMagic = PPCInterpreter_t::kOwnerOSThreadMagic;
 		}
 
 		~OSHostThread() = default;
@@ -263,10 +266,39 @@ namespace coreinit
 	// thread
 	OSThread_t* __currentCoreThread[3] = {};
 
+#if defined(__ANDROID__)
+	// ---- Mandacaru (diagnostico + correcao): thread atual por nucleo ----
+	// Anel com as ultimas alteracoes do slot __currentCoreThread[nucleo] (quem trocou, de qual thread para qual, em que pthread).
+	// Impresso no log de crash por AndroidCrashDumpScheduler(). As funcoes sao definidas mais abaixo (usam helpers do vigia).
+	struct AndroidSchedEvent
+	{
+		uint64 ns = 0;          // relogio monotonico (ns)
+		uint32 core = 0;        // nucleo cujo slot mudou
+		uint32 oldThread = 0;   // MPTR da thread que estava no slot
+		uint32 newThread = 0;   // MPTR da thread que passou a ocupar o slot (0 = slot limpo)
+		uint32 callerOwner = 0; // MPTR da thread dona da instancia PPC que executou a troca (0 = sem instancia)
+		uint32 callerUPIR = 99; // UPIR da instancia PPC de quem executou a troca (99 = sem instancia)
+		int32 tid = 0;          // tid do host que executou a troca
+		uint32 flags = 0;       // 1 = slot ja estava ocupado por OUTRA thread, 2 = limpou o slot de OUTRA thread
+	};
+	static constexpr uint32 kAndroidSchedRingSize = 512;
+	static AndroidSchedEvent s_androidSchedRing[kAndroidSchedRingSize];
+	static std::atomic<uint32> s_androidSchedRingPos{0};
+	static std::atomic<uint32> s_androidThreadMismatchCount{0};
+	static std::atomic<uint32> s_androidSlotConflictCount{0};
+	static void AndroidRecordSchedEvent(uint32 coreIndex, OSThread_t* oldThread, OSThread_t* newThread);
+	static void AndroidReportThreadMismatch(PPCInterpreter_t* inst, OSThread_t* slotThread, OSThread_t* ownThread);
+#endif
+
 	void OSSetCurrentThread(uint32 coreIndex, OSThread_t* thread)
 	{
 		if (coreIndex < 3)
+		{
+#if defined(__ANDROID__)
+			AndroidRecordSchedEvent(coreIndex, __currentCoreThread[coreIndex], thread);
+#endif
 			__currentCoreThread[coreIndex] = thread;
+		}
 	}
 
 	OSThread_t* OSGetCurrentThread()
@@ -274,7 +306,24 @@ namespace coreinit
 		PPCInterpreter_t* currentInstance = PPCInterpreter_getCurrentInstance();
 		if (currentInstance == nullptr)
 			return nullptr;
-		return __currentCoreThread[currentInstance->spr.UPIR];
+		OSThread_t* slotThread = __currentCoreThread[currentInstance->spr.UPIR];
+#if defined(__ANDROID__)
+		// CORRECAO (crashes do Watch Dogs): no Android cada thread do jogo e uma pthread propria e o "thread atual" do nucleo vive num slot
+		// global. Se o slot estiver nulo/errado enquanto a thread RODA (visto nos logs: nucleos 0/2 nulos com codigo do jogo executando),
+		// OSLockMutex gravava owner=nullptr (ou o dono errado): dois threads entravam juntos no alocador do jogo (pool corrompido) e
+		// o jogo recebia OSGetCurrentThread()==NULL (ponteiro nulo + 0x494 = area crt do OSThread). A instancia PPC corrente pertence
+		// a UMA unica thread do jogo, entao ela e a fonte de verdade.
+		if (currentInstance->ownerOSThreadMagic == PPCInterpreter_t::kOwnerOSThreadMagic)
+		{
+			OSThread_t* ownThread = static_cast<OSThread_t*>(currentInstance->ownerOSThread);
+			if (ownThread != nullptr && ownThread != slotThread)
+			{
+				AndroidReportThreadMismatch(currentInstance, slotThread, ownThread);
+				return ownThread;
+			}
+		}
+#endif
+		return slotThread;
 	}
 
 	void threadEntry(PPCInterpreter_t* hCPU)
@@ -590,6 +639,96 @@ namespace coreinit
 		if (!t)
 			return "-";
 		return t->threadName.GetMPTR() != 0 ? t->threadName.GetPtr() : "?";
+	}
+
+	static OSThread_t* AndroidInstanceOwner(PPCInterpreter_t* inst)
+	{
+		if (!inst || inst->ownerOSThreadMagic != PPCInterpreter_t::kOwnerOSThreadMagic)
+			return nullptr;
+		return static_cast<OSThread_t*>(inst->ownerOSThread);
+	}
+
+	// Registra no anel cada alteracao do slot "thread atual do nucleo" e alerta (ate 40x) quando ela e anormal:
+	//  - uma thread e carregada num nucleo cujo slot AINDA aponta para outra thread (dois fibers ativos no mesmo nucleo);
+	//  - uma thread limpa o slot que pertence a outra thread.
+	static void AndroidRecordSchedEvent(uint32 coreIndex, OSThread_t* oldThread, OSThread_t* newThread)
+	{
+		PPCInterpreter_t* inst = PPCInterpreter_getCurrentInstance();
+		OSThread_t* callerOwner = AndroidInstanceOwner(inst);
+		const uint32 pos = s_androidSchedRingPos.fetch_add(1, std::memory_order_relaxed);
+		AndroidSchedEvent& e = s_androidSchedRing[pos % kAndroidSchedRingSize];
+		e.ns = (uint64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		e.core = coreIndex;
+		e.oldThread = oldThread ? memory_getVirtualOffsetFromPointer(oldThread) : 0u;
+		e.newThread = newThread ? memory_getVirtualOffsetFromPointer(newThread) : 0u;
+		e.callerOwner = callerOwner ? memory_getVirtualOffsetFromPointer(callerOwner) : 0u;
+		e.callerUPIR = inst ? (uint32)inst->spr.UPIR : 99u;
+		e.tid = (int32)syscall(SYS_gettid);
+		e.flags = 0;
+		if (newThread && oldThread && newThread != oldThread)
+			e.flags = 1;
+		else if (!newThread && oldThread && callerOwner && callerOwner != oldThread)
+			e.flags = 2;
+		if (e.flags != 0)
+		{
+			const uint32 n = s_androidSlotConflictCount.fetch_add(1, std::memory_order_relaxed);
+			if (n < 40)
+			{
+				cemuLog_log(LogType::Force, "[Escalonador] ALERTA #{}: {} | nucleo={} slot_antes=\"{}\"({:08x}) slot_depois=\"{}\"({:08x}) | quem fez: dona_da_instancia=\"{}\"({:08x}) UPIR={} tid={}",
+					n + 1,
+					e.flags == 1 ? "thread carregada em nucleo cujo slot ainda aponta para OUTRA thread (dois fibers ativos no mesmo nucleo)" : "slot do nucleo limpo por uma thread que NAO era a dona dele",
+					coreIndex, AndroidWatchThreadName(oldThread), e.oldThread, AndroidWatchThreadName(newThread), e.newThread,
+					AndroidWatchThreadName(callerOwner), e.callerOwner, e.callerUPIR, e.tid);
+			}
+		}
+	}
+
+	// OSGetCurrentThread() achou o slot do nucleo diferente da thread dona da instancia PPC corrente: devolvemos a dona (correcao)
+	// e registramos com todos os detalhes (ate 30 vezes, depois 1 a cada 1024).
+	static void AndroidReportThreadMismatch(PPCInterpreter_t* inst, OSThread_t* slotThread, OSThread_t* ownThread)
+	{
+		const uint32 n = s_androidThreadMismatchCount.fetch_add(1, std::memory_order_relaxed);
+		if (n >= 30 && (n & 1023) != 0)
+			return;
+		cemuLog_log(LogType::Force, "[Escalonador] OSGetCurrentThread CORRIGIDO #{}: slot do nucleo UPIR={} dizia \"{}\"({:08x}) mas a instancia PPC pertence a \"{}\"({:08x}) | tid={} IP={:08x} LR={:08x} | slots: n0=\"{}\" n1=\"{}\" n2=\"{}\"",
+			n + 1, (uint32)inst->spr.UPIR, AndroidWatchThreadName(slotThread), slotThread ? memory_getVirtualOffsetFromPointer(slotThread) : 0u,
+			AndroidWatchThreadName(ownThread), memory_getVirtualOffsetFromPointer(ownThread), (int32)syscall(SYS_gettid), inst->instructionPointer, inst->spr.LR,
+			AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]));
+	}
+
+	// Chamado pelo handler de crash (ExceptionHandler_posix.cpp). Usa so leituras - nunca bloqueia nem aloca alem do fmt.
+	void AndroidCrashDumpScheduler(PPCInterpreter_t* hCPU)
+	{
+		CrashLog_WriteLine("[Escalonador] --- thread atual por nucleo no instante do crash ---");
+		for (uint32 i = 0; i < 3; i++)
+		{
+			OSThread_t* t = __currentCoreThread[i];
+			CrashLog_WriteLine(fmt::format("[Escalonador]   slot do nucleo {}: \"{}\" ({:08x})", i, AndroidWatchThreadName(t), t ? memory_getVirtualOffsetFromPointer(t) : 0u));
+		}
+		if (hCPU)
+		{
+			OSThread_t* owner = AndroidInstanceOwner(hCPU);
+			const uint32 upir = (uint32)hCPU->spr.UPIR;
+			OSThread_t* slot = upir < 3 ? __currentCoreThread[upir] : nullptr;
+			CrashLog_WriteLine(fmt::format("[Escalonador]   thread que crashou: dona da instancia PPC=\"{}\" ({:08x}) | UPIR={} | slot desse nucleo=\"{}\" -> {}",
+				AndroidWatchThreadName(owner), owner ? memory_getVirtualOffsetFromPointer(owner) : 0u, upir, AndroidWatchThreadName(slot),
+				owner == nullptr ? "dona desconhecida" : (owner == slot ? "slot CORRETO" : "slot ERRADO/NULO (esta e a causa provavel: OSGetCurrentThread devolveria outra thread)")));
+		}
+		CrashLog_WriteLine(fmt::format("[Escalonador]   OSGetCurrentThread corrigidos: {} | conflitos de slot detectados: {}",
+			s_androidThreadMismatchCount.load(), s_androidSlotConflictCount.load()));
+		const uint32 total = s_androidSchedRingPos.load();
+		const uint32 count = std::min<uint32>(total, 64);
+		if (count == 0)
+			return;
+		const uint64 lastNs = s_androidSchedRing[(total - 1) % kAndroidSchedRingSize].ns;
+		CrashLog_WriteLine(fmt::format("[Escalonador]   ultimas {} trocas do slot de nucleo (de {}; a mais recente por ultimo; tempo = ms antes da ultima):", count, total));
+		for (uint32 k = total - count; k < total; k++)
+		{
+			const AndroidSchedEvent& e = s_androidSchedRing[k % kAndroidSchedRingSize];
+			CrashLog_WriteLine(fmt::format("[Escalonador]     #{} -{:.3f}ms nucleo={} {:08x} -> {:08x} | quem: dona={:08x} UPIR={} tid={}{}",
+				k, (double)(lastNs - e.ns) / 1.0e6, e.core, e.oldThread, e.newThread, e.callerOwner, e.callerUPIR, e.tid,
+				e.flags == 1 ? "  <-- SLOT JA OCUPADO POR OUTRA THREAD" : (e.flags == 2 ? "  <-- LIMPOU SLOT DE OUTRA THREAD" : "")));
+		}
 	}
 
 	// Estado PPC (IP, LR e cadeia de retornos da pilha) da thread que roda num nucleo. Usado pelo vigia no instante em que um ponteiro

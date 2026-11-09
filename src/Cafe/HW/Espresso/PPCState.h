@@ -104,6 +104,14 @@ struct PPCInterpreter_t
 
 	// extra variables for recompiler
 	void* rspTemp;
+
+	// Mandacaru: OSThread_t* DONO desta instancia PPC (cada thread do jogo tem seu proprio OSHostThread/instancia).
+	// Usado por OSGetCurrentThread() como fonte de verdade: o slot global __currentCoreThread[nucleo] pode ficar nulo/errado
+	// quando dois fibers se sobrepoem no mesmo nucleo, e isso quebrava a exclusao mutua dos mutexes do jogo.
+	// So vale se ownerOSThreadMagic == kOwnerOSThreadMagic (instancias fora de OSHostThread nao inicializam estes campos).
+	void* ownerOSThread;
+	uint64 ownerOSThreadMagic;
+	static constexpr uint64 kOwnerOSThreadMagic = 0x004D414E44414352ull; // "MANDACR"
 };
 
 // parameter access (legacy C style)

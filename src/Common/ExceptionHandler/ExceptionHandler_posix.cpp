@@ -607,6 +607,10 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 }
 #endif
 
+#if defined(__ANDROID__)
+namespace coreinit { void AndroidCrashDumpScheduler(PPCInterpreter_t* hCPU); } // coreinit_Thread.cpp
+#endif
+
 void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 {
 	const char* codeDescription = AndroidSignalCodeToString(sig, info->si_code);
@@ -757,6 +761,19 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 	// crash - mesmo que essa thread específica não tenha hCPU disponível acima
 	PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog();
 	PPCRecompiler_dumpRecentHleCallHistoryToCrashLog();
+#if defined(__ANDROID__)
+	// Mandacaru: qual thread do jogo o escalonador achava que rodava em cada nucleo + anel das ultimas trocas (ver coreinit_Thread.cpp)
+	PPCInterpreter_t* schedCPU = PPCInterpreter_getCurrentInstance();
+#if defined(__aarch64__)
+	if (!schedCPU)
+	{
+		const uint64_t x29Sched = (uint64_t)static_cast<ucontext_t*>(context)->uc_mcontext.regs[29];
+		if (x29Sched >= 0x1000000)
+			schedCPU = reinterpret_cast<PPCInterpreter_t*>(x29Sched);
+	}
+#endif
+	coreinit::AndroidCrashDumpScheduler(schedCPU);
+#endif
 }
 
 void AndroidPrintLoadedLibraries()
