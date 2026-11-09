@@ -772,6 +772,18 @@ namespace coreinit
 		return s;
 	}
 
+	// Mesmo bloco em ASCII (nao imprimivel = '.'): mostra qual STRING vazou para dentro de uma estrutura corrompida.
+	static std::string AndroidWatchDumpAscii(uint32 ppcAddr, uint32 bytes)
+	{
+		std::vector<uint8> buf(bytes);
+		if (!AndroidWatchReadBlock(ppcAddr, buf.data(), bytes))
+			return "(nao legivel)";
+		std::string s;
+		for (uint32 i = 0; i < bytes; i++)
+			s += (buf[i] >= 0x20 && buf[i] < 0x7F) ? (char)buf[i] : '.';
+		return s;
+	}
+
 	// Registradores (r3..r12 e r28..r31) da thread PPC de um nucleo e o conteudo (16 palavras a partir de endereco-16) dos que apontam para a
 	// memoria do jogo: mostra o objeto que esta sendo liberado e seu "vtable"/campos vizinhos no instante da corrupcao.
 	static std::string AndroidWatchGuestObjects(OSThread_t* thread)
@@ -911,7 +923,16 @@ namespace coreinit
 											if (sBlocks > 0 && sBlocks <= 8)
 												r += fmt::format("| ultima Store: copia no LC [{:08x}] = {} | memoria principal [{:08x}] = {}", sSrc, AndroidWatchDumpWords(sSrc, sBlocks * 32), sDst, AndroidWatchDumpWords(sDst, sBlocks * 32));
 											return r;
-										}());
+										}()
+						// O Pop do alocador copia o 1o campo do bloco livre (proximo) para a cabeca da lista: se a cabeca virou texto, o TEXTO ESTA NO INICIO DO BLOCO LIVRE antigo
+						// (estouro de buffer do bloco vizinho ou uso apos liberar). Mostra 0x60 bytes antes e 0x20 depois.
+						+ [&]() -> std::string
+						{
+							if (!oldWasPointer || oldV < 0x100 || oldV >= 0x4fffffe0)
+								return std::string();
+							const uint32 from = oldV - 0x60;
+							return fmt::format(" | BLOCO LIVRE ANTIGO {:08x}: [{:08x}..{:08x}) palavras: {}| ascii: \"{}\"", oldV, from, from + 0x80, AndroidWatchDumpWords(from, 0x80), AndroidWatchDumpAscii(from, 0x80));
+						}());
 								}
 							}
 						}
