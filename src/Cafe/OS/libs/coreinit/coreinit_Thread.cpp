@@ -3,6 +3,7 @@
 #include "Cafe/OS/common/OSCommon.h"
 #include "Cafe/HW/Espresso/PPCCallback.h"
 #include "Cafe/OS/RPL/rpl.h"
+#include "Cafe/OS/RPL/rpl_symbol_storage.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
 #include "Common/DiagnosticsFlags.h"
 #if defined(__ANDROID__)
@@ -733,6 +734,15 @@ namespace coreinit
 
 	// Estado PPC (IP, LR e cadeia de retornos da pilha) da thread que roda num nucleo. Usado pelo vigia no instante em que um ponteiro
 	// do alocador do jogo vira lixo: mostra QUEM (que funcao do jogo) estava rodando, p.ex. o chamador do free()/malloc().
+	// "<funcao+offset>" do codigo do jogo/bibliotecas para um endereco PPC (vazio se nao ha simbolo)
+	static std::string AndroidWatchSym(uint32 addr)
+	{
+		RPLStoredSymbol* sym = rplSymbolStorage_getByClosestAddress(addr);
+		if (!sym || !sym->symbolName || addr < sym->address || addr - sym->address > 0x4000)
+			return std::string();
+		return fmt::format("<{}+0x{:x}>", (const char*)sym->symbolName, addr - sym->address);
+	}
+
 	static std::string AndroidWatchGuestState(OSThread_t* thread)
 	{
 		if (!thread)
@@ -741,7 +751,7 @@ namespace coreinit
 		if (it == s_threadToFiber.end() || !it->second)
 			return "?";
 		PPCInterpreter_t* h = &it->second->ppcInstance;
-		std::string s = fmt::format("\"{}\" IP={:08x} LR={:08x} pilha:", AndroidWatchThreadName(thread), h->instructionPointer, h->spr.LR);
+		std::string s = fmt::format("\"{}\" IP={:08x}{} LR={:08x}{} pilha:", AndroidWatchThreadName(thread), h->instructionPointer, AndroidWatchSym(h->instructionPointer), h->spr.LR, AndroidWatchSym(h->spr.LR));
 		uint32 sp = h->gpr[1];
 		for (int depth = 0; depth < 8; depth++)
 		{
@@ -750,7 +760,7 @@ namespace coreinit
 				break;
 			if (!AndroidWatchReadU32(sp, back) || back <= sp || back >= 0x50000000u || !AndroidWatchReadU32(back + 4, lr))
 				break;
-			s += fmt::format(" {:08x}", lr);
+			s += fmt::format(" {:08x}{}", lr, AndroidWatchSym(lr));
 			sp = back;
 		}
 		return s;
@@ -948,7 +958,10 @@ namespace coreinit
 							cemuLog_log(LogType::Force, "[Audio] ultimos 2 s: callbacks={} sem_dados_do_jogo(silencio)={} pico={}/32768", (uint32)g_diagAudioCallbacks.exchange(0), (uint32)g_diagAudioSilentCallbacks.exchange(0), (uint32)g_diagAudioPeak.exchange(0));
 						}
 					}
-					std::this_thread::sleep_for(std::chrono::microseconds(Diag::IsEnabled(Diag::Flag::GuestWatch) ? 150 : 300));
+					if (Diag::IsEnabled(Diag::Flag::GuestWatch))
+						std::this_thread::yield(); // leitura continua: pega a escrita em poucos microssegundos, com a pilha de quem acabou de liberar/escrever
+					else
+						std::this_thread::sleep_for(std::chrono::microseconds(300));
 				}
 			}).detach();
 		});
