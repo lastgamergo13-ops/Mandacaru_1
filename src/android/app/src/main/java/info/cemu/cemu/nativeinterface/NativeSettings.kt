@@ -65,6 +65,14 @@ object NativeSettings {
         const val REDUCE_MEM_256 = 12
         const val REDUCE_MEM_384 = 13
         const val REDUCE_MEM_512 = 14
+        const val JIT_BISECT_1 = 15 // 02000000-07000000
+        const val JIT_BISECT_2 = 16 // 02030000-020A0000
+        const val JIT_BISECT_3 = 17 // 02030000-02070000
+        const val JIT_BISECT_4 = 18 // 02070000-020A0000
+        const val JIT_BISECT_5 = 19 // 02030000-02050000
+        const val JIT_BISECT_6 = 20 // 02050000-02070000
+        const val JIT_BISECT_7 = 21 // 02070000-02080000
+        const val JIT_BISECT_8 = 22 // 02080000-020A0000
     }
 
     @JvmStatic

@@ -3,6 +3,9 @@
 #endif
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include <chrono>
+#include <fstream>
+#include <vector>
+#include <cstdio>
 #include <algorithm>
 #include <atomic>
 #include <mutex>
@@ -18,6 +21,7 @@
 #include "util/containers/RangeStore.h"
 #include "Cafe/OS/libs/coreinit/coreinit_CodeGen.h"
 #include "config/ActiveSettings.h"
+#include "Common/DiagnosticsFlags.h"
 #include "config/LaunchSettings.h"
 #include "Common/ExceptionHandler/ExceptionHandler.h"
 #include "Common/cpu_features.h"
@@ -106,9 +110,62 @@ static std::mutex s_singleRecompilationMutex;
 
 void PPCRecompiler_recompileAtAddress(uint32 address);
 
+// Mandacaru: BISSECAO DO JIT. Se existir o arquivo "diag_jit_skip.txt" na pasta de dados do usuario, os enderecos de codigo do jogo nele
+// listados NUNCA sao recompilados: rodam no INTERPRETADOR (o resto continua no JIT). Formato: uma faixa hexadecimal por linha
+// ("02060000-020A0000"; linhas vazias e com # sao ignoradas). Serve para achar qual funcao o JIT traduz errado: se o crash some com
+// uma faixa interpretada, o bug esta nela; estreite a faixa pela metade a cada teste.
+struct PPCRecDiagSkipRange { uint32 lo; uint32 hi; };
+static const std::vector<PPCRecDiagSkipRange>& PPCRecompiler_getDiagSkipRanges()
+{
+	static std::vector<PPCRecDiagSkipRange> ranges;
+	static std::once_flag once;
+	std::call_once(once, []()
+	{
+		// 1) chaves da aba Logs e Diagnostico > "Teste do JIT" (Diag::Flag::JitBisect1..8)
+		for (int fi = (int)Diag::Flag::JitBisect1; fi <= (int)Diag::Flag::JitBisect8; fi++)
+		{
+			uint32_t lo = 0, hi = 0;
+			if (Diag::IsEnabled((Diag::Flag)fi) && Diag::JitBisectRange((Diag::Flag)fi, lo, hi))
+			{
+				ranges.push_back({lo, hi});
+				cemuLog_log(LogType::Force, "[Diag] JIT bissecao: faixa {:08x}-{:08x} roda no INTERPRETADOR (aba Logs e Diagnostico)", lo, hi);
+			}
+		}
+		// 2) arquivo diag_jit_skip.txt (faixas personalizadas, opcional)
+		std::ifstream f(ActiveSettings::GetUserDataPath("diag_jit_skip.txt"));
+		std::string line;
+		while (std::getline(f, line))
+		{
+			unsigned long lo = 0, hi = 0;
+			if (line.empty() || line[0] == '#')
+				continue;
+			if (sscanf(line.c_str(), "%lx-%lx", &lo, &hi) == 2 && hi > lo)
+			{
+				ranges.push_back({(uint32)lo, (uint32)hi});
+				cemuLog_log(LogType::Force, "[Diag] JIT bissecao: faixa {:08x}-{:08x} roda no INTERPRETADOR (diag_jit_skip.txt)", (uint32)lo, (uint32)hi);
+			}
+		}
+		if (ranges.empty())
+			cemuLog_log(LogType::Force, "[Diag] JIT bissecao: DESLIGADA (todo o codigo roda no JIT)");
+	});
+	return ranges;
+}
+
+static inline bool PPCRecompiler_isDiagSkipped(uint32 address)
+{
+	for (const auto& r : PPCRecompiler_getDiagSkipRanges())
+	{
+		if (address >= r.lo && address < r.hi)
+			return true;
+	}
+	return false;
+}
+
 // this function does never block and can fail if the recompiler lock cannot be acquired immediately
 void PPCRecompiler_visitAddressNoBlock(uint32 enterAddress)
 {
+	if (PPCRecompiler_isDiagSkipped(enterAddress))
+		return; // Mandacaru: faixa forcada para o interpretador (diag_jit_skip.txt)
 #if PPCREC_FORCE_SYNCHRONOUS_COMPILATION
 	if (ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[enterAddress / 4] != PPCRecompiler_leaveRecompilerCode_unvisited)
 		return;

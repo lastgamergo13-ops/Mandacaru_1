@@ -47,6 +47,40 @@ private fun setMemReduceChoice(megabytes: Int) {
     }
 }
 
+// Teste do JIT (bissecao): cada opcao manda uma faixa de codigo do jogo para o INTERPRETADOR (o resto continua no JIT).
+// Opcao 0 = desligado. Ver Diag::JitBisectRange (DiagnosticsFlags.h).
+private val JIT_BISECT_OPTIONS = listOf(
+    1 to NativeSettings.DiagFlag.JIT_BISECT_1,
+    2 to NativeSettings.DiagFlag.JIT_BISECT_2,
+    3 to NativeSettings.DiagFlag.JIT_BISECT_3,
+    4 to NativeSettings.DiagFlag.JIT_BISECT_4,
+    5 to NativeSettings.DiagFlag.JIT_BISECT_5,
+    6 to NativeSettings.DiagFlag.JIT_BISECT_6,
+    7 to NativeSettings.DiagFlag.JIT_BISECT_7,
+    8 to NativeSettings.DiagFlag.JIT_BISECT_8,
+)
+
+private fun jitBisectLabel(option: Int): String = when (option) {
+    0 -> tr("Desligado (tudo no JIT)")
+    1 -> tr("1 - Todo o codigo do jogo no interpretador")
+    2 -> tr("2 - XML, strings e alocador (02030000-020A0000)")
+    3 -> tr("3 - Primeira metade da 2 (02030000-02070000)")
+    4 -> tr("4 - Segunda metade da 2 (02070000-020A0000)")
+    5 -> tr("5 - Primeiro quarto (02030000-02050000)")
+    6 -> tr("6 - Segundo quarto (02050000-02070000)")
+    7 -> tr("7 - Terceiro quarto (02070000-02080000)")
+    else -> tr("8 - Quarto quarto (02080000-020A0000)")
+}
+
+private fun jitBisectCurrentChoice(): Int =
+    JIT_BISECT_OPTIONS.firstOrNull { NativeSettings.getDiagFlag(it.second) }?.first ?: 0
+
+private fun setJitBisectChoice(option: Int) {
+    for ((n, flag) in JIT_BISECT_OPTIONS) {
+        NativeSettings.setDiagFlag(flag, n == option)
+    }
+}
+
 /** Botao "Tap for details" que abre um dialogo rolavel (mesmo padrao da tela Experimental). */
 @Composable
 private fun InfoDialogButton(title: String, explanation: String) {
@@ -165,6 +199,27 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
                 onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING, it) },
             )
         }
+
+        InfoDialogButton(
+            title = tr("Teste do JIT (bissecao do crash)"),
+            explanation = tr(
+                "O que e: o Watch Dogs crasha so no recompilador (JIT) e passa no interpretador. Este teste descobre QUAL parte do " +
+                        "codigo o JIT traduz errado.\n\n" +
+                        "O que faz: a faixa de codigo escolhida roda no INTERPRETADOR (lento, mas correto) e o resto continua no JIT. " +
+                        "As faixas 3 e 4 sao as metades da 2; 5 a 8 sao os quartos. A opcao 1 manda TODO o codigo para o interpretador " +
+                        "(confirma que o JIT e a causa).\n\n" +
+                        "Como usar: use o modo de CPU \"Single-core recompiler\" no perfil do jogo, escolha uma faixa, feche o jogo e abra de novo " +
+                        "(vale a partir do proximo jogo). Se o crash SUMIR, o bug esta nessa faixa: me diga qual foi. Se continuar igual, o bug " +
+                        "esta fora dela. O jogo fica mais lento no inicio. Desligue depois. No log aparece \"[Diag] JIT bissecao\"."
+            ),
+        )
+        SingleSelection(
+            label = tr("Teste do JIT: faixa no interpretador"),
+            initialChoice = { jitBisectCurrentChoice() },
+            choices = listOf(0, 1, 2, 3, 4, 5, 6, 7, 8),
+            choiceToString = { jitBisectLabel(it) },
+            onChoiceChanged = { setJitBisectChoice(it) },
+        )
 
         InfoDialogButton(
             title = tr("Reduzir memoria informada ao jogo"),

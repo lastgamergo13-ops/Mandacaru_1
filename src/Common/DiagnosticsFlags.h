@@ -35,6 +35,16 @@ namespace Diag
 		ReduceMem256 = 12,     // idem, 256 MB a menos
 		ReduceMem384 = 13,     // idem, 384 MB a menos
 		ReduceMem512 = 14,     // idem, 512 MB a menos
+		// Bissecao do JIT (Logs e Diagnostico > "Teste do JIT"): so UMA delas fica ligada por vez; a faixa de codigo do jogo correspondente
+		// roda no INTERPRETADOR em vez do JIT (ver JitBisectRange e PPCRecompiler.cpp).
+		JitBisect1 = 15, // 02000000-07000000 (todo o codigo do jogo)
+		JitBisect2 = 16, // 02030000-020A0000 (XML, strings e alocador)
+		JitBisect3 = 17, // 02030000-02070000
+		JitBisect4 = 18, // 02070000-020A0000
+		JitBisect5 = 19, // 02030000-02050000
+		JitBisect6 = 20, // 02050000-02070000
+		JitBisect7 = 21, // 02070000-02080000
+		JitBisect8 = 22, // 02080000-020A0000
 		// REGRA: ao adicionar uma opcao, use o proximo numero e mantenha "Count" SEMPRE por ultimo.
 		Count
 	};
@@ -58,7 +68,32 @@ namespace Diag
 		case Flag::ReduceMem256: return "diag_reduce_mem_256";
 		case Flag::ReduceMem384: return "diag_reduce_mem_384";
 		case Flag::ReduceMem512: return "diag_reduce_mem_512";
+		case Flag::JitBisect1: return "diag_jit_bisect_1";
+		case Flag::JitBisect2: return "diag_jit_bisect_2";
+		case Flag::JitBisect3: return "diag_jit_bisect_3";
+		case Flag::JitBisect4: return "diag_jit_bisect_4";
+		case Flag::JitBisect5: return "diag_jit_bisect_5";
+		case Flag::JitBisect6: return "diag_jit_bisect_6";
+		case Flag::JitBisect7: return "diag_jit_bisect_7";
+		case Flag::JitBisect8: return "diag_jit_bisect_8";
 		default: return "diag_unknown";
+		}
+	}
+
+	// Faixa de codigo do jogo (inicio inclusivo, fim exclusivo) que a chave JitBisectN manda rodar no interpretador. false = nao e uma chave de bissecao.
+	inline bool JitBisectRange(Flag f, uint32_t& lo, uint32_t& hi)
+	{
+		switch (f)
+		{
+		case Flag::JitBisect1: lo = 0x02000000; hi = 0x07000000; return true;
+		case Flag::JitBisect2: lo = 0x02030000; hi = 0x020A0000; return true;
+		case Flag::JitBisect3: lo = 0x02030000; hi = 0x02070000; return true;
+		case Flag::JitBisect4: lo = 0x02070000; hi = 0x020A0000; return true;
+		case Flag::JitBisect5: lo = 0x02030000; hi = 0x02050000; return true;
+		case Flag::JitBisect6: lo = 0x02050000; hi = 0x02070000; return true;
+		case Flag::JitBisect7: lo = 0x02070000; hi = 0x02080000; return true;
+		case Flag::JitBisect8: lo = 0x02080000; hi = 0x020A0000; return true;
+		default: return false;
 		}
 	}
 
