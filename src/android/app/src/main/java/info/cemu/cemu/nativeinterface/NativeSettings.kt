@@ -73,6 +73,10 @@ object NativeSettings {
         const val JIT_BISECT_6 = 20 // 02050000-02070000
         const val JIT_BISECT_7 = 21 // 02070000-02080000
         const val JIT_BISECT_8 = 22 // 02080000-020A0000
+        const val QUANTUM_20K = 23
+        const val QUANTUM_10K = 24
+        const val QUANTUM_5K = 25
+        const val QUANTUM_2K = 26
     }
 
     @JvmStatic

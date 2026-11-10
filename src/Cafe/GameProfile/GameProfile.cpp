@@ -1,4 +1,5 @@
 #include "Cafe/GameProfile/GameProfile.h"
+#include "Common/DiagnosticsFlags.h"
 #include "util/helpers/helpers.h"
 
 #include "boost/nowide/convert.hpp"
@@ -184,6 +185,14 @@ void gameProfile_load()
 
 	// apply some settings immediately
 	ppcThreadQuantum = g_current_game_profile->GetThreadQuantum();
+#if defined(__ANDROID__)
+	// Mandacaru: Logs e Diagnostico > "Quantum das threads" substitui o valor do perfil (teste de ordem de execucao das threads)
+	if (const uint32 quantumOverride = Diag::QuantumOverride())
+	{
+		ppcThreadQuantum = quantumOverride;
+		cemuLog_log(LogType::Force, "[Diag] quantum das threads = {} instrucoes (aba Logs e Diagnostico; perfil do jogo: {})", quantumOverride, g_current_game_profile->GetThreadQuantum());
+	}
+#endif
 
 	if (ppcThreadQuantum != GameProfile::kThreadQuantumDefault)
 		cemuLog_log(LogType::Force, "Thread quantum set to {}", ppcThreadQuantum);

@@ -45,6 +45,12 @@ namespace Diag
 		JitBisect6 = 20, // 02050000-02070000
 		JitBisect7 = 21, // 02070000-02080000
 		JitBisect8 = 22, // 02080000-020A0000
+		// Quantum das threads (Logs e Diagnostico > "Quantum das threads"): so UMA fica ligada; substitui o valor do perfil do jogo.
+		// Menor = as threads dos 3 nucleos se intercalam mais (mais parecido com o Wii U real, onde os nucleos rodam em paralelo).
+		Quantum20k = 23, // 20000 instrucoes por fatia
+		Quantum10k = 24, // 10000
+		Quantum5k = 25,  // 5000
+		Quantum2k = 26,  // 2000
 		// REGRA: ao adicionar uma opcao, use o proximo numero e mantenha "Count" SEMPRE por ultimo.
 		Count
 	};
@@ -76,6 +82,10 @@ namespace Diag
 		case Flag::JitBisect6: return "diag_jit_bisect_6";
 		case Flag::JitBisect7: return "diag_jit_bisect_7";
 		case Flag::JitBisect8: return "diag_jit_bisect_8";
+		case Flag::Quantum20k: return "diag_quantum_20k";
+		case Flag::Quantum10k: return "diag_quantum_10k";
+		case Flag::Quantum5k: return "diag_quantum_5k";
+		case Flag::Quantum2k: return "diag_quantum_2k";
 		default: return "diag_unknown";
 		}
 	}
@@ -121,6 +131,16 @@ namespace Diag
 		else
 			std::filesystem::remove(marker, ec);
 		g_flagState[(int)f] = on ? 2 : 1;
+	}
+
+	// Quantum (instrucoes por fatia de thread) escolhido pelas chaves QuantumNk; 0 = nenhuma ligada (usa o valor do perfil do jogo).
+	inline uint32_t QuantumOverride()
+	{
+		if (IsEnabled(Flag::Quantum2k)) return 2000;
+		if (IsEnabled(Flag::Quantum5k)) return 5000;
+		if (IsEnabled(Flag::Quantum10k)) return 10000;
+		if (IsEnabled(Flag::Quantum20k)) return 20000;
+		return 0;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------

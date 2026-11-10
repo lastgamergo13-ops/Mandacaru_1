@@ -60,6 +60,31 @@ private val JIT_BISECT_OPTIONS = listOf(
     8 to NativeSettings.DiagFlag.JIT_BISECT_8,
 )
 
+// Quantum das threads: opcao 0 = valor do perfil do jogo; 1..4 = 20000 / 10000 / 5000 / 2000 instrucoes por fatia.
+private val QUANTUM_OPTIONS = listOf(
+    1 to NativeSettings.DiagFlag.QUANTUM_20K,
+    2 to NativeSettings.DiagFlag.QUANTUM_10K,
+    3 to NativeSettings.DiagFlag.QUANTUM_5K,
+    4 to NativeSettings.DiagFlag.QUANTUM_2K,
+)
+
+private fun quantumLabel(option: Int): String = when (option) {
+    0 -> tr("Padrao (perfil do jogo)")
+    1 -> tr("20000 instrucoes por fatia")
+    2 -> tr("10000 instrucoes por fatia")
+    3 -> tr("5000 instrucoes por fatia")
+    else -> tr("2000 instrucoes por fatia")
+}
+
+private fun quantumCurrentChoice(): Int =
+    QUANTUM_OPTIONS.firstOrNull { NativeSettings.getDiagFlag(it.second) }?.first ?: 0
+
+private fun setQuantumChoice(option: Int) {
+    for ((n, flag) in QUANTUM_OPTIONS) {
+        NativeSettings.setDiagFlag(flag, n == option)
+    }
+}
+
 private fun jitBisectLabel(option: Int): String = when (option) {
     0 -> tr("Desligado (tudo no JIT)")
     1 -> tr("1 - Todo o codigo do jogo no interpretador")
@@ -199,6 +224,26 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
                 onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.JIT_STRICT_ORDERING, it) },
             )
         }
+
+        InfoDialogButton(
+            title = tr("Quantum das threads"),
+            explanation = tr(
+                "O que e: no modo Single-core os 3 nucleos do Wii U rodam um de cada vez, cada um por uma fatia de instrucoes. " +
+                        "No Wii U real eles rodam em PARALELO. Com fatias grandes, uma thread pode correr muito a frente de outra e quebrar " +
+                        "a ordem que o jogo espera (ex.: a thread de arquivos usa um objeto que a Main Thread ainda nao criou).\n\n" +
+                        "O que faz: substitui o valor do perfil do jogo. Menor = os nucleos se intercalam mais, mais parecido com o Wii U real " +
+                        "(um pouco mais lento).\n\n" +
+                        "Como usar: se o jogo crashar perto do inicio com ponteiro nulo, tente 5000 ou 2000. Vale a partir do proximo jogo. " +
+                        "No log aparece \"[Diag] quantum das threads\"."
+            ),
+        )
+        SingleSelection(
+            label = tr("Quantum das threads"),
+            initialChoice = { quantumCurrentChoice() },
+            choices = listOf(0, 1, 2, 3, 4),
+            choiceToString = { quantumLabel(it) },
+            onChoiceChanged = { setQuantumChoice(it) },
+        )
 
         InfoDialogButton(
             title = tr("Teste do JIT (bissecao do crash)"),
