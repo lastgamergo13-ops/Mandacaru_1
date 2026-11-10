@@ -128,8 +128,42 @@ MMURange mmuRange_HIGHMEM				{ 0xFFFFF000, 0x00001000, MMU_MEM_AREA_ID::CPU_PER_
 void memory_init()
 {
 	// reserve a continous range of 4GB
+#if !defined(_WIN32)
+	// CORRECAO (crashes aleatorios do Watch Dogs no Android): o mmap devolve uma base alinhada so a 4 KB (e diferente a cada execucao).
+	// O heap do coreinit (MEMAllocFromExpHeapEx etc.) alinha ENDERECOS DO HOST, mas o jogo ve o endereco do Wii U (host - memory_base).
+	// Com a base desalinhada o jogo pedia alinhamento de 128 KB e recebia um endereco que NAO era multiplo disso; o alocador do jogo
+	// (que deduz estruturas por mascara de endereco) corrompia as listas livres. Reservamos 4GB + folga e alinhamos a base em 256 MB
+	// (o Windows ja entrega a base naturalmente alinhada). Os trechos sobrando no inicio/fim sao devolvidos ao sistema.
+	if (!memory_base)
+	{
+		constexpr size_t kBaseAlign = 0x10000000; // 256 MB
+		constexpr size_t kTotal = (size_t)0x100000000;
+		uint8* raw = (uint8*)MemMapper::ReserveMemory(nullptr, kTotal + kBaseAlign, MemMapper::PAGE_PERMISSION::P_RW);
+		if (raw && raw != (uint8*)-1)
+		{
+			uint8* aligned = (uint8*)(((uintptr_t)raw + kBaseAlign - 1) & ~((uintptr_t)kBaseAlign - 1));
+			const size_t head = (size_t)(aligned - raw);
+			const size_t tail = kBaseAlign - head;
+			if (head)
+				MemMapper::FreeReservation(raw, head);
+			if (tail)
+				MemMapper::FreeReservation(aligned + kTotal, tail);
+			memory_base = aligned;
+			cemuLog_log(LogType::Force, "[Mem] memory_base={} alinhada a 256 MB (reserva original {})", (void*)memory_base, (void*)raw);
+		}
+		else
+		{
+			// plano B: reserva simples (alinhamento nao garantido)
+			memory_base = (uint8*)MemMapper::ReserveMemory(nullptr, kTotal, MemMapper::PAGE_PERMISSION::P_RW);
+			if (memory_base == (uint8*)-1)
+				memory_base = nullptr;
+			cemuLog_log(LogType::Force, "[Mem] AVISO: nao foi possivel reservar com alinhamento de 256 MB, memory_base={} (alinhamento NAO garantido)", (void*)memory_base);
+		}
+	}
+#else
 	if(!memory_base)
 		memory_base = (uint8*)MemMapper::ReserveMemory(nullptr, (size_t)0x100000000, MemMapper::PAGE_PERMISSION::P_RW);
+#endif
 	if( !memory_base )
 	{
 		debug_printf("memory_init(): Unable to reserve 4GB of memory\n");

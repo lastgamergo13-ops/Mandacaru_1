@@ -883,7 +883,12 @@ void export_MEMAllocFromExpHeapEx(PPCInterpreter_t* hCPU)
 		// DIAGNOSTICO: como o jogo reparte a memoria (so alocacoes >= 1 MB, ate 150 linhas)
 		static std::atomic<uint32> s_bigAllocLogs{0};
 		if (size >= 0x100000 && s_bigAllocLogs.fetch_add(1) < 150)
-			cemuLog_log(LogType::Force, "[Heap] MEMAllocFromExpHeapEx(heap=0x{:08x}, tamanho=0x{:x} ({} MB), alinhamento={}) -> 0x{:08x}", heap.GetMPTR(), size, size / (1024 * 1024), alignment, mem.GetMPTR());
+			{
+				const uint32 absAlign = (uint32)(alignment < 0 ? -alignment : alignment);
+				const bool guestAligned = absAlign == 0 || (mem.GetMPTR() % absAlign) == 0;
+				cemuLog_log(LogType::Force, "[Heap] MEMAllocFromExpHeapEx(heap=0x{:08x}, tamanho=0x{:x} ({} MB), alinhamento={}) -> 0x{:08x} {}", heap.GetMPTR(), size, size / (1024 * 1024), alignment, mem.GetMPTR(),
+					mem.GetMPTR() == 0 ? "" : (guestAligned ? "[alinhado OK]" : "[ERRO: endereco do jogo NAO respeita o alinhamento pedido!]"));
+			}
 	}
 #endif
 	osLib_returnFromFunction(hCPU, mem.GetMPTR());
