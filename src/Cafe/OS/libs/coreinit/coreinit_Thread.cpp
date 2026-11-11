@@ -958,10 +958,9 @@ namespace coreinit
 							cemuLog_log(LogType::Force, "[Audio] ultimos 2 s: callbacks={} sem_dados_do_jogo(silencio)={} pico={}/32768", (uint32)g_diagAudioCallbacks.exchange(0), (uint32)g_diagAudioSilentCallbacks.exchange(0), (uint32)g_diagAudioPeak.exchange(0));
 						}
 					}
-					if (Diag::IsEnabled(Diag::Flag::GuestWatch))
-						std::this_thread::yield(); // leitura continua: pega a escrita em poucos microssegundos, com a pilha de quem acabou de liberar/escrever
-					else
-						std::this_thread::sleep_for(std::chrono::microseconds(300));
+					// CORRECAO: a versao anterior lia a memoria SEM pausa (yield) quando o Vigia estava ligado e ocupava ~100% de um nucleo grande o
+					// tempo todo (thread "DefaultDispatch" nos logs), esquentando o aparelho e atrasando o jogo. Volta a dormir entre as leituras.
+					std::this_thread::sleep_for(std::chrono::microseconds(Diag::IsEnabled(Diag::Flag::GuestWatch) ? 150 : 300));
 				}
 			}).detach();
 		});
@@ -973,7 +972,9 @@ namespace coreinit
 	// thread, DEPOIS de soltar o lock do scheduler (nunca dormir com o lock) e ANTES da primeira instrucao PPC da thread.
 	static void AndroidThreadStartDelay(OSThread_t* thread)
 	{
-		if (!thread || !Diag::IsEnabled(Diag::Flag::ThreadStartDelay))
+		// CORRECAO (Watch Dogs): LIGADO POR PADRAO. Nos testes, com este atraso o jogo entrou 7 de 7 vezes; sem ele crashou sempre (ponteiro nulo
+		// em CRequestManager: a thread de arquivos usava o objeto antes de a Main Thread cria-lo). Aba Logs e Diagnostico desliga (ThreadStartDelayOff).
+		if (!thread || Diag::IsEnabled(Diag::Flag::ThreadStartDelayOff))
 			return;
 		const char* name = AndroidWatchThreadName(thread);
 		// ALVO ESTREITO: so a thread que comprovadamente corre com a Main Thread (usa um objeto global que a Main ainda esta criando).
@@ -991,7 +992,7 @@ namespace coreinit
 			return;
 		static std::atomic<uint32> s_delayLog{0};
 		if (s_delayLog.fetch_add(1) < 100)
-			cemuLog_log(LogType::Force, "[Thread] atraso de partida: \"{}\" espera 100 ms antes de comecar (teste de corrida de inicializacao)", name);
+			cemuLog_log(LogType::Force, "[Thread] atraso de partida: \"{}\" espera 100 ms antes de comecar (corrige a corrida de inicializacao do Watch Dogs)", name);
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 #endif

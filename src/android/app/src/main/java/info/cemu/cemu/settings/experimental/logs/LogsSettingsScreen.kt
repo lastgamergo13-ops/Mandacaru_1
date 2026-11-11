@@ -322,13 +322,14 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             ),
         )
         Toggle(
-            label = tr("Atraso na partida das threads do jogo (teste)"),
+            label = tr("Desligar o atraso de partida da thread de arquivos"),
             description = tr(
-                "A thread CDelayedArchivesOpenThread espera 100 ms antes de comecar (as outras nao). So para testar crashes de " +
-                        "ponteiro nulo no inicio do jogo. Vale no proximo jogo que voce abrir."
+                "Por padrao a thread CDelayedArchivesOpenThread (Watch Dogs) espera 100 ms antes de comecar. Isso corrige o crash de " +
+                        "ponteiro nulo no inicio do jogo (nos testes: com atraso o jogo entrou 7 de 7 vezes; sem ele crashou sempre). " +
+                        "Ligue esta chave so para testar sem o atraso. Vale no proximo jogo que voce abrir."
             ),
-            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY) },
-            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY, it) },
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY_OFF) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.THREAD_START_DELAY_OFF, it) },
         )
 
         InfoDialogButton(

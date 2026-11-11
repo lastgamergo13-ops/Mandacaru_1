@@ -22,6 +22,74 @@ static std::unordered_map<uint32, std::string> g_diagFsPaths;
 
 using namespace iosu::kernel;
 
+#if defined(__ANDROID__)
+#include <thread>
+#include <functional>
+#include <chrono>
+#include <map>
+#include <mutex>
+#include <string>
+#include <atomic>
+// DIAGNOSTICO (tela preta): resumo a cada 15 s das leituras de arquivo por caminho. Mostra se o jogo continua CARREGANDO (streaming do mundo,
+// audio, videos) durante a tela preta ou se a leitura parou ("nenhuma leitura"). Uma thread leve imprime e zera os contadores.
+struct AndroidFsDiagEntry { uint64 reads = 0, bytes = 0, shortReads = 0; uint32 lastPos = 0; };
+static std::mutex g_androidFsDiagMutex;
+static std::map<std::string, AndroidFsDiagEntry> g_androidFsDiag;
+static std::atomic<bool> g_androidFsDiagThreadStarted{false};
+
+static void AndroidFsDiagThreadMain()
+{
+	for (uint32 round = 1;; round++)
+	{
+		std::this_thread::sleep_for(std::chrono::seconds(15));
+		std::map<std::string, AndroidFsDiagEntry> snapshot;
+		{
+			std::lock_guard<std::mutex> lk(g_androidFsDiagMutex);
+			snapshot.swap(g_androidFsDiag);
+		}
+		if (snapshot.empty())
+		{
+			cemuLog_log(LogType::Force, "[FS] resumo #{} (15 s): NENHUMA leitura de arquivo (o jogo nao esta carregando nada do disco agora)", round);
+			continue;
+		}
+		uint64 totalBytes = 0, totalReads = 0;
+		std::string top;
+		// os 6 arquivos com mais bytes
+		std::multimap<uint64, std::string, std::greater<uint64>> byBytes;
+		for (auto& [path, e] : snapshot)
+		{
+			totalBytes += e.bytes;
+			totalReads += e.reads;
+			byBytes.emplace(e.bytes, path);
+		}
+		int shown = 0;
+		for (auto& [bytes, path] : byBytes)
+		{
+			if (shown++ >= 6)
+				break;
+			const AndroidFsDiagEntry& e = snapshot[path];
+			const size_t slash = path.find_last_of('/');
+			top += fmt::format(" | {} {} leituras {:.1f} MB{} ult.pos={:#x}", slash == std::string::npos ? path : path.substr(slash + 1), e.reads, bytes / 1048576.0,
+				e.shortReads ? fmt::format(" ({} curtas)", e.shortReads) : std::string(), e.lastPos);
+		}
+		cemuLog_log(LogType::Force, "[FS] resumo #{} (15 s): {} leituras, {:.1f} MB em {} arquivo(s){}", round, totalReads, totalBytes / 1048576.0, snapshot.size(), top);
+	}
+}
+
+static void AndroidFsDiagCount(const std::string& path, uint32 bytesRead, uint32 bytesRequested, uint32 pos)
+{
+	if (!g_androidFsDiagThreadStarted.exchange(true))
+		std::thread(AndroidFsDiagThreadMain).detach();
+	std::lock_guard<std::mutex> lk(g_androidFsDiagMutex);
+	AndroidFsDiagEntry& e = g_androidFsDiag[path.empty() ? std::string("(sem nome)") : path];
+	e.reads++;
+	e.bytes += bytesRead;
+	if (bytesRead != bytesRequested)
+		e.shortReads++;
+	e.lastPos = pos;
+}
+#endif
+
 namespace iosu
 {
 	namespace fsa
@@ -515,6 +583,7 @@ namespace iosu
 					if (it != g_diagFsPaths.end())
 						path = it->second;
 				}
+				AndroidFsDiagCount(path, bytesSuccessfullyRead, bytesToRead, (uint32)fsc_getFileSeek(fscFile));
 				if (path.size() > 4 && path.compare(path.size() - 4, 4, ".bik") == 0)
 				{
 					static std::mutex s_bikMutex;
