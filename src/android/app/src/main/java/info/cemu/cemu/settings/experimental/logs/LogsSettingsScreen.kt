@@ -322,6 +322,16 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             ),
         )
         Toggle(
+            label = tr("Locked Cache indisponivel (teste)"),
+            description = tr(
+                "O Watch Dogs crasha em MergeVisibleNodesGPUVisibilityLCDMA, uma funcao que usa o Locked Cache. Com esta chave ligada, " +
+                        "LCHardwareIsAvailable() devolve falso; se o jogo checar isso, usa o caminho SEM Locked Cache. E um TESTE: " +
+                        "pode nao ter efeito ou o jogo pode nao abrir. Desligado = comportamento normal. Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.LOCKED_CACHE_OFF) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.LOCKED_CACHE_OFF, it) },
+        )
+        Toggle(
             label = tr("Desligar o piso do OSSleepTicks (100 us)"),
             description = tr(
                 "Por padrao, esperas do jogo menores que 100 microssegundos (OSSleepTicks) duram 100 us. Isso corta um laco de " +

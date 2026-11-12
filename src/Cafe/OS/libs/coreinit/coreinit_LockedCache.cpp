@@ -1,4 +1,6 @@
 #include "Cafe/OS/common/OSCommon.h"
+#include "Common/DiagnosticsFlags.h"
+#include <atomic>
 #include "Cafe/OS/libs/coreinit/coreinit.h"
 #include "Cafe/HW/Latte/Core/LatteBufferCache.h"
 
@@ -280,6 +282,18 @@ namespace coreinit
 	void coreinitExport_LCHardwareIsAvailable(PPCInterpreter_t* hCPU)
 	{
 		// on the real HW, LC is shared between processes and not all processes can access it. In the emulator we don't care and always return true.
+#if defined(__ANDROID__)
+		// Mandacaru (TESTE, aba Logs e Diagnostico > "Locked Cache indisponivel"): o crash em MergeVisibleNodesGPUVisibilityLCDMA (Watch Dogs) usa
+		// o Locked Cache; se o jogo checar esta funcao, passa a usar o caminho SEM Locked Cache.
+		if (Diag::IsEnabled(Diag::Flag::LockedCacheOff))
+		{
+			static std::atomic<bool> s_lcOffLogged{false};
+			if (!s_lcOffLogged.exchange(true))
+				cemuLog_log(LogType::Force, "[Diag] LCHardwareIsAvailable() = false (Locked Cache indisponivel, aba Logs e Diagnostico)");
+			osLib_returnFromFunction(hCPU, 0);
+			return;
+		}
+#endif
 		osLib_returnFromFunction(hCPU, 1);
 	}
 

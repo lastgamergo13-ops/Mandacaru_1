@@ -48,7 +48,8 @@ namespace coreinit
 		else
 		{
 #if defined(__ANDROID__)
-			g_watchdogWaitReasonOverride = fmt::format("waiting on event 0x{:08x} (not signaled)", MEMPTR<OSEvent>(event).GetMPTR());
+			if (Diag::IsEnabled(Diag::Flag::GuestWatch)) /* Mandacaru: texto de diagnostico so com o Vigia ligado (custo de CPU e crash no fmt) */
+						g_watchdogWaitReasonOverride = fmt::format("waiting on event 0x{:08x} (not signaled)", MEMPTR<OSEvent>(event).GetMPTR());
 #endif
 			// enter wait queue
 			event->threadQueue.queueAndWait(OSGetCurrentThread());
@@ -264,9 +265,10 @@ namespace coreinit
 #if defined(__ANDROID__)
 				{
 					OSThread_t* ownerThread = mutex->owner.GetPtr();
-					const std::string ownerNameSafe = ownerThread ? __OSSafeThreadName(ownerThread) : std::string();
+					const std::string ownerNameSafe = (ownerThread && Diag::IsEnabled(Diag::Flag::GuestWatch)) ? __OSSafeThreadName(ownerThread) : std::string();
 					const char* ownerNamePtr = ownerThread ? ownerNameSafe.c_str() : nullptr;
-					g_watchdogWaitReasonOverride = fmt::format("waiting on mutex 0x{:08x}, held by \"{}\" (0x{:08x})",
+					if (Diag::IsEnabled(Diag::Flag::GuestWatch)) /* Mandacaru: texto de diagnostico so com o Vigia ligado (custo de CPU e crash no fmt) */
+						g_watchdogWaitReasonOverride = fmt::format("waiting on mutex 0x{:08x}, held by \"{}\" (0x{:08x})",
 						MEMPTR<OSMutex>(mutex).GetMPTR(),
 						ownerThread ? (ownerNamePtr ? ownerNamePtr : "(unnamed)") : "(no owner?)",
 						ownerThread ? MEMPTR<OSThread_t>(ownerThread).GetMPTR() : 0);
@@ -397,7 +399,8 @@ namespace coreinit
 			mutex->threadQueue.wakeupEntireWaitQueue(false);
 		// wait on condition
 #if defined(__ANDROID__)
-		g_watchdogWaitReasonOverride = fmt::format("waiting on condition var 0x{:08x} (associated mutex 0x{:08x})",
+		if (Diag::IsEnabled(Diag::Flag::GuestWatch)) /* Mandacaru: texto de diagnostico so com o Vigia ligado (custo de CPU e crash no fmt) */
+						g_watchdogWaitReasonOverride = fmt::format("waiting on condition var 0x{:08x} (associated mutex 0x{:08x})",
 			MEMPTR<OSCond>(cond).GetMPTR(), MEMPTR<OSMutex>(mutex).GetMPTR());
 #endif
 		cond->threadQueue.queueAndWait(currentThread);
@@ -437,7 +440,8 @@ namespace coreinit
 				return prevCount;
 			}
 #if defined(__ANDROID__)
-			g_watchdogWaitReasonOverride = fmt::format("waiting on semaphore 0x{:08x} (count=0)", MEMPTR<OSSemaphore>(semaphore).GetMPTR());
+			if (Diag::IsEnabled(Diag::Flag::GuestWatch)) /* Mandacaru: texto de diagnostico so com o Vigia ligado (custo de CPU e crash no fmt) */
+						g_watchdogWaitReasonOverride = fmt::format("waiting on semaphore 0x{:08x} (count=0)", MEMPTR<OSSemaphore>(semaphore).GetMPTR());
 #endif
 			semaphore->threadQueue.queueAndWait(OSGetCurrentThread());
 		}
