@@ -582,6 +582,8 @@ static void CrashScanTextValue(uint32_t value)
 
 #if defined(__ANDROID__)
 std::string LCDiag_GetRecentOps(uint32_t maxEntries, uint32_t& lastStoreDst, uint32_t& lastStoreSrc, uint32_t& lastStoreBlocks); // coreinit_LockedCache.cpp
+std::string AndroidFsDiag_ReadsCovering(uint32_t addr);       // iosu_fsa.cpp
+std::string AndroidFsDiag_RecentReads(uint32_t maxEntries);    // iosu_fsa.cpp
 #endif
 
 // Mandacaru: para cada registrador com valor que parece um endereco valido do Wii U (RAM ou Locked Cache), mostra o conteudo da memoria
@@ -620,11 +622,19 @@ static void CrashDumpRegisterTargets(const PPCInterpreter_t* h)
 			}
 		}
 		CrashLog_WriteLine(fmt::format("[Memoria]   r{}=0x{:08x}{} [{:08x}..{:08x}): {}| \"{}\"", r, v, inLockedCache ? " (Locked Cache)" : "", start, start + 0x50, hex, ascii));
+#if defined(__ANDROID__)
+		{
+			const std::string covering = AndroidFsDiag_ReadsCovering(v);
+			if (!covering.empty())
+				CrashLog_WriteLine(fmt::format("[Memoria]   >>> r{} aponta para memoria que uma LEITURA DE ARQUIVO escreveu recentemente:{}", r, covering));
+		}
+#endif
 		printed++;
 	}
 #if defined(__ANDROID__)
 	uint32_t sDst = 0, sSrc = 0, sBlocks = 0;
 	CrashLog_WriteLine(fmt::format("[Memoria] ultimas operacoes de DMA do Locked Cache (mais recente por ultimo): {}", LCDiag_GetRecentOps(8, sDst, sSrc, sBlocks)));
+	CrashLog_WriteLine(fmt::format("[Memoria] ultimas leituras de arquivo (mais recente por ultimo):{}", AndroidFsDiag_RecentReads(10)));
 #endif
 }
 

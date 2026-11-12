@@ -24,6 +24,7 @@ using namespace iosu::kernel;
 
 #if defined(__ANDROID__)
 #include <thread>
+#include <cstring>
 #include <functional>
 #include <chrono>
 #include <map>
@@ -76,8 +77,67 @@ static void AndroidFsDiagThreadMain()
 	}
 }
 
-static void AndroidFsDiagCount(const std::string& path, uint32 bytesRead, uint32 bytesRequested, uint32 pos)
+// Anel das ultimas leituras com o endereco de DESTINO no Wii U (para o log de crash descobrir se uma leitura de arquivo caiu em cima de
+// memoria que o jogo ainda usava: dado comprimido/criptografado aparecendo onde deveria haver estruturas do jogo).
+struct AndroidFsRingEntry { uint64 ms = 0; uint32 dest = 0, bytes = 0, pos = 0; char name[40] = {}; };
+static AndroidFsRingEntry g_androidFsRing[256];
+static std::atomic<uint32> g_androidFsRingPos{0};
+
+static uint64 AndroidFsNowMs() { return (uint64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+static void AndroidFsRingAdd(const std::string& path, uint32 dest, uint32 bytes, uint32 pos)
 {
+	const uint32 n = g_androidFsRingPos.fetch_add(1);
+	AndroidFsRingEntry& e = g_androidFsRing[n % 256];
+	e.ms = AndroidFsNowMs();
+	e.dest = dest;
+	e.bytes = bytes;
+	e.pos = pos;
+	const size_t slash = path.find_last_of('/');
+	const std::string shortName = slash == std::string::npos ? path : path.substr(slash + 1);
+	strncpy(e.name, shortName.c_str(), sizeof(e.name) - 1);
+	e.name[sizeof(e.name) - 1] = 0;
+}
+
+// leituras recentes cujo destino [dest, dest+bytes) contem o endereco 'addr' (mais recentes primeiro, ate 4)
+std::string AndroidFsDiag_ReadsCovering(uint32 addr)
+{
+	std::string out;
+	const uint32 total = g_androidFsRingPos.load();
+	const uint32 count = total < 256 ? total : 256;
+	const uint64 now = AndroidFsNowMs();
+	int found = 0;
+	for (uint32 i = 0; i < count && found < 4; i++)
+	{
+		const AndroidFsRingEntry& e = g_androidFsRing[(total - 1 - i) % 256];
+		if (e.bytes && addr >= e.dest && addr < e.dest + e.bytes)
+		{
+			out += fmt::format(" [leitura de \"{}\" pos={:#x} destino={:08x} bytes={:#x} ha {} ms]", e.name, e.pos, e.dest, e.bytes, now - e.ms);
+			found++;
+		}
+	}
+	return out;
+}
+
+std::string AndroidFsDiag_RecentReads(uint32 maxEntries)
+{
+	std::string out;
+	const uint32 total = g_androidFsRingPos.load();
+	uint32 count = total < 256 ? total : 256;
+	if (count > maxEntries)
+		count = maxEntries;
+	const uint64 now = AndroidFsNowMs();
+	for (uint32 i = count; i > 0; i--)
+	{
+		const AndroidFsRingEntry& e = g_androidFsRing[(total - i) % 256];
+		out += fmt::format(" | {} pos={:#x} destino={:08x} bytes={:#x} (ha {} ms)", e.name, e.pos, e.dest, e.bytes, now - e.ms);
+	}
+	return out.empty() ? std::string(" (nenhuma leitura registrada)") : out;
+}
+
+static void AndroidFsDiagCount(const std::string& path, uint32 bytesRead, uint32 bytesRequested, uint32 pos, uint32 destGuest)
+{
+	AndroidFsRingAdd(path, destGuest, bytesRead, pos);
 	if (!g_androidFsDiagThreadStarted.exchange(true))
 		std::thread(AndroidFsDiagThreadMain).detach();
 	std::lock_guard<std::mutex> lk(g_androidFsDiagMutex);
@@ -583,7 +643,7 @@ namespace iosu
 					if (it != g_diagFsPaths.end())
 						path = it->second;
 				}
-				AndroidFsDiagCount(path, bytesSuccessfullyRead, bytesToRead, (uint32)fsc_getFileSeek(fscFile));
+				AndroidFsDiagCount(path, bytesSuccessfullyRead, bytesToRead, (uint32)fsc_getFileSeek(fscFile) - bytesSuccessfullyRead, memory_getVirtualOffsetFromPointer(destPtr));
 				if (path.size() > 4 && path.compare(path.size() - 4, 4, ".bik") == 0)
 				{
 					static std::mutex s_bikMutex;

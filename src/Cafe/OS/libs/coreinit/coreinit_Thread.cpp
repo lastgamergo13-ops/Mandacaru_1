@@ -1263,6 +1263,17 @@ namespace coreinit
 	void OSSleepTicks(uint64 ticks)
 	{
 		cemu_assert_debug(__OSHasSchedulerLock() == false);
+#if defined(__ANDROID__)
+		// Mandacaru: piso de ~100 us. Nos logs, a thread de video (Bink/RAD) girava num laco OSWaitEventWithTimeout -> OSGetSystemInfo ->
+		// OSSleepTicks(poucos ticks) a ~1 MILHAO de chamadas por segundo (117 milhoes em 2 min), queimando CPU e esquentando o aparelho
+		// (79 C, throttling). Dormir pelo menos 100 us nao muda o comportamento do jogo (ele so esta esperando) e corta esse gasto.
+		// Aba Logs e Diagnostico > "Desligar o piso do OSSleepTicks" desfaz.
+		{
+			const uint64 minTicks = ESPRESSO_TIMER_CLOCK / 10000; // 100 us
+			if (ticks < minTicks && !Diag::IsEnabled(Diag::Flag::SleepFloorOff))
+				ticks = minTicks;
+		}
+#endif
 		StackAllocator<OSThreadQueue> _threadQueue;
 		OSInitThreadQueue(_threadQueue.GetPointer());
 		__OSLockScheduler();

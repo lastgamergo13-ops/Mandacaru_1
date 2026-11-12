@@ -322,6 +322,16 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             ),
         )
         Toggle(
+            label = tr("Desligar o piso do OSSleepTicks (100 us)"),
+            description = tr(
+                "Por padrao, esperas do jogo menores que 100 microssegundos (OSSleepTicks) duram 100 us. Isso corta um laco de " +
+                        "espera da thread de video que fazia ~1 milhao de chamadas por segundo, gastando CPU e esquentando o " +
+                        "aparelho. Ligue esta chave so para testar sem o piso. Vale no proximo jogo que voce abrir."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.SLEEP_FLOOR_OFF) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.SLEEP_FLOOR_OFF, it) },
+        )
+        Toggle(
             label = tr("Desligar o atraso de partida da thread de arquivos"),
             description = tr(
                 "Por padrao a thread CDelayedArchivesOpenThread (Watch Dogs) espera 100 ms antes de comecar. Isso corrige o crash de " +

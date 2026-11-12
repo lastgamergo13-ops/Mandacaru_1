@@ -52,6 +52,7 @@ namespace Diag
 		Quantum5k = 25,  // 5000
 		Quantum2k = 26,  // 2000
 		ThreadStartDelayOff = 27, // DESLIGA o atraso de partida da CDelayedArchivesOpenThread (que agora vem LIGADO por padrao)
+		SleepFloorOff = 28, // DESLIGA o piso de 100 us do OSSleepTicks (que agora vem LIGADO por padrao)
 		// REGRA: ao adicionar uma opcao, use o proximo numero e mantenha "Count" SEMPRE por ultimo.
 		Count
 	};
@@ -88,6 +89,7 @@ namespace Diag
 		case Flag::Quantum5k: return "diag_quantum_5k";
 		case Flag::Quantum2k: return "diag_quantum_2k";
 		case Flag::ThreadStartDelayOff: return "diag_thread_start_delay_off";
+		case Flag::SleepFloorOff: return "diag_sleep_floor_off";
 		default: return "diag_unknown";
 		}
 	}

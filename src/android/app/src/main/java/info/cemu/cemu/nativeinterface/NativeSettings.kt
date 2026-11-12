@@ -78,6 +78,7 @@ object NativeSettings {
         const val QUANTUM_5K = 25
         const val QUANTUM_2K = 26
         const val THREAD_START_DELAY_OFF = 27
+        const val SLEEP_FLOOR_OFF = 28
     }
 
     @JvmStatic
