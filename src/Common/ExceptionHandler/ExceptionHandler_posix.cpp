@@ -580,6 +580,54 @@ static void CrashScanTextValue(uint32_t value)
 	CrashLog_WriteLine(fmt::format("[Texto]   {} ocorrencia(s) encontrada(s){}", hits, hits == 0 ? " (o texto nao existe inteiro na memoria: foi montado por partes ou ja foi sobrescrito)" : ""));
 }
 
+#if defined(__ANDROID__)
+std::string LCDiag_GetRecentOps(uint32_t maxEntries, uint32_t& lastStoreDst, uint32_t& lastStoreSrc, uint32_t& lastStoreBlocks); // coreinit_LockedCache.cpp
+#endif
+
+// Mandacaru: para cada registrador com valor que parece um endereco valido do Wii U (RAM ou Locked Cache), mostra o conteudo da memoria
+// apontada. Em crashes de "ponteiro lixo" isso mostra se o BUFFER DE ORIGEM ja estava corrompido (problema de quem produziu o dado)
+// ou se so o registrador ficou errado. Tambem mostra as ultimas operacoes de DMA do Locked Cache.
+static void CrashDumpRegisterTargets(const PPCInterpreter_t* h)
+{
+	CrashLog_WriteLine("[Memoria] --- conteudo da memoria apontada pelos registradores (16 bytes antes + 64 bytes depois) ---");
+	std::vector<uint32_t> done;
+	int printed = 0;
+	for (int r = 3; r <= 31 && printed < 14; r++)
+	{
+		const uint32_t v = h->gpr[r];
+		const bool inRam = v >= 0x01000000 && v < 0x50000000;
+		const bool inLockedCache = v >= 0xFFC00000 && v < 0xFFCC0000;
+		if (!inRam && !inLockedCache)
+			continue;
+		const uint32_t start = (v & ~0xFu) - 0x10;
+		bool dup = false;
+		for (uint32_t d : done)
+			dup |= (d == start);
+		if (dup)
+			continue;
+		done.push_back(start);
+		uint32_t w[20];
+		if (!CrashGuestReadBlock(start, w, 20))
+			continue;
+		std::string hex, ascii;
+		for (int i = 0; i < 20; i++)
+		{
+			hex += fmt::format("{:08x} ", w[i]);
+			for (int b = 0; b < 4; b++)
+			{
+				const uint8_t c = (uint8_t)(w[i] >> (24 - 8 * b));
+				ascii += (c >= 0x20 && c < 0x7F) ? (char)c : '.';
+			}
+		}
+		CrashLog_WriteLine(fmt::format("[Memoria]   r{}=0x{:08x}{} [{:08x}..{:08x}): {}| \"{}\"", r, v, inLockedCache ? " (Locked Cache)" : "", start, start + 0x50, hex, ascii));
+		printed++;
+	}
+#if defined(__ANDROID__)
+	uint32_t sDst = 0, sSrc = 0, sBlocks = 0;
+	CrashLog_WriteLine(fmt::format("[Memoria] ultimas operacoes de DMA do Locked Cache (mais recente por ultimo): {}", LCDiag_GetRecentOps(8, sDst, sSrc, sBlocks)));
+#endif
+}
+
 // Mandacaru: analisa o ponto de chamada que levou ao ponteiro nulo.
 //  - da nome (simbolo) ao IP, LR e CTR;
 //  - nas instrucoes antes do LR, decodifica "bl" (alvo + simbolo) e "lwz rX,d(r13)" (leitura de variavel global do jogo);
@@ -696,6 +744,7 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 		CrashLog_WriteLine(code);
 	}
 	CrashAnalyzeNullCallSite(h);
+	CrashDumpRegisterTargets(h);
 	uint32_t sp = h->gpr[1];
 	for (int depth = 0; depth < 16; depth++)
 	{

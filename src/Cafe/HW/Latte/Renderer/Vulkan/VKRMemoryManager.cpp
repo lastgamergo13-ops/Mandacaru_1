@@ -135,6 +135,19 @@ void VKRSynchronizedRingAllocator::CleanupBuffer(uint64 latestFinishedCommandBuf
 			itr.cleanupCounter++;
 	}
 
+#if defined(__ANDROID__)
+	// Mandacaru: o Cemu libera UM buffer ocioso por vez, so depois de 1000 quadros sem uso. Depois de um pico de upload (carregar o mundo do
+	// Watch Dogs) sobravam ~50 buffers de 32 MB (~2 GB de RAM do celular, com 1 liberacao em 508 alocacoes nos logs) e o aparelho entrava em
+	// swap pesado. Aqui liberamos TODOS os buffers ociosos do final, com limiar menor (150 quadros). A condicao de seguranca e a mesma
+	// (sem sync points = a GPU ja terminou de usar o buffer; contador zera ao alocar dele).
+	while (m_buffers.size() >= 2 && m_buffers.back().cleanupCounter >= 150)
+	{
+		auto& lastBuffer = m_buffers.back();
+		vkUnmapMemory(m_vkr->GetLogicalDevice(), lastBuffer.vk_mem);
+		m_vkrMemMgr->DeleteBuffer(lastBuffer.vk_buffer, lastBuffer.vk_mem);
+		m_buffers.pop_back();
+	}
+#else
 	// check if last buffer is available for deletion
 	if (m_buffers.size() >= 2)
 	{
@@ -147,6 +160,7 @@ void VKRSynchronizedRingAllocator::CleanupBuffer(uint64 latestFinishedCommandBuf
 			m_buffers.pop_back();
 		}
 	}
+#endif
 }
 
 VkBuffer VKRSynchronizedRingAllocator::GetBufferByIndex(uint32 index) const
