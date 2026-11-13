@@ -697,6 +697,18 @@ namespace coreinit
 			AndroidWatchThreadName(__currentCoreThread[0]), AndroidWatchThreadName(__currentCoreThread[1]), AndroidWatchThreadName(__currentCoreThread[2]));
 	}
 
+	static std::string AndroidWatchGuestState(OSThread_t* thread); // definida mais abaixo
+
+	// Nome seguro (copia limitada, confere o mapeamento) de uma thread a partir do endereco do Wii U; "-" se 0, "?" se invalido.
+	static std::string AndroidNameFromMptr(uint32 mptr)
+	{
+		if (mptr == 0)
+			return "-";
+		if (mptr < 0x01000000u || mptr >= 0x50000000u || !memory_isAddressRangeAccessible(mptr, sizeof(OSThread_t)))
+			return "?";
+		return __OSSafeThreadName(MEMPTR<OSThread_t>(mptr).GetPtr());
+	}
+
 	// Chamado pelo handler de crash (ExceptionHandler_posix.cpp). Usa so leituras - nunca bloqueia nem aloca alem do fmt.
 	void AndroidCrashDumpScheduler(PPCInterpreter_t* hCPU)
 	{
@@ -726,9 +738,33 @@ namespace coreinit
 		for (uint32 k = total - count; k < total; k++)
 		{
 			const AndroidSchedEvent& e = s_androidSchedRing[k % kAndroidSchedRingSize];
-			CrashLog_WriteLine(fmt::format("[Escalonador]     #{} -{:.3f}ms nucleo={} {:08x} -> {:08x} | quem: dona={:08x} UPIR={} tid={}{}",
-				k, (double)(lastNs - e.ns) / 1.0e6, e.core, e.oldThread, e.newThread, e.callerOwner, e.callerUPIR, e.tid,
+			CrashLog_WriteLine(fmt::format("[Escalonador]     #{} -{:.3f}ms nucleo={} {:08x}\"{}\" -> {:08x}\"{}\" | quem: dona={:08x}\"{}\" UPIR={} tid={}{}",
+				k, (double)(lastNs - e.ns) / 1.0e6, e.core, e.oldThread, AndroidNameFromMptr(e.oldThread), e.newThread, AndroidNameFromMptr(e.newThread),
+				e.callerOwner, AndroidNameFromMptr(e.callerOwner), e.callerUPIR, e.tid,
 				e.flags == 1 ? "  <-- SLOT JA OCUPADO POR OUTRA THREAD" : (e.flags == 2 ? "  <-- LIMPOU SLOT DE OUTRA THREAD" : "")));
+		}
+	}
+
+	// Mandacaru: foto de TODAS as threads do jogo no instante do crash (nome, estado, prioridade, afinidade, em que nucleo rodava, PC/LR com
+	// nome de funcao e pilha de chamadas). Mostra o que as OUTRAS threads faziam (ex.: quem fechava o video enquanto outra terminava o quadro).
+	void AndroidCrashDumpAllThreads()
+	{
+		CrashLog_WriteLine(fmt::format("[Threads] --- todas as threads do jogo no instante do crash ({} ativas) ---", activeThreadCount));
+		const sint32 n = std::min<sint32>(activeThreadCount, 128);
+		for (sint32 i = 0; i < n; i++)
+		{
+			const uint32 mptr = activeThread[i];
+			if (mptr < 0x01000000u || mptr >= 0x50000000u || !memory_isAddressRangeAccessible(mptr, sizeof(OSThread_t)))
+				continue;
+			OSThread_t* t = MEMPTR<OSThread_t>(mptr).GetPtr();
+			const uint32 state = (uint32)(uint8)t->state;
+			const char* stateName = state == 1 ? "pronta" : (state == 2 ? "RODANDO" : (state == 4 ? "esperando" : (state == 8 ? "encerrada" : "?")));
+			sint32 slotCore = -1;
+			for (sint32 c = 0; c < 3; c++)
+				if (__currentCoreThread[c] == t)
+					slotCore = c;
+			CrashLog_WriteLine(fmt::format("[Threads]   #{} {:08x} estado={} suspensa={} prio={}/{} afinidade={:03b} no_nucleo={} | {}", i, mptr, stateName,
+				(sint32)t->suspendCounter, (sint32)t->effectivePriority, (sint32)t->basePriority, (uint32)t->context.affinity & 7, slotCore, AndroidWatchGuestState(t)));
 		}
 	}
 
@@ -993,7 +1029,14 @@ namespace coreinit
 		static std::atomic<uint32> s_delayLog{0};
 		if (s_delayLog.fetch_add(1) < 100)
 			cemuLog_log(LogType::Force, "[Thread] atraso de partida: \"{}\" espera 100 ms antes de comecar (corrige a corrida de inicializacao do Watch Dogs)", name);
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		// Multi-core: cada nucleo tem sua propria thread do host, entao dormir a thread do host atrasa SO esta thread do jogo.
+		// Single-core: os 3 nucleos do Wii U rodam na MESMA thread do host; sleep_for trava todos (a Main Thread tambem) e o atraso nao tem
+		// efeito (nos logs o crash de ponteiro nulo voltou em 3 de 4 rodadas). Ali dormimos em TEMPO DO JOGO: so esta thread bloqueia
+		// (OSSleepTicks) e as outras continuam rodando.
+		if (__CemuIsMulticoreMode())
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		else
+			OSSleepTicks(ESPRESSO_TIMER_CLOCK / 10); // 100 ms
 	}
 #endif
 

@@ -814,7 +814,7 @@ static void CrashPrintGuestDetails(PPCInterpreter_t* h, siginfo_t* info)
 #endif
 
 #if defined(__ANDROID__)
-namespace coreinit { void AndroidCrashDumpScheduler(PPCInterpreter_t* hCPU); } // coreinit_Thread.cpp
+namespace coreinit { void AndroidCrashDumpScheduler(PPCInterpreter_t* hCPU); void AndroidCrashDumpAllThreads(); } // coreinit_Thread.cpp
 #endif
 
 void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
@@ -979,6 +979,7 @@ void AndroidPrintCrashContext(int sig, siginfo_t* info, void* context)
 	}
 #endif
 	coreinit::AndroidCrashDumpScheduler(schedCPU);
+	coreinit::AndroidCrashDumpAllThreads();
 #endif
 }
 

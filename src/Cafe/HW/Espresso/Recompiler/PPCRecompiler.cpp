@@ -22,6 +22,7 @@
 #include "Cafe/OS/libs/coreinit/coreinit_CodeGen.h"
 #include "config/ActiveSettings.h"
 #include "Common/DiagnosticsFlags.h"
+#include "Cafe/OS/RPL/rpl_symbol_storage.h"
 #include "config/LaunchSettings.h"
 #include "Common/ExceptionHandler/ExceptionHandler.h"
 #include "Common/cpu_features.h"
@@ -222,8 +223,9 @@ namespace
 		uint32 ppcAddr;
 		uint64 funcPtr;
 		uint32 threadId;
+		uint64 ns; // Mandacaru: relogio monotonico (ns) da entrada
 	};
-	constexpr size_t kJitEnterRingBufferSize = 192;
+	constexpr size_t kJitEnterRingBufferSize = 1024; // Mandacaru: era 192
 	JitEnterLogEntry s_jitEnterRingBuffer[kJitEnterRingBufferSize]{};
 	std::atomic<uint64> s_jitEnterRingCounter{0};
 } // namespace
@@ -233,11 +235,20 @@ void PPCRecompiler_dumpRecentJitEnterHistoryToCrashLog()
 	uint64 totalCount = s_jitEnterRingCounter.load();
 	uint64 numEntries = totalCount < kJitEnterRingBufferSize ? totalCount : kJitEnterRingBufferSize;
 	CrashLog_WriteLine(fmt::format("Recent JIT code entries (most recent last, {} of {} total):", numEntries, totalCount));
-	uint64 startIdx = totalCount < kJitEnterRingBufferSize ? 0 : totalCount - kJitEnterRingBufferSize;
+	// Mandacaru: imprime so as ultimas 200 (o anel guarda 1024), com tempo relativo a ultima e o NOME da funcao do jogo
+	const uint64 kPrint = 200;
+	uint64 startIdx = totalCount < kPrint ? 0 : totalCount - kPrint;
+	const uint64 lastNs = totalCount ? s_jitEnterRingBuffer[(totalCount - 1) % kJitEnterRingBufferSize].ns : 0;
 	for (uint64 i = startIdx; i < totalCount; i++)
 	{
 		const auto& entry = s_jitEnterRingBuffer[i % kJitEnterRingBufferSize];
-		CrashLog_WriteLine(fmt::format("  [{}] tid={} ppcAddr=0x{:08x} funcPtr=0x{:x}", i, entry.threadId, entry.ppcAddr, entry.funcPtr));
+		std::string symName;
+		if (RPLStoredSymbol* sym = rplSymbolStorage_getByClosestAddress(entry.ppcAddr))
+		{
+			if (sym->symbolName && entry.ppcAddr >= sym->address && entry.ppcAddr - sym->address <= 0x4000)
+				symName = fmt::format(" {}+0x{:x}", (const char*)sym->symbolName, entry.ppcAddr - sym->address);
+		}
+		CrashLog_WriteLine(fmt::format("  [{}] -{:.3f}ms tid={} ppcAddr=0x{:08x}{} funcPtr=0x{:x}", i, (double)(lastNs - entry.ns) / 1.0e6, entry.threadId, entry.ppcAddr, symName, entry.funcPtr));
 	}
 }
 
@@ -250,7 +261,7 @@ void PPCRecompiler_enter(PPCInterpreter_t* hCPU, PPCREC_JUMP_ENTRY funcPtr)
 #else
 		uint32 threadId = (uint32)gettid();
 #endif
-		s_jitEnterRingBuffer[idx] = { hCPU->instructionPointer, (uint64)funcPtr, threadId };
+		s_jitEnterRingBuffer[idx] = { hCPU->instructionPointer, (uint64)funcPtr, threadId, (uint64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() };
 	}
 #if BOOST_OS_WINDOWS
 	uint32 prevState = _controlfp(0, 0);
