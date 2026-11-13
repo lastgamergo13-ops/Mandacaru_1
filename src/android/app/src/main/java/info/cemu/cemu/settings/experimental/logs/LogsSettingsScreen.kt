@@ -27,7 +27,7 @@ private const val VK_TRACE_FILE = "vk_trace.txt"
 
 // O teste de ordenacao estrita de memoria do JIT foi concluido (descartado como causa) e fica OCULTO para ninguem ligar sem querer.
 // Para mostrar de novo: troque para true aqui E para true em kOrdenacaoEstritaDisponivel (BackendAArch64.cpp).
-private const val MOSTRAR_ORDENACAO_ESTRITA = false
+private const val MOSTRAR_ORDENACAO_ESTRITA = true // reativado: repetir o teste em multi-core depois da correcao do alinhamento do heap
 
 // Reducao da memoria informada ao jogo: cada valor em MB corresponde a uma chave de diagnostico (apenas uma fica ligada por vez).
 private val MEM_REDUCE_FLAGS = listOf(

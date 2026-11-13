@@ -1328,7 +1328,8 @@ static bool AArch64StrictMemoryOrdering()
 	// O teste de ordenacao estrita foi concluido (descartado como causa dos crashes) e o botao foi ocultado da tela. O arquivo-marcador pode
 	// ter ficado LIGADO de testes antigos e agora nao ha como desliga-lo pela tela: por isso o modo fica DESLIGADO aqui e o marcador e limpo.
 	// Para voltar a usar: troque para true e mostre o botao (MOSTRAR_ORDENACAO_ESTRITA em LogsSettingsScreen.kt).
-	static constexpr bool kOrdenacaoEstritaDisponivel = false;
+	// REATIVADO: o teste antigo foi feito antes da correcao do alinhamento do heap (quando quase todo crash vinha dele); vale repetir em multi-core.
+	static constexpr bool kOrdenacaoEstritaDisponivel = true;
 	if (!kOrdenacaoEstritaDisponivel)
 	{
 		if (Diag::IsEnabled(Diag::Flag::JitStrictOrdering))
