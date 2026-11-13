@@ -757,7 +757,7 @@ namespace coreinit
 			if (mptr < 0x01000000u || mptr >= 0x50000000u || !memory_isAddressRangeAccessible(mptr, sizeof(OSThread_t)))
 				continue;
 			OSThread_t* t = MEMPTR<OSThread_t>(mptr).GetPtr();
-			const uint32 state = (uint32)(uint8)t->state;
+			const uint32 state = (uint32)(uint8)t->state.value();
 			const char* stateName = state == 1 ? "pronta" : (state == 2 ? "RODANDO" : (state == 4 ? "esperando" : (state == 8 ? "encerrada" : "?")));
 			sint32 slotCore = -1;
 			for (sint32 c = 0; c < 3; c++)
