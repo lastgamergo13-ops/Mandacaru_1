@@ -322,6 +322,18 @@ fun LogsSettingsScreen(navigateBack: () -> Unit) {
             ),
         )
         Toggle(
+            label = tr("Liberar buffers de upload do Vulkan mais cedo (menos RAM)"),
+            description = tr(
+                "Depois de carregar o mundo, o Vulkan guarda dezenas de buffers de upload de 32 MB (ate ~2 GB de RAM no Watch Dogs), " +
+                        "o que leva o celular ao swap. Com esta chave ligada eles sao devolvidos ao sistema mais cedo (apos 150 limpezas " +
+                        "sem uso, todos de uma vez). O jogo so libera um buffer que a GPU ja terminou de usar. Desligado = comportamento original " +
+                        "(1 buffer por vez, apos 1000 limpezas). Vale no proximo jogo que voce abrir. Se aparecerem crashes do driver so " +
+                        "com ela ligada, desligue e me avise."
+            ),
+            initialCheckedState = { NativeSettings.getDiagFlag(NativeSettings.DiagFlag.VK_FREE_IDLE_EARLY) },
+            onCheckedChanged = { NativeSettings.setDiagFlag(NativeSettings.DiagFlag.VK_FREE_IDLE_EARLY, it) },
+        )
+        Toggle(
             label = tr("Locked Cache indisponivel (teste)"),
             description = tr(
                 "O Watch Dogs crasha em MergeVisibleNodesGPUVisibilityLCDMA, uma funcao que usa o Locked Cache. Com esta chave ligada, " +

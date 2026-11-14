@@ -1,4 +1,5 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VKRMemoryManager.h"
+#include "Common/DiagnosticsFlags.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/AndroidDiagnostics.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/CrashCrumb.h"
@@ -136,18 +137,22 @@ void VKRSynchronizedRingAllocator::CleanupBuffer(uint64 latestFinishedCommandBuf
 	}
 
 #if defined(__ANDROID__)
-	// Mandacaru: o Cemu libera UM buffer ocioso por vez, so depois de 1000 quadros sem uso. Depois de um pico de upload (carregar o mundo do
-	// Watch Dogs) sobravam ~50 buffers de 32 MB (~2 GB de RAM do celular, com 1 liberacao em 508 alocacoes nos logs) e o aparelho entrava em
-	// swap pesado. Aqui liberamos TODOS os buffers ociosos do final, com limiar menor (150 quadros). A condicao de seguranca e a mesma
-	// (sem sync points = a GPU ja terminou de usar o buffer; contador zera ao alocar dele).
-	while (m_buffers.size() >= 2 && m_buffers.back().cleanupCounter >= 150)
+	// Mandacaru: chave "Liberar buffers de upload ociosos mais cedo" (aba Logs e Diagnostico). DESLIGADA = comportamento original abaixo.
+	// Ligada: libera TODOS os buffers ociosos do final com limiar 150 (em vez de 1 por vez com 1000). E seguro quanto ao uso pela GPU porque o
+	// ponto de sincronizacao e registrado NA ALOCACAO (addUploadBufferSyncPoint) e so e retirado quando o command buffer terminou; a fila vazia
+	// (conferida de novo aqui) significa que a GPU ja acabou com o buffer. Mesmo assim e um TESTE: serve para comparar crashes do driver.
+	if (Diag::IsEnabled(Diag::Flag::VkFreeIdleEarly))
 	{
-		auto& lastBuffer = m_buffers.back();
-		vkUnmapMemory(m_vkr->GetLogicalDevice(), lastBuffer.vk_mem);
-		m_vkrMemMgr->DeleteBuffer(lastBuffer.vk_buffer, lastBuffer.vk_mem);
-		m_buffers.pop_back();
+		while (m_buffers.size() >= 2 && m_buffers.back().cleanupCounter >= 150 && m_buffers.back().queue_syncPoints.empty())
+		{
+			auto& lastBuffer = m_buffers.back();
+			vkUnmapMemory(m_vkr->GetLogicalDevice(), lastBuffer.vk_mem);
+			m_vkrMemMgr->DeleteBuffer(lastBuffer.vk_buffer, lastBuffer.vk_mem);
+			m_buffers.pop_back();
+		}
+		return;
 	}
-#else
+#endif
 	// check if last buffer is available for deletion
 	if (m_buffers.size() >= 2)
 	{
@@ -160,7 +165,6 @@ void VKRSynchronizedRingAllocator::CleanupBuffer(uint64 latestFinishedCommandBuf
 			m_buffers.pop_back();
 		}
 	}
-#endif
 }
 
 VkBuffer VKRSynchronizedRingAllocator::GetBufferByIndex(uint32 index) const
